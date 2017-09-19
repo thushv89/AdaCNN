@@ -1,4 +1,35 @@
 import tensorflow as tf
+import constants
+import logging
+import sys
+
+TF_WEIGHTS = constants.TF_WEIGHTS
+TF_BIAS = constants.TF_BIAS
+TF_TRAIN_MOMENTUM = constants.TF_TRAIN_MOMENTUM
+TF_POOL_MOMENTUM = constants.TF_POOL_MOMENTUM
+TF_GLOBAL_SCOPE = constants.TF_GLOBAL_SCOPE
+TF_CONV_WEIGHT_SHAPE_STR = constants.TF_CONV_WEIGHT_SHAPE_STR
+TF_FC_WEIGHT_IN_STR = constants.TF_FC_WEIGHT_IN_STR
+TF_FC_WEIGHT_OUT_STR = constants.TF_FC_WEIGHT_OUT_STR
+
+research_parameters = None
+model_parameters = None
+
+logging_level, logging_format = None, None
+logger = None
+
+def set_from_main(research_params, model_params, logging_level, logging_format):
+    global research_parameters, model_parameters
+    research_parameters = research_params
+    model_parameters = model_params
+
+    logger = logging.getLogger('cnn_optimizer_logger')
+    logger.setLevel(logging_level)
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter(logging_format))
+    console.setLevel(logging_level)
+    logger.addHandler(console)
+
 
 def gradients(optimizer, loss, global_step, learning_rate):
     # grad_and_vars [(grads_w,w),(grads_b,b)]
@@ -45,10 +76,10 @@ def update_pool_momentum_velocity(grads_and_vars):
 def apply_gradient_with_momentum(optimizer, learning_rate, global_step):
     grads_and_vars = []
     # for each trainable variable
-    if decay_learning_rate:
-        learning_rate = tf.maximum(min_learning_rate,
+    if model_parameters['decay_learning_rate']:
+        learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=decay_rate, staircase=True))
+                                                              decay_rate=model_parameters['decay_rate'], staircase=True))
     for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=TF_GLOBAL_SCOPE):
         with tf.variable_scope(v.name.split(':')[0], reuse=True):
             vel = tf.get_variable(TF_TRAIN_MOMENTUM)
@@ -60,10 +91,10 @@ def apply_gradient_with_momentum(optimizer, learning_rate, global_step):
 def apply_gradient_with_pool_momentum(optimizer, learning_rate, global_step):
     grads_and_vars = []
     # for each trainable variable
-    if decay_learning_rate:
-        learning_rate = tf.maximum(min_learning_rate,
+    if model_parameters['decay_learning_rate']:
+        learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=decay_rate, staircase=True))
+                                                              decay_rate=model_parameters['decay_rate'], staircase=True))
     for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=TF_GLOBAL_SCOPE):
         with tf.variable_scope(v.name.split(':')[0], reuse=True):
             vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -75,10 +106,10 @@ def apply_gradient_with_pool_momentum(optimizer, learning_rate, global_step):
 def optimize_with_momentum(optimizer, loss, global_step, learning_rate):
     vel_update_ops, grad_update_ops = [], []
 
-    if decay_learning_rate:
-        learning_rate = tf.maximum(min_learning_rate,
+    if model_parameters['decay_learning_rate']:
+        learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=decay_rate, staircase=True))
+                                                              decay_rate=model_parameters['decay_rate'], staircase=True))
 
     for op in cnn_ops:
         if 'conv' in op and 'fulcon' in op:
@@ -120,12 +151,12 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
     '''
     global cnn_ops, cnn_hyperparameters
 
-    if decay_learning_rate:
-        learning_rate = tf.maximum(min_learning_rate,
+    if model_parameters['decay_learning_rate']:
+        learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=decay_rate, staircase=True))
+                                                              decay_rate=model_parameters['decay_rate'], staircase=True))
     else:
-        learning_rate = tf.constant(start_lr, dtype=tf.float32, name='learning_rate')
+        learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')
 
     vel_update_ops = []
     grad_ops = []
@@ -273,7 +304,7 @@ def momentum_gradient_with_indices(optimizer, loss, filter_indices_to_replace, o
     grad_ops = []
     grads_w, grads_b = {}, {}
     mask_grads_w, mask_grads_b = {}, {}
-    learning_rate = tf.constant(start_lr, dtype=tf.float32, name='learning_rate')
+    learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')
 
     filter_indices_to_replace = tf.reshape(filter_indices_to_replace, [-1, 1])
     replace_amnt = tf.shape(filter_indices_to_replace)[0]

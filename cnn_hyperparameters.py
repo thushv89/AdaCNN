@@ -4,24 +4,26 @@ import os
 
 
 def get_research_hyperparameters(dataset_name, adapt, use_pooling):
+    '''
+    These are various research hyperparameters used in AdaCNN.
+    Some hyperparameters can be sent as arguments for convenience
+    :param dataset_name:
+    :param adapt: Whether use AdaCNN or Rigid-CNN
+    :param use_pooling: Use Rigid-CNN-B or Rigid-CNN
+    :return: Research hyperparamters as a dictionary
+    '''
     research_parameters = {
-        'save_train_test_images': False,
-    # If true will save train and test images randomly (to make sure images are correctly read)
-        'log_class_distribution': True, 'log_distribution_every': 128,
-    # log distribution of data (useful for generating data distribution over time curves)
+        'save_train_test_images': False, # If true will save train and test images randomly (to make sure images are correctly read)
+        'log_class_distribution': True, 'log_distribution_every': 128, # log distribution of data (useful for generating data distribution over time curves)
         'adapt_structure': adapt,  # Enable AdaCNN behavior
         'hard_pool_acceptance_rate': 0.1,  # Probability with which data is accepted in to the pool
         'replace_op_train_rate': 0.8,  # amount of batches from hard_pool selected to train
         'optimizer': 'Momentum', 'momentum': 0.9, 'pool_momentum': 0.0,  # Two momentums one for data one for pool
-        'use_custom_momentum_opt': True,
-    # Use a custom implemented momentum (Tensorflow builtin optimizer doesnot support variable size tensors
-        'remove_filters_by': 'Activation',
-    # The criteria for removing filters (AdaCNN) set of minimum maximum mean activations
-        'optimize_end_to_end': True,
-    # if true functions such as add and finetune will optimize the network from starting layer to end (fulcon_out)
-        'loss_diff_threshold': 0.02,  # This is used to check if the loss reduction has stabalized
-        'start_adapting_after': 500,
-    # Acts as a warming up phase, adapting from the very begining can make CNNs unstable
+        'use_custom_momentum_opt': True, # Use a custom implemented momentum (Tensorflow builtin optimizer doesnot support variable size tensors
+        'remove_filters_by': 'Activation', # The criteria for removing filters (AdaCNN) set of minimum maximum mean activations
+        'optimize_end_to_end': True, # if true functions such as add and finetune will optimize the network from starting layer to end (fulcon_out)
+        'loss_diff_threshold': 0.02, # This is used to check if the loss reduction has stabalized
+        'start_adapting_after': 500, # Acts as a warming up phase, adapting from the very begining can make CNNs unstable
         'debugging': True if logging_level == logging.DEBUG else False,
         'stop_training_at': 11000,  # If needed to truncate training earlier
         'train_min_activation': False,
@@ -41,6 +43,10 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling):
         research_parameters['hard_pool_max_threshold'] = 0.2
     elif dataset_name=='svhn-10':
         research_parameters['start_adapting_after'] = 1000
+
+    if adapt:
+        # quickly accumulate data at the beginning
+        research_parameters['hard_pool_acceptance_rate'] *= 2.0
 
     return research_parameters
 
@@ -73,9 +79,20 @@ def get_interval_related_hyperparameters(dataset_name):
     return interval_parameters
 
 
-def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, dataset_info):
+def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling):
 
     model_hyperparameters = {}
+
+    if dataset_name=='cifar-10':
+        model_hyperparameters['num_labels'] = 10
+    elif dataset_name=='cifar-100':
+        model_hyperparameters['num_labels'] = 100
+    elif dataset_name=='svhn-10':
+        model_hyperparameters['num_labels'] = 10
+    elif dataset_name=='imagenet-250':
+        model_hyperparameters['num_labels'] = 250
+
+
     model_hyperparameters['batch_size'] = 128  # number of datapoints in a single batch
     model_hyperparameters['start_lr'] = 0.01
     model_hyperparameters['min_learning_rate'] = 0.0001
@@ -86,60 +103,57 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['use_dropout'] = True
     model_hyperparameters['use_loc_res_norm'] = False
     # keep beta small (0.2 is too much >0.002 seems to be fine)
-    include_l2_loss = True
-    beta = 1e-5
-    check_early_stopping_from = 5
-    accuracy_drop_cap = 3
-    iterations_per_batch = 1
-    epochs = 5
-    final_2d_width = None
+    model_hyperparameters['include_l2_loss'] = True
+    model_hyperparameters['beta'] = 1e-5
+    model_hyperparameters['check_early_stopping_from'] = 5
+    model_hyperparameters['accuracy_drop_cap'] = 3
+    model_hyperparameters['iterations_per_batch'] = 1
+    model_hyperparameters['epochs'] = 5
 
-    lrn_radius = 5
-    lrn_alpha = 0.0001
-    lrn_beta = 0.75
+    model_hyperparameters['lrn_radius'] = 5
+    model_hyperparameters['lrn_alpha'] = 0.0001
+    model_hyperparameters['lrn_beta'] = 0.75
 
     if not (adapt_structure and use_pooling):
-        iterations_per_batch = 2
+        model_hyperparameters['iterations_per_batch'] = 2
 
     if adapt_structure:
-        epochs += 2  # for the trial one
-        research_parameters['hard_pool_acceptance_rate'] *= 2.0
+        model_hyperparameters['epochs'] += 2  # for the trial one
 
     if dataset_behavior == 'non-stationary':
-        include_l2_loss = False
-        use_loc_res_norm = True
-        lrn_radius = 5
-        lrn_alpha = 0.0001
-        lrn_beta = 0.75
-        start_lr = 0.01
+        model_hyperparameters['include_l2_loss'] = False
+        model_hyperparameters['use_loc_res_norm'] = True
+        model_hyperparameters['lrn_radius'] = 5
+        model_hyperparameters['lrn_alpha'] = 0.0001
+        model_hyperparameters['lrn_beta'] = 0.75
+        model_hyperparameters['start_lr'] = 0.01
 
     elif dataset_behavior == 'stationary':
-        start_lr = 0.008
-        include_l2_loss = True
-        beta = 0.0005
-        use_loc_res_norm = False
-
-
-
-    num_labels = dataset_info['n_labels']
+        model_hyperparameters['start_lr'] = 0.008
+        model_hyperparameters['include_l2_loss'] = True
+        model_hyperparameters['beta'] = 0.0005
+        model_hyperparameters['use_loc_res_norm'] = False
 
     if dataset_name == 'cifar-10':
 
-
-        pool_size = batch_size * 10 * num_labels
-        test_size = 10000
+        pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
 
         if not research_parameters['adapt_structure']:
-            cnn_string = "C,3,1,96#C,3,1,96#C,3,1,96#P,3,2,0#C,3,1,192#C,3,1,192#C,3,1,192#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,96#C,3,1,96#C,3,1,96#P,3,2,0" \
+                         "#C,3,1,192#C,3,1,192#C,3,1,192" \
+                         "#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#P,3,2,0#C,3,1,32#C,3,1,32#C,3,1,32#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#P,3,2,0" \
+                         "#C,3,1,32#C,3,1,32#C,3,1,32" \
+                         "#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
+
             filter_vector = [96, 96, 96, 0, 192, 192, 192]
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
 
     elif dataset_name== 'imagenet-250':
 
-        pool_size = batch_size * 1 * num_labels
+        pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
 
         if not research_parameters['adapt_structure']:
             cnn_string = "C,3,1,64#P,2,2,0#C,3,1,128#P,2,2,0" \
@@ -158,7 +172,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             add_amount, remove_amount = 16, 8
 
     elif dataset_name=='svhn-10':
-        pool_size = batch_size * 10 * num_labels
+        pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
         # test_size = 26032
 
         if not research_parameters['adapt_structure']:
@@ -183,42 +197,56 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     return model_hyperparameters
 
 
-def get_data_specific_hyperparameters(dataset_name, dataset_behavior):
+def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_dir):
     global research_parameters, interval_parameters
     data_hyperparameters,model_hyperparameters = {},{}
 
-    if datatype == 'cifar-10':
+    if dataset_name == 'cifar-10':
         image_size = 24
         num_labels = 10
         num_channels = 3  # rgb
         dataset_size = 50000
+        test_size = 10000
+        n_slices = 1
+        fluctuation = 50
 
-        dataset_size = 1280000
-        chunk_size = 51200
+    elif dataset_name == 'cifar-100':
 
+        image_size = 24
+        num_labels = 100
+        num_channels = 3  # rgb
+        dataset_size = 50000
+        test_size = 10000
+        n_slices = 1
+        fluctuation = 25
 
-    elif datatype == 'imagenet-250':
+    elif dataset_name == 'imagenet-250':
         image_size = 64
         num_labels = 250
         num_channels = 3  # rgb
-        learning_rate = 0.001
+        dataset_size = 300000
+        test_size = 12500
+        n_slices = 10
+        fluctuation = 15
 
-        dataset_size = 1280000
-        chunk_size = 51200
-
-    elif datatype == 'svhn-10':
+    elif dataset_name == 'svhn-10':
 
         image_size = 32
         num_labels = 10
         num_channels = 3
-        dataset_size = 128000
-        chunk_size = 25600
+        dataset_size = 73257
+        test_size = 26032
+        n_slices = 1
+        fluctuation = 50
 
+    else:
+        raise NotImplementedError
 
     data_hyperparameters['image_size'] = image_size
     data_hyperparameters['n_labels'] = num_labels
     data_hyperparameters['n_channels'] = num_channels
-    data_hyperparameters['dataset_size'] = dataset_size
-    data_hyperparameters['chunk_size'] = chunk_size
-
+    data_hyperparameters['train_size'] = dataset_size
+    data_hyperparameters['test_size'] = test_size
+    data_hyperparameters['n_slices'] = n_slices
+    data_hyperparameters['fluctuation_factor'] = fluctuation
     return data_hyperparameters

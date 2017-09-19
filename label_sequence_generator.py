@@ -93,8 +93,8 @@ def sample_from_distribution(dist,size):
 
 
 # generate gaussian priors
-def generate_gaussian_priors_for_labels(batch_size,elements,chunk_size,num_labels, fluctuation_normalizer):
-    chunk_count = int(elements/chunk_size)
+def generate_gaussian_priors_for_labels(full_size, batch_size, fluctuation_normalizer):
+    chunk_count = int(full_size//batch_size)
 
     # the upper bound of x defines the number of peaks
     # smaller bound => less peaks
@@ -117,123 +117,38 @@ def generate_gaussian_priors_for_labels(batch_size,elements,chunk_size,num_label
 
     return f_prior
 
-def sample_label_sequence_with_distribution(dist_logger, dataset_info, data_dir, f_prior, save_directory):
 
-    elements, batch_size = dataset_info['elements'], dataset_info['batch_size']
-    num_chunks = elements / chunk_size
-    resize_to = dataset_info['resize_to']
-    dataset_type, image_size = dataset_info['dataset_type'], dataset_info['image_size']
-    num_channels = dataset_info['num_channels']
+batch_index = 0
+def sample_label_sequence_for_batch(n_iterations, f_prior, batch_size, num_labels,freeze_index_increment=False):
+    '''
+    Sample data for a single batch using the prior we generated
+    :param n_iterations:
+    :param f_prior:
+    :param batch_size:
+    :param num_labels:
+    :param freeze_index_increment: Freezing index increment will cause the index not to increase
+    (Used for getting next unseen training batch for validation purpose)
+    :return:
+    '''
+    global batch_index
 
-    for i, dist in enumerate(f_prior):
-        label_sequence = sample_from_distribution(dist, chunk_size)
+    dist = f_prior[batch_index]
+    label_sequence = sample_from_distribution(dist, batch_size)
 
-        cnt = Counter(label_sequence)
-        dist_str = ''
-        for li in range(num_labels):
-            dist_str += str(cnt[li] / len(label_sequence)) + ',' if li in cnt else str(0) + ','
-        dist_logger.info('%d,%s', i, dist_str)
+    if not freeze_index_increment:
+        batch_index = (batch_index+1)%n_iterations
 
 
-if __name__ == '__main__':
-
-    global logger
-    logger = logging.getLogger('label_sequence_generator')
-    logger.setLevel(logging_level)
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(logging.Formatter(logging_format))
-    console.setLevel(logging_level)
-    logger.addHandler(console)
-
-    persist_dir = 'label_sequence_dir' # various things we persist related to ConstructorRL
-
-    dataset_type = 'imagenet-250'  # 'cifar-10 imagenet-250
-    distribution_type = 'stationary'
+def create_prior(n_iterations, distribution_type, num_labels, fluctuation_normalizer)
 
     batch_size = 128
 
-    elements = int(batch_size * 10000)  # number of elements in the whole dataset
-    # there are elements/chunk_size points in the gaussian curve for each class
-    chunk_size = int(batch_size * 10)  # number of samples sampled for each instance of the gaussian curve
-
-    if not os.path.exists(persist_dir):
-        os.makedirs(persist_dir)
-
-    class_distribution_logger = logging.getLogger('label-sequence-'+dataset_type+'-'+distribution_type)
-    class_distribution_logger.setLevel(logging.INFO)
-    cdfileHandler = logging.FileHandler(persist_dir + os.sep + 'label-sequence-'+dataset_type+'-'+distribution_type + '.log',
-                                        mode='w')
-    cdfileHandler.setFormatter(logging.Formatter('%(message)s'))
-    class_distribution_logger.addHandler(cdfileHandler)
-
-
-    dataset_folder = ''
-    dataset_sizes_file = dataset_folder+os.sep+'dataset_sizes.xml'
-    dataset_sizes = utils.retrive_dictionary_from_xml(dataset_sizes_file)
-
-    if dataset_type == 'cifar-10':
-        dataset_file = dataset_folder + os.sep + None
-        train_size, test_size = None,None
-        image_size = 32
-        num_labels = 10
-        num_channels = 3
-
-        dataset_size = 50000
-        test_size = 10000
-        fluctuation_normalizer = num_labels*5
-        dataset_info = {'dataset_type':dataset_type,'elements':elements,'chunk_size':chunk_size,'image_size':image_size,
-                        'num_channels':num_channels,'num_labels':num_labels,'dataset_size':dataset_size,'test_size':test_size}
-
-    if dataset_type == 'cifar-100':
-        image_size = 32
-        num_labels = 100
-        num_channels = 3
-
-        fluctuation_normalizer = num_labels
-        dataset_info = {'dataset_type':dataset_type,'elements':elements,'chunk_size':chunk_size,'image_size':image_size,
-                        'num_channels':num_channels,'num_labels':num_labels,'dataset_size':dataset_size,'test_size':test_size}
-
-    elif dataset_type == 'svhn-10':
-        image_size = 32
-        num_labels = 10
-        num_channels = 3
-
-        image_use_counter = {}
-        dataset_info = {'dataset_type': dataset_type, 'elements': elements, 'chunk_size': chunk_size,
-                        'image_size': image_size,
-                        'num_channels': num_channels, 'num_labels': num_labels, 'dataset_size': dataset_size,
-                        'test_size': test_size}
-
-    elif dataset_type == 'imagenet-250':
-
-        train_size, test_size = dataset_sizes['train_dataset'],dataset_sizes['valid_dataset']
-
-        image_size = 128
-        num_labels = 250
-        num_channels = 3
-
-        chunk_size = int(batch_size * 50)  # number of samples sampled for each instance of the gaussian curve
-
-
-        image_use_counter = {}
-        dataset_info = {'dataset_type':dataset_type,'elements':elements,'chunk_size':chunk_size,'image_size':image_size,'num_labels':num_labels,'dataset_size':train_size,
-                        'num_channels':num_channels,'data_in_memory':chunk_size,'resize_to':resize_to,'test_size':test_size}
-
-    logger.info('='*60)
-    logger.info('Dataset Information')
-    logger.info('\t%s',str(dataset_info))
-    logger.info('='*60)
-
-    logger.info('Generating gaussian priors')
     if distribution_type=='non-stationary':
-        priors = generate_gaussian_priors_for_labels(batch_size,elements,chunk_size,num_labels, fluctuation_normalizer)
+        priors = generate_gaussian_priors_for_labels(n_iterations*batch_size,batch_size,fluctuation_normalizer)
     elif distribution_type=='stationary':
-        priors = np.ones((elements//chunk_size,num_labels))*(1.0/num_labels)
-    else:
-        raise NotImplementedError
+        priors = np.ones((n_iterations,num_labels))*(1.0/num_labels)
 
-    logger.info('\tGenerated priors of size: %d,%d',priors.shape[0],priors.shape[1])
-
+    return priors
 
 def plot_distribution(priors):
     '''

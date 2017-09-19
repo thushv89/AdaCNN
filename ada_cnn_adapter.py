@@ -1,4 +1,14 @@
+import tensorflow as tf
+import constants
+import numpy as np
 
+
+TF_WEIGHTS = constants.TF_WEIGHTS
+TF_BIAS = constants.TF_BIAS
+TF_TRAIN_MOMENTUM = constants.TF_TRAIN_MOMENTUM
+TF_POOL_MOMENTUM = constants.TF_POOL_MOMENTUM
+
+research_parameters = cnn_hyperparameters.get_research_hyperparameters(...)
 
 def add_with_action(
         op, tf_action_info, tf_weights_this, tf_bias_this,
@@ -295,3 +305,17 @@ def remove_with_action(op, tf_action_info, tf_activations, tf_cnn_hyperparameter
                 update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
 
     return update_ops, tf_indices_to_rm
+
+
+def update_tf_hyperparameters(op,tf_weight_shape,tf_in_size):
+    global cnn_ops, cnn_hyperparameters
+    update_ops = []
+    if 'conv' in op:
+        with tf.variable_scope(op,reuse=True):
+            update_ops.append(tf.assign(tf.get_variable(TF_CONV_WEIGHT_SHAPE_STR,dtype=tf.int32),tf_weight_shape))
+    if 'fulcon' in op:
+        with tf.variable_scope(op,reuse=True):
+            update_ops.append(tf.assign(tf.get_variable(TF_FC_WEIGHT_IN_STR,dtype=tf.int32),tf_in_size))
+
+    return update_ops
+

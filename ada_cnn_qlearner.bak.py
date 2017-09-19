@@ -238,9 +238,6 @@ class AdaCNNAdaptingQLearner(object):
         assert len(state_history) == self.state_history_length
         return preproc_input
 
-    # ==================================================================
-    # All neural network related TF operations
-
     def tf_init_mlp(self):
         for li in range(len(self.layer_info) - 1):
             self.tf_weights.append(tf.Variable(tf.truncated_normal([self.layer_info[li], self.layer_info[li + 1]],
@@ -289,8 +286,6 @@ class AdaCNNAdaptingQLearner(object):
 
         return update_ops
 
-    # ============================================================================
-
     def restore_policy(self, **restore_data):
         # use this to restore from saved data
         self.q = restore_data['q']
@@ -308,17 +303,12 @@ class AdaCNNAdaptingQLearner(object):
                 self.q.popitem(last=True)
             self.rl_logger.debug('\tSize of Q after: %d', len(self.q))
 
+    # how action_idx turned into action list
+    # convert the idx to binary representation (example 10=> 0b1010)
+    # get text [2:] to discard first two letters
+    # prepend 0s to it so the length is equal to number of conv layers
 
     def action_list_with_index(self, action_idx):
-        '''
-        How action_idx turned into action list
-          convert the idx to binary representation (example 10=> 0b1010)
-          get text [2:] to discard first two letters
-          prepend 0s to it so the length is equal to number of conv layers
-        :param action_idx:
-        :return:
-        '''
-
         self.rl_logger.debug('Got: %d\n', action_idx)
         layer_actions = [None for _ in range(self.net_depth)]
         self.rl_logger.debug('Layer actions: %s\n', layer_actions)
@@ -347,7 +337,6 @@ class AdaCNNAdaptingQLearner(object):
         assert len(layer_actions) == self.net_depth
         self.rl_logger.debug('Return: %s\n', layer_actions)
         return layer_actions
-
 
     def index_from_action_list(self, action_list):
         self.rl_logger.debug('Got: %s\n', action_list)
@@ -387,270 +376,6 @@ class AdaCNNAdaptingQLearner(object):
     def update_trial_phase(self, trial_phase):
         self.trial_phase = trial_phase
 
-    def get_new_valid_action_when_greedy(self,action_idx,found_valid_action, data, q_for_actions):
-
-        allowed_actions = [tmp for tmp in range(self.output_size)]
-        invalid_actions = []
-
-        layer_actions_list = self.action_list_with_index(action_idx)
-        # while loop for checkin the validity of the action and choosing another if not
-        while len(q_for_actions) > 0 and not found_valid_action and action_idx < self.output_size - 2:
-
-            # if chosen action is do_nothing or finetune
-            if action_idx >= self.output_size - 2:
-                found_valid_action = True
-                break
-
-            # check for all layers if the chosen action is valid
-            for li, la in enumerate(layer_actions_list):
-                if la is None:
-                    continue
-
-                if la[0] == 'add':
-                    next_filter_count = data['filter_counts_list'][li] + la[1]
-                elif la[0] == 'remove':
-                    next_filter_count = data['filter_counts_list'][li] - la[1]
-                else:
-                    next_filter_count = data['filter_counts_list'][li]
-
-                # if action is invalid, remove that from the allowed actions
-                if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
-                    self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
-                        str(la), li, next_filter_count))
-                    try:
-                        del q_for_actions[action_idx]
-                    except:
-                        self.rl_logger.critical('Error Length Q (%d) Action idx (%d)', len(q_for_actions),
-                                                action_idx)
-                        self.rl_logger.critical('\tAction %s is not valid li(%d), (Next Filter Count: %d). ',
-                                                str(la), li, next_filter_count)
-                    allowed_actions.remove(action_idx)
-                    invalid_actions.append(action_idx)
-                    found_valid_action = False
-
-                    # udpate current action to another action
-                    max_idx = np.asscalar(np.argmax(q_for_actions))
-                    action_idx = allowed_actions[max_idx]
-                    layer_actions_list = self.action_list_with_index(action_idx)
-                    self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
-                    break
-                else:
-                    found_valid_action = True
-
-        if action_idx >= self.output_size - 2:
-            found_valid_action = True
-
-        return layer_actions_list, found_valid_action,invalid_actions
-
-    def get_new_valid_action_when_exploring(self,action_idx, found_valid_action, data,trial_action_probs):
-        '''
-            ================= Look ahead 1 step (Validate Predicted Action) =========================
-            make sure predicted action stride is not larger than resulting output.
-            make sure predicted kernel size is not larger than the resulting output
-            To avoid such scenarios we create a restricted action space if this happens and chose from that
-
-        :param found_valid_action:
-        :param data:
-        :param trial_action_probs:
-        :return:
-        '''
-
-        layer_actions_list = self.action_list_with_index(action_idx)
-        # while loop for checkin the validity of the action and choosing another if not
-        while not found_valid_action and action_idx < self.output_size - 2:
-
-            # if chosen action is do_nothing or finetune
-            if action_idx >= self.output_size - 2:
-                found_valid_action = True
-                break
-
-            # check for all layers if the chosen action is valid
-            for li, la in enumerate(layer_actions_list):
-                if la is None:  # pool layer
-                    continue
-
-                if la[0] == 'add':
-                    next_filter_count = data['filter_counts_list'][li] + la[1]
-                elif la[0] == 'remove':
-                    next_filter_count = data['filter_counts_list'][li] - la[1]
-                else:
-                    next_filter_count = data['filter_counts_list'][li]
-
-                # if action is invalid, remove that from the allowed actions
-                if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[
-                    li]:
-                    self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
-                        str(la), li, next_filter_count))
-
-                    # invalid_actions.append(action_idx)
-                    found_valid_action = False
-                    # udpate current action to another action
-                    action_idx = np.random.choice(self.output_size, p=trial_action_probs)
-
-                    layer_actions_list = self.action_list_with_index(action_idx)
-                    self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
-                    break
-                else:
-                    found_valid_action = True
-
-        if action_idx >= self.output_size - 2:
-            found_valid_action = True
-
-        return layer_actions_list,found_valid_action
-
-    def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data, q_for_actions):
-
-        invalid_actions = []
-        if self.global_time_stamp > self.stop_exploring_after:
-            allowed_actions = np.argsort(q_for_actions).flatten()[floor(
-                1.0 * self.output_size / 4.0):]  # Only get a random index from the highest q values
-            allowed_actions = allowed_actions.tolist()
-        else:
-            allowed_actions = [tmp for tmp in range(self.output_size)]
-
-        while not found_valid_action and action_idx < self.output_size - 2:
-            self.rl_logger.debug('Checking action validity')
-            if action_idx >= self.output_size - 2:
-                found_valid_action = True
-                break
-
-            for li, la in enumerate(layer_actions_list):
-                if la is None:
-                    continue
-                elif la[0] == 'add':
-                    next_filter_count = data['filter_counts_list'][li] + la[1]
-                elif la[0] == 'remove':
-                    next_filter_count = data['filter_counts_list'][li] - la[1]
-                else:
-                    next_filter_count = data['filter_counts_list'][li]
-
-                if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
-                    self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ', str(la), li,
-                                         next_filter_count)
-                    allowed_actions.remove(action_idx)
-                    invalid_actions.append(action_idx)
-                    found_valid_action = False
-
-                    action_idx = np.random.choice(allowed_actions)
-                    layer_actions_list = self.action_list_with_index(action_idx)
-                    self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
-                    break
-                else:
-                    found_valid_action = True
-
-        if action_idx >= self.output_size - 2:
-            found_valid_action = True
-
-        return layer_actions_list, invalid_actions
-
-    def get_explore_type_action(self,data,history_t_plus_1):
-
-        trial_action_probs = self.get_trial_phase_action_probs()
-
-        action_idx = np.random.choice(self.output_size, p=trial_action_probs)
-
-
-        found_valid_action = False
-        layer_actions_list, found_valid_action = self.get_new_valid_action_when_exploring(
-            action_idx, found_valid_action, data, trial_action_probs=trial_action_probs
-        )
-
-        assert found_valid_action
-
-        if len(history_t_plus_1) == self.state_history_length:
-            curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
-            q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
-            q_for_actions = q_for_actions.flatten().tolist()
-
-            q_value_strings = ''
-            for q_val in q_for_actions:
-                q_value_strings += '%.5f' % q_val + ','
-            self.q_logger.info("%d,%s", self.local_time_stamp, q_value_strings)
-            self.rl_logger.debug('\tPredicted Q: %s', q_for_actions[:10])
-
-        if len(self.rand_state_list) < self.rand_state_length and \
-                        np.random.random() < self.rand_state_accum_rate and \
-                        len(history_t_plus_1) == self.state_history_length:
-            self.rand_state_list.append(self.phi(history_t_plus_1))
-
-
-        return layer_actions_list
-
-    def get_greedy_type_action(self,data,history_t_plus_1):
-
-        curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
-        q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
-        q_for_actions = q_for_actions.flatten().tolist()
-
-        q_value_strings = ''
-        for q_val in q_for_actions:
-            q_value_strings += '%.5f' % q_val + ','
-        self.q_logger.info("%d,%s", self.local_time_stamp, q_value_strings)
-        self.rl_logger.debug('\tPredicted Q: %s', q_for_actions[:10])
-
-        # Finding when to stop adapting
-        # for this we choose the point the finetune operation has the
-        # maximum utility compared to other actions and itself previously
-        if self.trial_phase > self.trial_phase_threshold * 1.5 and np.argmax(q_for_actions) == self.output_size - 1:
-            if q_for_actions[-1] > self.max_q_ft:
-                assert self.trial_phase >= 1.0
-                self.max_q_ft = q_for_actions[-1]
-                self.ft_saturated_count = 0
-            else:
-                self.ft_saturated_count += 1
-
-            if self.ft_saturated_count > self.threshold_stop_adapting:
-                self.stop_adapting = True
-        else:
-            self.ft_saturated_count = 0
-
-        action_type = 'Deterministic'
-        action_idx = np.asscalar(np.argmax(q_for_actions))
-
-        if np.random.random() < 0.25:
-            action_idx = np.asscalar(np.argsort(q_for_actions).flatten()[-2])
-
-        found_valid_action = False
-        layer_actions_list, found_valid_action, invalid_actions = self.get_new_valid_action_when_greedy(
-            action_idx, found_valid_action, data, q_for_actions
-        )
-
-        self.rl_logger.debug('\tChose: %s' % str(layer_actions_list))
-
-        assert found_valid_action
-
-        return layer_actions_list
-
-    def get_stochastic_type_action(self,data, history_t_plus_1):
-
-        curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
-        q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
-
-        # not to restrict from the beginning
-        if self.global_time_stamp > self.stop_exploring_after:
-            rand_indices = np.argsort(q_for_actions).flatten()[
-                           ceil(2.0 * self.output_size / 4.0):]  # Only get a random index from the highest q values
-            self.rl_logger.info('Allowed action indices: %s', rand_indices)
-            action_idx = np.random.choice(rand_indices)
-        else:
-            action_idx = np.random.randint(0, self.output_size)
-        layer_actions_list = self.action_list_with_index(action_idx)
-        self.rl_logger.debug('\tChose: %s' % str(layer_actions_list))
-
-        # ================= Look ahead 1 step (Validate Predicted Action) =========================
-        # make sure predicted action stride is not larger than resulting output.
-        # make sure predicted kernel size is not larger than the resulting output
-        # To avoid such scenarios we create a
-        #  action space if this happens
-
-        # Check if the next filter count is invalid for any layer
-        found_valid_action = False
-        layer_actions_list, invalid_actions = self.get_new_valid_action_when_stochastic(action_idx,found_valid_action,data,q_for_actions)
-
-        assert found_valid_action
-
-        return layer_actions_list
-
     def output_action(self, data):
         invalid_actions = []
         # data => ['distMSE']['filter_counts']
@@ -674,27 +399,244 @@ class AdaCNNAdaptingQLearner(object):
         n_conv_last_half = int(self.n_conv - n_conv_first_half)
         assert n_conv_first_half + n_conv_last_half == self.n_conv
         if self.trial_phase < self.trial_phase_threshold:
-            action_type = 'Explore'
-            layer_actions_list = self.get_explore_type_action(data,history_t_plus_1)
+
+            trial_action_probs = self.get_trial_phase_action_probs()
+
+            action_idx = np.random.choice(self.output_size, p=trial_action_probs)
+            layer_actions_list = self.action_list_with_index(action_idx)
+
+            found_valid_action = False
+
+            # while loop for checkin the validity of the action and choosing another if not
+            while not found_valid_action and action_idx < self.output_size - 2:
+
+                # if chosen action is do_nothing or finetune
+                if action_idx >= self.output_size - 2:
+                    found_valid_action = True
+                    break
+
+                # check for all layers if the chosen action is valid
+                for li, la in enumerate(layer_actions_list):
+                    if la is None: # pool layer
+                        continue
+
+                    if la[0] == 'add':
+                        next_filter_count = data['filter_counts_list'][li] + la[1]
+                    elif la[0] == 'remove':
+                        next_filter_count = data['filter_counts_list'][li] - la[1]
+                    else:
+                        next_filter_count = data['filter_counts_list'][li]
+
+                    # if action is invalid, remove that from the allowed actions
+                    if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[
+                        li]:
+                        self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
+                            str(la), li, next_filter_count))
+
+                        # invalid_actions.append(action_idx)
+                        found_valid_action = False
+                        # udpate current action to another action
+                        action_idx = np.random.choice(self.output_size, p=trial_action_probs)
+
+                        layer_actions_list = self.action_list_with_index(action_idx)
+                        self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
+                        break
+                    else:
+                        found_valid_action = True
+
+            if action_idx >= self.output_size - 2:
+                found_valid_action = True
+            assert found_valid_action
+
+            if len(history_t_plus_1) == self.state_history_length:
+                curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
+                q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
+                q_for_actions = q_for_actions.flatten().tolist()
+
+                q_value_strings = ''
+                for q_val in q_for_actions:
+                    q_value_strings += '%.5f' % q_val + ','
+                self.q_logger.info("%d,%s", self.local_time_stamp, q_value_strings)
+                self.rl_logger.debug('\tPredicted Q: %s', q_for_actions[:10])
+
+            if len(self.rand_state_list) < self.rand_state_length and \
+                            np.random.random() < self.rand_state_accum_rate and \
+                            len(history_t_plus_1) == self.state_history_length:
+                self.rand_state_list.append(self.phi(history_t_plus_1))
 
         # deterministic selection (if epsilon is not 1 or q is not empty)
         elif np.random.random() > self.epsilon and len(history_t_plus_1) == self.state_history_length:
             self.rl_logger.info('Choosing action deterministic...')
             # we create this copy_actions in case we need to change the order the actions processed
             # without changing the original action space (self.actions)
-            action_type = 'Greedy'
-            layer_actions_list = self.get_greedy_type_action(data,history_t_plus_1)
+
+            curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
+            q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
+            q_for_actions = q_for_actions.flatten().tolist()
+
+            q_value_strings = ''
+            for q_val in q_for_actions:
+                q_value_strings += '%.5f' % q_val + ','
+            self.q_logger.info("%d,%s", self.local_time_stamp, q_value_strings)
+            self.rl_logger.debug('\tPredicted Q: %s', q_for_actions[:10])
+
+            # Finding when to stop adapting
+            # for this we choose the point the finetune operation has the
+            # maximum utility compared to other actions and itself previously
+            if self.trial_phase > self.trial_phase_threshold * 1.5 and np.argmax(q_for_actions) == self.output_size - 1:
+                if q_for_actions[-1] > self.max_q_ft:
+                    assert self.trial_phase >= 1.0
+                    self.max_q_ft = q_for_actions[-1]
+                    self.ft_saturated_count = 0
+                else:
+                    self.ft_saturated_count += 1
+
+                if self.ft_saturated_count > self.threshold_stop_adapting:
+                    self.stop_adapting = True
+            else:
+                self.ft_saturated_count = 0
+
+            action_type = 'Deterministic'
+            action_idx = np.asscalar(np.argmax(q_for_actions))
+
+            if np.random.random() < 0.25:
+                action_idx = np.asscalar(np.argsort(q_for_actions).flatten()[-2])
+
+            layer_actions_list = self.action_list_with_index(action_idx)
+            self.rl_logger.debug('\tChose: %s' % str(layer_actions_list))
+
+            # ================= Look ahead 1 step (Validate Predicted Action) =========================
+            # make sure predicted action stride is not larger than resulting output.
+            # make sure predicted kernel size is not larger than the resulting output
+            # To avoid such scenarios we create a restricted action space if this happens and chose from that
+
+            found_valid_action = False
+            allowed_actions = [tmp for tmp in range(self.output_size)]
+
+            # while loop for checkin the validity of the action and choosing another if not
+            while len(q_for_actions) > 0 and not found_valid_action and action_idx < self.output_size - 2:
+
+                # if chosen action is do_nothing or finetune
+                if action_idx >= self.output_size - 2:
+                    found_valid_action = True
+                    break
+
+                # check for all layers if the chosen action is valid
+                for li, la in enumerate(layer_actions_list):
+                    if la is None:
+                        continue
+
+                    if la[0] == 'add':
+                        next_filter_count = data['filter_counts_list'][li] + la[1]
+                    elif la[0] == 'remove':
+                        next_filter_count = data['filter_counts_list'][li] - la[1]
+                    else:
+                        next_filter_count = data['filter_counts_list'][li]
+
+                    # if action is invalid, remove that from the allowed actions
+                    if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
+                        self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
+                        str(la), li, next_filter_count))
+                        try:
+                            del q_for_actions[action_idx]
+                        except:
+                            self.rl_logger.critical('Error Length Q (%d) Action idx (%d)', len(q_for_actions),
+                                                    action_idx)
+                            self.rl_logger.critical('\tAction %s is not valid li(%d), (Next Filter Count: %d). ',
+                                                    str(la), li, next_filter_count)
+                        allowed_actions.remove(action_idx)
+                        invalid_actions.append(action_idx)
+                        found_valid_action = False
+
+                        # udpate current action to another action
+                        max_idx = np.asscalar(np.argmax(q_for_actions))
+                        action_idx = allowed_actions[max_idx]
+                        layer_actions_list = self.action_list_with_index(action_idx)
+                        self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
+                        break
+                    else:
+                        found_valid_action = True
+
+            if action_idx >= self.output_size - 2:
+                found_valid_action = True
+            assert found_valid_action
 
         # random selection
         else:
             self.rl_logger.info('Choosing action stochastic...')
             action_type = 'Stochastic'
 
-            layer_actions_list = self.get_stochastic_type_action(data,history_t_plus_1)
+            curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
+            q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
+
+            # not to restrict from the beginning
+            if self.global_time_stamp > self.stop_exploring_after:
+                rand_indices = np.argsort(q_for_actions).flatten()[
+                               ceil(2.0 * self.output_size / 4.0):]  # Only get a random index from the highest q values
+                self.rl_logger.info('Allowed action indices: %s', rand_indices)
+                action_idx = np.random.choice(rand_indices)
+            else:
+                action_idx = np.random.randint(0, self.output_size)
+            layer_actions_list = self.action_list_with_index(action_idx)
+            self.rl_logger.debug('\tChose: %s' % str(layer_actions_list))
+
+            # ================= Look ahead 1 step (Validate Predicted Action) =========================
+            # make sure predicted action stride is not larger than resulting output.
+            # make sure predicted kernel size is not larger than the resulting output
+            # To avoid such scenarios we create a
+            #  action space if this happens
+
+            # Check if the next filter count is invalid for any layer
+            found_valid_action = False
+            if self.global_time_stamp > self.stop_exploring_after:
+                allowed_actions = np.argsort(q_for_actions).flatten()[floor(
+                    1.0 * self.output_size / 4.0):]  # Only get a random index from the highest q values
+                allowed_actions = allowed_actions.tolist()
+            else:
+                allowed_actions = [tmp for tmp in range(self.output_size)]
+
+            while not found_valid_action and action_idx < self.output_size - 2:
+                self.rl_logger.debug('Checking action validity')
+                if action_idx >= self.output_size - 2:
+                    found_valid_action = True
+                    break
+
+                for li, la in enumerate(layer_actions_list):
+                    if la is None:
+                        continue
+                    elif la[0] == 'add':
+                        next_filter_count = data['filter_counts_list'][li] + la[1]
+                    elif la[0] == 'remove':
+                        next_filter_count = data['filter_counts_list'][li] - la[1]
+                    else:
+                        next_filter_count = data['filter_counts_list'][li]
+
+                    if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
+                        self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ', str(la), li,
+                                             next_filter_count)
+                        allowed_actions.remove(action_idx)
+                        invalid_actions.append(action_idx)
+                        found_valid_action = False
+
+                        action_idx = np.random.choice(allowed_actions)
+                        layer_actions_list = self.action_list_with_index(action_idx)
+                        self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
+                        break
+                    else:
+                        found_valid_action = True
+
+            if action_idx >= self.output_size - 2:
+                found_valid_action = True
+            assert found_valid_action
 
         # decay epsilon
         if self.trial_phase >= self.trial_phase_threshold:
-            self.epsilon = max(self.epsilon * 0.95, self.min_epsilon)
+            self.epsilon = max(self.epsilon * 0.9, self.min_epsilon)
+
+            # TODO: same action taking repeatedly
+            # this is to reduce taking the same action over and over again
+            # if self.same_action_count >= self.same_action_threshold:
+            #    self.epsilon = min(self.epsilon*1.01,1.0)
 
         self.rl_logger.debug('=' * 60)
         self.rl_logger.debug('State')
@@ -749,6 +691,7 @@ class AdaCNNAdaptingQLearner(object):
             trial_action_probs.extend([0.05, 0.15])
 
         return trial_action_probs
+
 
     def get_action_string(self, layer_action_list):
         act_string = ''
@@ -842,38 +785,6 @@ class AdaCNNAdaptingQLearner(object):
 
         return x, y, rewards, sj
 
-
-    def get_complexity_penalty(self, curr_comp, prev_comp, filter_bound_vec,act_string):
-
-        if self.num_classes>101:
-            return 0.0
-
-        # total gain should be negative for taking add action before half way througl a layer
-        # total gain should be positve for taking add action after half way througl a layer
-        total = 0
-        split_factor = 0.51
-        for l_i,(c_depth, p_depth, up_dept) in enumerate(zip(curr_comp,prev_comp,filter_bound_vec)):
-            if up_dept>0 and abs(c_depth-p_depth) > 0:
-                total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
-
-        if 'add' in act_string:
-            return - total * (1/self.num_classes)
-        elif 'remove' in act_string:
-            return total * (1/self.num_classes)
-        else:
-            return 0.0
-
-    def get_grow_encouragement(self,affected_layer_idx,action_string, curr_comp, filter_bound_vec,top_k,split_fraction):
-
-        growth_enc = (1+np.log(affected_layer_idx+1))*\
-                     ((filter_bound_vec[affected_layer_idx]*split_fraction) - curr_comp[affected_layer_idx])*(top_k/self.num_classes)\
-                     /(filter_bound_vec[affected_layer_idx])
-        if 'add' in action_string:
-            return growth_enc
-        if 'remove' in action_string:
-            return - growth_enc
-
-
     def update_policy(self, data, add_future_reward):
         # data['prev_state']
         # data['prev_action']
@@ -896,8 +807,7 @@ class AdaCNNAdaptingQLearner(object):
                     x, y, r, next_state = self.get_xy_with_experince(self.experience)
 
                 if self.global_time_stamp < 5:
-                    assert np.max(x) <= 1.0 and np.max(x) >= -1.0 \
-                           and np.max(y) <= 1.0 and np.max(y) >= -1.0
+                    assert np.max(x) <= 1.0 and np.max(x) >= -1.0 and np.max(y) <= 1.0 and np.max(y) >= -1.0
 
                 self.rl_logger.debug('Summary of Structured Experience data')
                 self.rl_logger.debug('\tX:%s', x.shape)
@@ -932,16 +842,11 @@ class AdaCNNAdaptingQLearner(object):
                 if self.global_time_stamp > 0 and self.global_time_stamp % self.exp_clean_interval == 0:
                     self.clean_experience()
 
-
+        mean_accuracy = (data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0
+        immediate_mean_accuracy = (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
         si, ai_list, sj = data['prev_state'], data['prev_action'], data['curr_state']
         self.rl_logger.debug('Si,Ai,Sj: %s,%s,%s', si, ai_list, sj)
-
-        curr_action_string = self.get_action_string(ai_list)
-        comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
-                                                curr_action_string)
-        mean_accuracy = (data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0
-        immediate_mean_accuracy = (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
         aux_penalty, prev_aux_penalty = 0, 0
         for li, la in enumerate(ai_list):
@@ -958,7 +863,7 @@ class AdaCNNAdaptingQLearner(object):
             else:
                 continue
 
-        reward = mean_accuracy - comp_gain + immediate_mean_accuracy # new
+        reward = mean_accuracy + # new
         curr_action_string = self.get_action_string(ai_list)
 
         # exponential magnifier to prevent from being taken consecutively
