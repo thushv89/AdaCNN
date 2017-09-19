@@ -99,12 +99,55 @@ pool_size = model_hyperparameters['pool_size']
 
 cnn_ops, cnn_hyperparameters = None, None
 
+state_action_history = []
+
+cnn_ops, cnn_hyperparameters = None, None
+num_gpus = -1
+
+# Tensorflow Op / Variable related Python variables
+# Optimizer Related
+optimizer = None
+# Optimizer (Data) Related
+tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, \
+update_train_velocity_op, tf_mean_activation, mean_loss_op = None,None,None,None,None,None
+
+# Optimizer (Pool) Related
+tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss = None, None, None, None, None
+
+# Data related
+tf_train_data_batch, tf_train_label_batch, tf_data_weights = [], [], []
+tf_test_dataset, tf_test_labels = None, None
+tf_valid_data_batch, tf_valid_label_batch = None, None
+
+# Data (Pool) related
+tf_pool_data_batch, tf_pool_label_batch = [], []
+pool_pred = None
+
+# Logit related
+tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions = [], [], [], [], []
+tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops = [], [], []
+tower_logits = []
+
+# Test/Valid related
+valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
+
+# Adaptation related
+tf_slice_optimize = {}
+tf_slice_vel_update = {}
+tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
+tf_indices, tf_indices_size = None,None
+tf_update_hyp_ops = {}
+tf_action_info, tf_running_activations = None, None
+tf_weights_this,tf_bias_this = None, None
+tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
+tf_weight_shape,tf_in_size = None, None
+increment_global_step_op = None
 
 # Loggers
 logger = None
 
 def inference(dataset, tf_cnn_hyperparameters, training):
-    global cnn_ops
+    global logger,cnn_ops
 
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
 
@@ -289,25 +332,14 @@ def accuracy(predictions, labels):
             / predictions.shape[0])
 
 
-def distort_img_with_tf(distort_img_batch):
-    dist_img_list = []
-    img_list = tf.unpack(distort_img_batch, axis=0)
-    for img in img_list:
-
-        if np.random.random() < 0.2:
-            img = tf.image.flip_left_right(img)
-        if np.random.random() < 0.6:
-            img = tf.image.random_brightness(img, 0.6)
-        if np.random.random() < 0.8:
-            img = tf.image.random_contrast(img, 0.2, 1.2)
-
-        dist_img_list.append(img)
-    return tf.pack(dist_img_list, axis=0)
-
 
 def setup_loggers(research_parameters):
     logger = logging.getLogger('main_logger')
     logger.setLevel(logging_level)
+    fileHandler = logging.FileHandler(output_dir + os.sep + 'ada_cnn_main.log', mode='w')
+    fileHandler.setLevel(logging.DEBUG)
+    fileHandler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(fileHandler)
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(logging.Formatter(logging_format))
     console.setLevel(logging_level)
@@ -380,51 +412,6 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
     for act_i, layer_act in enumerate(activation_list):
         current_activations[cnn_ops[conv_op_ids[act_i]]] = layer_act
     return current_activations
-
-
-state_action_history = []
-
-cnn_ops, cnn_hyperparameters = None, None
-num_gpus = -1
-
-# Tensorflow Op / Variable related Python variables
-# Optimizer Related
-optimizer = None
-# Optimizer (Data) Related
-tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, \
-update_train_velocity_op, tf_mean_activation, mean_loss_op = None,None,None,None,None,None
-
-# Optimizer (Pool) Related
-tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss = None, None, None, None, None
-
-# Data related
-tf_train_data_batch, tf_train_label_batch, tf_data_weights = [], [], []
-tf_test_dataset, tf_test_labels = None, None
-tf_valid_data_batch, tf_valid_label_batch = None, None
-
-# Data (Pool) related
-tf_pool_data_batch, tf_pool_label_batch = [], []
-pool_pred = None
-
-# Logit related
-tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions = [], [], [], [], []
-tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops = [], [], []
-tower_logits = []
-
-# Test/Valid related
-valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
-
-# Adaptation related
-tf_slice_optimize = {}
-tf_slice_vel_update = {}
-tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
-tf_indices, tf_indices_size = None,None
-tf_update_hyp_ops = {}
-tf_action_info, tf_running_activations = None, None
-tf_weights_this,tf_bias_this = None, None
-tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
-tf_weight_shape,tf_in_size = None, None
-increment_global_step_op = None
 
 def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global tf_train_data_batch, tf_train_label_batch, tf_data_weights
@@ -656,7 +643,7 @@ def get_pool_valid_accuracy(hard_pool_valid):
     global pool_dataset, pool_labels, pool_pred
     tmp_pool_accuracy = []
     pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
-    for pool_id in range((hard_pool_valid.get_size() // batch_size) // 2):
+    for pool_id in range(0,(hard_pool_valid.get_size() // batch_size)):
         pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
         pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
         pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
@@ -675,7 +662,7 @@ def fintune_with_pool_ft(hard_pool_ft):
         # Randomize data in the batch
         pool_dataset, pool_labels = augment_pool_data(hard_pool_ft)  # Train with latter half of the data
 
-        for pool_id in range((hard_pool_ft.get_size() // batch_size) // 2,
+        for pool_id in range(0,
                              (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
@@ -693,6 +680,15 @@ def fintune_with_pool_ft(hard_pool_ft):
 
 
 def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft):
+    '''
+    Run the add operation using the given Session
+    :param session:
+    :param current_op:
+    :param li:
+    :param last_conv_id:
+    :param hard_pool_ft:
+    :return:
+    '''
     amount_to_add = ai[1]
 
     if current_op != last_conv_id:
@@ -1052,6 +1048,7 @@ def top_n_accuracy(predictions,labels,n):
 
 
 if __name__ == '__main__':
+
     global cnn_string, cnn_ops, cnn_hyperparameters, filter_vector
     global dataset_info, n_slices, train_size, test_size
 
@@ -1510,8 +1507,7 @@ if __name__ == '__main__':
                     # without if can give problems in exploratory stage because of no data in the pool
                     if hard_pool_ft.get_size() > batch_size:
                         # Train with latter half of the data
-                        for pool_id in range((hard_pool_ft.get_size() // batch_size) // 2,
-                                             (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+                        for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
                             if np.random.random() < research_parameters['finetune_rate']:
                                 pool_feed_dict = {}
                                 for gpu_id in range(num_gpus):
