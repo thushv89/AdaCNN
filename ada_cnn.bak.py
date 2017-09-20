@@ -20,7 +20,7 @@ import queue
 from multiprocessing import Pool as MPPool
 import copy
 import constants
-import cnn_hyperparameters
+import cnn_hyperparameters_getter
 import cnn_optimizer
 import cnn_intializer
 
@@ -52,13 +52,13 @@ else:
     raise NotImplementedError
 
 # interval parameters
-interval_parameters = cnn_hyperparameters.get_interval_related_hyperparameters(dataset_name)
+interval_parameters = cnn_hyperparameters_getter.get_interval_related_hyperparameters(dataset_name)
 
 # Research parameters
-research_parameters = cnn_hyperparameters.get_research_hyperparameters(dataset_name,adapt_structure,use_pooling)
+research_parameters = cnn_hyperparameters_getter.get_research_hyperparameters(dataset_name, adapt_structure, use_pooling)
 
 # Data specific parameters
-data_hyperparameters = cnn_hyperparameters.get_data_specific_hyperparameters(dataset_name,dataset_behavior,dataset_dir)
+data_hyperparameters = cnn_hyperparameters_getter.get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_dir)
 image_size = data_hyperparameters['image_size']
 num_channels = data_hyperparameters['n_channels']
 
@@ -71,7 +71,7 @@ TF_FC_WEIGHT_OUT_STR = constants.TF_FC_WEIGHT_OUT_STR
 TF_LOSS_VEC_STR = constants.TF_LOSS_VEC_STR
 
 # Model Hyperparameters
-model_hyperparameters = cnn_hyperparameters.get_model_specific_hyperparameters(dataset_name,dataset_behavior,adapt_structure,use_pooling,num_labels)
+model_hyperparameters = cnn_hyperparameters_getter.get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, num_labels)
 
 batch_size = model_hyperparameters['batch_size']
 beta = model_hyperparameters['beta']
@@ -120,12 +120,12 @@ def inference(dataset, tf_cnn_hyperparameters, training):
         if 'conv' in op:
             with tf.variable_scope(op, reuse=True) as scope:
                 logger.debug('\tConvolving (%s) With Weights:%s Stride:%s' % (
-                op, cnn_hyperparameters[op]['weights'], cnn_hyperparameters[op]['stride']))
+                    op, cnn_hyperparameters_getter[op]['weights'], cnn_hyperparameters_getter[op]['stride']))
                 logger.debug('\t\tWeights: %s', tf.shape(tf.get_variable(TF_WEIGHTS)).eval())
                 w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
 
-                x = tf.nn.conv2d(x, w, cnn_hyperparameters[op]['stride'],
-                                 padding=cnn_hyperparameters[op]['padding'])
+                x = tf.nn.conv2d(x, w, cnn_hyperparameters_getter[op]['stride'],
+                                 padding=cnn_hyperparameters_getter[op]['padding'])
                 x = utils.lrelu(x + b, name=scope.name + '/top')
 
                 activation_ops.append(
@@ -137,15 +137,15 @@ def inference(dataset, tf_cnn_hyperparameters, training):
 
         if 'pool' in op:
             logger.debug('\tPooling (%s) with Kernel:%s Stride:%s' % (
-            op, cnn_hyperparameters[op]['kernel'], cnn_hyperparameters[op]['stride']))
-            if cnn_hyperparameters[op]['type'] is 'max':
-                x = tf.nn.max_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
-                                   strides=cnn_hyperparameters[op]['stride'],
-                                   padding=cnn_hyperparameters[op]['padding'])
-            elif cnn_hyperparameters[op]['type'] is 'avg':
-                x = tf.nn.avg_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
-                                   strides=cnn_hyperparameters[op]['stride'],
-                                   padding=cnn_hyperparameters[op]['padding'])
+                op, cnn_hyperparameters_getter[op]['kernel'], cnn_hyperparameters_getter[op]['stride']))
+            if cnn_hyperparameters_getter[op]['type'] is 'max':
+                x = tf.nn.max_pool(x, ksize=cnn_hyperparameters_getter[op]['kernel'],
+                                   strides=cnn_hyperparameters_getter[op]['stride'],
+                                   padding=cnn_hyperparameters_getter[op]['padding'])
+            elif cnn_hyperparameters_getter[op]['type'] is 'avg':
+                x = tf.nn.avg_pool(x, ksize=cnn_hyperparameters_getter[op]['kernel'],
+                                   strides=cnn_hyperparameters_getter[op]['stride'],
+                                   padding=cnn_hyperparameters_getter[op]['padding'])
             if training and use_dropout:
                 x = tf.nn.dropout(x, keep_prob=1.0 - dropout_rate, name='dropout')
 
@@ -161,7 +161,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     # convert 4D output to a 2D input to the hidden layer
                     # e.g subsample layer output [batch_size,width,height,depth] -> [batch_size,width*height*depth]
 
-                    logger.debug('Input size of fulcon_out : %d', cnn_hyperparameters[op]['in'])
+                    logger.debug('Input size of fulcon_out : %d', cnn_hyperparameters_getter[op]['in'])
                     # Transpose x (b,h,w,d) to (b,d,w,h)
                     # This help us to do adaptations more easily
                     x = tf.transpose(x, [0, 3, 1, 2])
@@ -581,7 +581,7 @@ if __name__ == '__main__':
     init_cnn_ops, init_cnn_hyperparameters, final_2d_width = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
 
     print(cnn_ops)
-    print(cnn_hyperparameters)
+    print(cnn_hyperparameters_getter)
 
     hyp_logger = logging.getLogger('hyperparameter_logger')
     hyp_logger.setLevel(logging.INFO)
@@ -589,7 +589,7 @@ if __name__ == '__main__':
     hypHandler.setFormatter(logging.Formatter('%(message)s'))
     hyp_logger.addHandler(hypHandler)
     hyp_logger.info('#Starting hyperparameters')
-    hyp_logger.info(cnn_hyperparameters)
+    hyp_logger.info(cnn_hyperparameters_getter)
     hyp_logger.info('#Dataset info')
     hyp_logger.info(dataset_info)
     hyp_logger.info('Learning rate: %.5f', start_lr)
@@ -645,7 +645,7 @@ if __name__ == '__main__':
         with tf.variable_scope(TF_GLOBAL_SCOPE) as scope:
             global_step = tf.get_variable(initializer=0, dtype=tf.int32, trainable=False, name='global_step')
             tf_cnn_hyperparameters = init_tf_hyperparameters()
-            _ = initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
+            _ = initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters_getter)
             _ = define_velocity_vectors(scope)
 
         logger.debug('CNN_HYPERPARAMETERS 2')
@@ -697,7 +697,7 @@ if __name__ == '__main__':
         for op in cnn_ops:
             if 'conv' in op:
                 logger.debug('\tDefining rolling activation mean for %s', op)
-                rolling_ativation_means[op] = np.zeros([cnn_hyperparameters[op]['weights'][3]])
+                rolling_ativation_means[op] = np.zeros([cnn_hyperparameters_getter[op]['weights'][3]])
         dist_decay = 0.5
         act_decay = 0.9
         current_state, current_action = None, None
@@ -822,7 +822,7 @@ if __name__ == '__main__':
                     logger.debug('\tRolling size (%s): %s', op, rolling_ativation_means[op].shape)
                     logger.debug('\tCurrent size (%s): %s', op, op_activations.shape)
                 for op, op_activations in current_activations.items():
-                    assert current_activations[op].size == cnn_hyperparameters[op]['weights'][3]
+                    assert current_activations[op].size == cnn_hyperparameters_getter[op]['weights'][3]
                     rolling_ativation_means[op] = act_decay * rolling_ativation_means[op] + current_activations[op]
 
                 train_losses.append(l)
@@ -1061,8 +1061,8 @@ if __name__ == '__main__':
                         filter_dict, filter_list = {}, []
                         for op_i, op in enumerate(cnn_ops):
                             if 'conv' in op:
-                                filter_dict[op_i] = cnn_hyperparameters[op]['weights'][3]
-                                filter_list.append(cnn_hyperparameters[op]['weights'][3])
+                                filter_dict[op_i] = cnn_hyperparameters_getter[op]['weights'][3]
+                                filter_list.append(cnn_hyperparameters_getter[op]['weights'][3])
                             elif 'pool' in op and op != 'pool_global':
                                 filter_dict[op_i] = 0
                                 filter_list.append(0)
@@ -1103,35 +1103,35 @@ if __name__ == '__main__':
                                                 feed_dict={
                                                     tf_action_info: np.asarray([li, 1, ai[1]]),
                                                     tf_weights_this: np.random.normal(scale=0.01, size=(
-                                                        cnn_hyperparameters[current_op]['weights'][0],
-                                                        cnn_hyperparameters[current_op]['weights'][1],
-                                                        cnn_hyperparameters[current_op]['weights'][2], amount_to_add)),
+                                                        cnn_hyperparameters_getter[current_op]['weights'][0],
+                                                        cnn_hyperparameters_getter[current_op]['weights'][1],
+                                                        cnn_hyperparameters_getter[current_op]['weights'][2], amount_to_add)),
                                                     tf_bias_this: np.random.normal(scale=0.01, size=(amount_to_add)),
 
                                                     tf_weights_next: np.random.normal(scale=0.01, size=(
-                                                        cnn_hyperparameters[next_conv_op]['weights'][0],
-                                                        cnn_hyperparameters[next_conv_op]['weights'][1],
-                                                        amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])
+                                                        cnn_hyperparameters_getter[next_conv_op]['weights'][0],
+                                                        cnn_hyperparameters_getter[next_conv_op]['weights'][1],
+                                                        amount_to_add, cnn_hyperparameters_getter[next_conv_op]['weights'][3])
                                                                                       ) if last_conv_id != current_op else
                                                     np.random.normal(scale=0.01, size=(
-                                                    amount_to_add * final_2d_width * final_2d_width,
-                                                    cnn_hyperparameters[first_fc]['out'], 1, 1)),
+                                                        amount_to_add * final_2d_width * final_2d_width,
+                                                        cnn_hyperparameters_getter[first_fc]['out'], 1, 1)),
                                                     tf_running_activations: rolling_ativation_means[current_op],
 
                                                     tf_wvelocity_this: np.zeros(shape=(
-                                                        cnn_hyperparameters[current_op]['weights'][0],
-                                                        cnn_hyperparameters[current_op]['weights'][1],
-                                                        cnn_hyperparameters[current_op]['weights'][2], amount_to_add),
+                                                        cnn_hyperparameters_getter[current_op]['weights'][0],
+                                                        cnn_hyperparameters_getter[current_op]['weights'][1],
+                                                        cnn_hyperparameters_getter[current_op]['weights'][2], amount_to_add),
                                                         dtype=np.float32),
                                                     tf_bvelocity_this: np.zeros(shape=(amount_to_add,),
                                                                                 dtype=np.float32),
                                                     tf_wvelocity_next: np.zeros(shape=(
-                                                        cnn_hyperparameters[next_conv_op]['weights'][0],
-                                                        cnn_hyperparameters[next_conv_op]['weights'][1],
-                                                        amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),
+                                                        cnn_hyperparameters_getter[next_conv_op]['weights'][0],
+                                                        cnn_hyperparameters_getter[next_conv_op]['weights'][1],
+                                                        amount_to_add, cnn_hyperparameters_getter[next_conv_op]['weights'][3]),
                                                         dtype=np.float32) if last_conv_id != current_op else
                                                     np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
-                                                                    cnn_hyperparameters[first_fc]['out'], 1, 1),
+                                                                    cnn_hyperparameters_getter[first_fc]['out'], 1, 1),
                                                              dtype=np.float32),
                                                 })
 
@@ -1147,29 +1147,29 @@ if __name__ == '__main__':
                                     logger.debug('\t\tNew Weights: %s', str(tf.shape(current_op_weights).eval()))
 
                                 # change out hyperparameter of op
-                                cnn_hyperparameters[current_op]['weights'][3] += amount_to_add
+                                cnn_hyperparameters_getter[current_op]['weights'][3] += amount_to_add
                                 if research_parameters['debugging']:
-                                    assert cnn_hyperparameters[current_op]['weights'][2] == \
+                                    assert cnn_hyperparameters_getter[current_op]['weights'][2] == \
                                            tf.shape(current_op_weights).eval()[2]
 
                                 session.run(tf_update_hyp_ops[current_op], feed_dict={
-                                    tf_weight_shape: cnn_hyperparameters[current_op]['weights']
+                                    tf_weight_shape: cnn_hyperparameters_getter[current_op]['weights']
                                 })
 
                                 if current_op == last_conv_id:
 
                                     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + first_fc, reuse=True):
                                         first_fc_weights = tf.get_variable(TF_WEIGHTS)
-                                    cnn_hyperparameters[first_fc][
+                                    cnn_hyperparameters_getter[first_fc][
                                         'in'] += final_2d_width * final_2d_width * amount_to_add
 
                                     if research_parameters['debugging']:
-                                        logger.debug('\tNew %s in: %d', first_fc, cnn_hyperparameters[first_fc]['in'])
+                                        logger.debug('\tNew %s in: %d', first_fc, cnn_hyperparameters_getter[first_fc]['in'])
                                         logger.debug('\tSummary of changes to weights of %s', first_fc)
                                         logger.debug('\t\tNew Weights: %s', str(tf.shape(first_fc_weights).eval()))
 
                                     session.run(tf_update_hyp_ops[first_fc], feed_dict={
-                                        tf_in_size: cnn_hyperparameters[first_fc]['in']
+                                        tf_in_size: cnn_hyperparameters_getter[first_fc]['in']
                                     })
 
                                 else:
@@ -1188,14 +1188,14 @@ if __name__ == '__main__':
                                         logger.debug('\t\tCurrent Weights: %s',
                                                      str(tf.shape(next_conv_op_weights).eval()))
 
-                                    cnn_hyperparameters[next_conv_op]['weights'][2] += amount_to_add
+                                    cnn_hyperparameters_getter[next_conv_op]['weights'][2] += amount_to_add
 
                                     if research_parameters['debugging']:
-                                        assert cnn_hyperparameters[next_conv_op]['weights'][2] == \
+                                        assert cnn_hyperparameters_getter[next_conv_op]['weights'][2] == \
                                                tf.shape(next_conv_op_weights).eval()[2]
 
                                     session.run(tf_update_hyp_ops[next_conv_op], feed_dict={
-                                        tf_weight_shape: cnn_hyperparameters[next_conv_op]['weights']
+                                        tf_weight_shape: cnn_hyperparameters_getter[next_conv_op]['weights']
                                     })
 
                                 # optimize the newly added fiterls only
@@ -1235,8 +1235,8 @@ if __name__ == '__main__':
                                     if np.random.random() < research_parameters['replace_op_train_rate']:
                                         pbatch_data, pbatch_labels = [], []
                                         pool_feed_dict = {
-                                            tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
-                                                                  cnn_hyperparameters[current_op]['weights'][3])}
+                                            tf_indices: np.arange(cnn_hyperparameters_getter[current_op]['weights'][3] - ai[1],
+                                                                  cnn_hyperparameters_getter[current_op]['weights'][3])}
 
                                         for gpu_id in range(num_gpus):
                                             pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
@@ -1260,7 +1260,7 @@ if __name__ == '__main__':
                                                                                         cnn_ops, convolution_op_ids)
                                         # update rolling activation means
                                         for op, op_activations in current_activations.items():
-                                            assert current_activations[op].size == cnn_hyperparameters[op]['weights'][3]
+                                            assert current_activations[op].size == cnn_hyperparameters_getter[op]['weights'][3]
                                             rolling_ativation_means[op] = act_decay * rolling_ativation_means[op] + \
                                                                           current_activations[op]
 
@@ -1319,36 +1319,36 @@ if __name__ == '__main__':
                                     logger.debug('\t\t\tIndices: %s', rm_indices[:10])
 
                                     logger.debug('\t\tSize of indices to remove: %s/%d', rm_indices.size,
-                                                 cnn_hyperparameters[current_op]['weights'][3])
+                                                 cnn_hyperparameters_getter[current_op]['weights'][3])
                                     indices_of_filters_keep = list(
-                                        set(np.arange(cnn_hyperparameters[current_op]['weights'][3])) - set(
+                                        set(np.arange(cnn_hyperparameters_getter[current_op]['weights'][3])) - set(
                                             rm_indices.tolist()))
                                     logger.debug('\t\tSize of indices to keep: %s/%d', len(indices_of_filters_keep),
-                                                 cnn_hyperparameters[current_op]['weights'][3])
+                                                 cnn_hyperparameters_getter[current_op]['weights'][3])
 
-                                cnn_hyperparameters[current_op]['weights'][3] -= amount_to_rmv
+                                cnn_hyperparameters_getter[current_op]['weights'][3] -= amount_to_rmv
                                 if research_parameters['debugging']:
                                     logger.debug('\tSize after feature map reduction: %s,%s', current_op,
                                                  tf.shape(current_op_weights).eval())
                                     assert tf.shape(current_op_weights).eval()[3] == \
-                                           cnn_hyperparameters[current_op]['weights'][3]
+                                           cnn_hyperparameters_getter[current_op]['weights'][3]
 
                                 session.run(tf_update_hyp_ops[current_op], feed_dict={
-                                    tf_weight_shape: cnn_hyperparameters[current_op]['weights']
+                                    tf_weight_shape: cnn_hyperparameters_getter[current_op]['weights']
                                 })
 
                                 if current_op == last_conv_id:
                                     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + first_fc, reuse=True):
                                         first_fc_weights = tf.get_variable(TF_WEIGHTS)
 
-                                    cnn_hyperparameters[first_fc][
+                                    cnn_hyperparameters_getter[first_fc][
                                         'in'] -= final_2d_width * final_2d_width * amount_to_rmv
                                     if research_parameters['debugging']:
                                         logger.debug('\tSize after feature map reduction: %s,%s',
                                                      first_fc, str(tf.shape(first_fc_weights).eval()))
 
                                     session.run(tf_update_hyp_ops[first_fc], feed_dict={
-                                        tf_in_size: cnn_hyperparameters[first_fc]['in']
+                                        tf_in_size: cnn_hyperparameters_getter[first_fc]['in']
                                     })
 
                                 else:
@@ -1361,16 +1361,16 @@ if __name__ == '__main__':
                                                            reuse=True):
                                         next_conv_op_weights = tf.get_variable(TF_WEIGHTS)
 
-                                    cnn_hyperparameters[next_conv_op]['weights'][2] -= amount_to_rmv
+                                    cnn_hyperparameters_getter[next_conv_op]['weights'][2] -= amount_to_rmv
 
                                     if research_parameters['debugging']:
                                         logger.debug('\tSize after feature map reduction: %s,%s', next_conv_op,
                                                      str(tf.shape(next_conv_op_weights).eval()))
                                         assert tf.shape(next_conv_op_weights).eval()[2] == \
-                                               cnn_hyperparameters[next_conv_op]['weights'][2]
+                                               cnn_hyperparameters_getter[next_conv_op]['weights'][2]
 
                                     session.run(tf_update_hyp_ops[next_conv_op], feed_dict={
-                                        tf_weight_shape: cnn_hyperparameters[next_conv_op]['weights']
+                                        tf_weight_shape: cnn_hyperparameters_getter[next_conv_op]['weights']
                                     })
 
                                 logger.info('\t(Before) Size of Rolling mean vector for %s: %s', current_op,
@@ -1510,7 +1510,7 @@ if __name__ == '__main__':
                         cnn_structure_logger.info(
                             '%d:%s:%s:%.5f:%s', (batch_id_multiplier * epoch) + batch_id, current_state, current_action,
                             np.mean(pool_accuracy),
-                            utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
+                            utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters_getter)
                         )
 
                         q_logger.info('%d,%.5f', epoch * batch_id_multiplier + batch_id, adapter.get_average_Q())

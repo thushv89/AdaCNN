@@ -11,6 +11,7 @@ TF_GLOBAL_SCOPE = constants.TF_GLOBAL_SCOPE
 TF_CONV_WEIGHT_SHAPE_STR = constants.TF_CONV_WEIGHT_SHAPE_STR
 TF_FC_WEIGHT_IN_STR = constants.TF_FC_WEIGHT_IN_STR
 TF_FC_WEIGHT_OUT_STR = constants.TF_FC_WEIGHT_OUT_STR
+TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
 
 research_parameters = None
 model_parameters = None
@@ -18,10 +19,12 @@ model_parameters = None
 logging_level, logging_format = None, None
 logger = None
 
-def set_from_main(research_params, model_params, logging_level, logging_format):
-    global research_parameters, model_parameters
+cnn_ops = None
+def set_from_main(research_params, model_params, logging_level, logging_format, ops):
+    global research_parameters, model_parameters,logger, cnn_ops
     research_parameters = research_params
     model_parameters = model_params
+    cnn_ops = ops
 
     logger = logging.getLogger('cnn_optimizer_logger')
     logger.setLevel(logging_level)
@@ -43,9 +46,15 @@ def update_train_momentum_velocity(grads_and_vars):
     # update velocity vector
 
     for (g, v) in grads_and_vars:
-        var_name = v.name.split(':')[0]
+        var_name_tokens = v.name.split(':')[0].split(TF_SCOPE_DIVIDER)
+        new_var_name = ''
+        for tok in var_name_tokens:
+            if tok.startswith('conv') or tok.startswith('fulcon'):
+                new_var_name += tok + TF_SCOPE_DIVIDER
+            elif tok.startswith(TF_WEIGHTS) or tok.startswith(TF_BIAS):
+                new_var_name += tok
 
-        with tf.variable_scope(var_name, reuse=True) as scope:
+        with tf.variable_scope(new_var_name, reuse=True) as scope:
             vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
             vel_update_ops.append(
@@ -61,9 +70,15 @@ def update_pool_momentum_velocity(grads_and_vars):
     # update velocity vector
 
     for (g, v) in grads_and_vars:
-        var_name = v.name.split(':')[0]
+        var_name_tokens = v.name.split(':')[0].split(TF_SCOPE_DIVIDER)
+        new_var_name = ''
+        for tok in var_name_tokens:
+            if tok.startswith('conv') or tok.startswith('fulcon'):
+                new_var_name += tok + TF_SCOPE_DIVIDER
+            elif tok.startswith(TF_WEIGHTS) or tok.startswith(TF_BIAS):
+                new_var_name += tok
 
-        with tf.variable_scope(var_name, reuse=True) as scope:
+        with tf.variable_scope(new_var_name, reuse=True) as scope:
             vel = tf.get_variable(TF_POOL_MOMENTUM)
 
             vel_update_ops.append(
@@ -80,10 +95,22 @@ def apply_gradient_with_momentum(optimizer, learning_rate, global_step):
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
                                                               decay_rate=model_parameters['decay_rate'], staircase=True))
-    for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=TF_GLOBAL_SCOPE):
-        with tf.variable_scope(v.name.split(':')[0], reuse=True):
-            vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-            grads_and_vars.append((vel * learning_rate, v))
+    for scope in cnn_ops:
+        if 'pool' in scope:
+            continue
+
+        with tf.variable_scope(scope, reuse=True) as scope:
+            w = tf.get_variable(TF_WEIGHTS)
+            with tf.variable_scope(TF_WEIGHTS, reuse=True):
+                logger.debug('Grads and Vars for variable %s (using scope %s)', w.name, scope.name)
+                vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                grads_and_vars.append((vel * learning_rate, w))
+
+            b = tf.get_variable(TF_BIAS)
+            with tf.variable_scope(TF_BIAS, reuse=True):
+                logger.debug('Grads and Vars for variable %s (using scope %s)', b.name, scope.name)
+                vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                grads_and_vars.append((vel * learning_rate, b))
 
     return optimizer.apply_gradients(grads_and_vars)
 
@@ -95,10 +122,21 @@ def apply_gradient_with_pool_momentum(optimizer, learning_rate, global_step):
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
                                                               decay_rate=model_parameters['decay_rate'], staircase=True))
-    for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=TF_GLOBAL_SCOPE):
-        with tf.variable_scope(v.name.split(':')[0], reuse=True):
-            vel = tf.get_variable(TF_POOL_MOMENTUM)
-            grads_and_vars.append((vel * learning_rate, v))
+    for scope in cnn_ops:
+        if 'pool' in scope:
+            continue
+        with tf.variable_scope(scope, reuse=True):
+            w = tf.get_variable(TF_WEIGHTS)
+            logger.debug('Grads and Vars for variable %s',w.name)
+            with tf.variable_scope(TF_WEIGHTS, reuse=True):
+                vel = tf.get_variable(TF_POOL_MOMENTUM)
+                grads_and_vars.append((vel * learning_rate, w))
+
+            b = tf.get_variable(TF_BIAS)
+            logger.debug('Grads and Vars for variable %s', b.name)
+            with tf.variable_scope(TF_BIAS, reuse=True):
+                vel = tf.get_variable(TF_POOL_MOMENTUM)
+                grads_and_vars.append((vel * learning_rate, b))
 
     return optimizer.apply_gradients(grads_and_vars)
 

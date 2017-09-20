@@ -1,6 +1,8 @@
 import tensorflow as tf
 import constants
 import numpy as np
+import logging
+import sys
 
 
 TF_WEIGHTS = constants.TF_WEIGHTS
@@ -8,7 +10,31 @@ TF_BIAS = constants.TF_BIAS
 TF_TRAIN_MOMENTUM = constants.TF_TRAIN_MOMENTUM
 TF_POOL_MOMENTUM = constants.TF_POOL_MOMENTUM
 
-research_parameters = cnn_hyperparameters.get_research_hyperparameters(...)
+research_parameters = None
+
+TF_FC_WEIGHT_IN_STR = constants.TF_FC_WEIGHT_IN_STR
+TF_FC_WEIGHT_OUT_STR = constants.TF_FC_WEIGHT_OUT_STR
+TF_CONV_WEIGHT_SHAPE_STR = constants.TF_CONV_WEIGHT_SHAPE_STR
+final_2d_width = None
+cnn_hyperparameters, cnn_ops = None, None
+logger = None
+
+def set_from_main(research_params,final_2d_w,ops,hyps, logging_level, logging_format):
+    global research_parameters,final_2d_width, logger
+    global cnn_hyperparameters, cnn_ops
+    research_parameters = research_params
+    final_2d_width = final_2d_w
+
+    cnn_hyperparameters = hyps
+    cnn_ops = ops
+
+    logger = logging.getLogger('cnn_adapter_functions')
+    logger.setLevel(logging_level)
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter(logging_format))
+    console.setLevel(logging_level)
+    logger.addHandler(console)
+
 
 def add_with_action(
         op, tf_action_info, tf_weights_this, tf_bias_this,
@@ -112,7 +138,7 @@ def add_with_action(
     return update_ops
 
 
-def get_rm_indices_with_distance(op, tf_action_info):
+def get_rm_indices_with_distance(op, tf_action_info, tf_cnn_hyperparameters):
     amount_to_rmv = tf_action_info[2]
     with tf.variable_scope(op) as scope:
         w = tf.get_variable(TF_WEIGHTS)  # hxwxinxout

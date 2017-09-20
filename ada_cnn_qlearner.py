@@ -39,16 +39,8 @@ class AdaCNNAdaptingQLearner(object):
         self.epsilon = params['epsilon']
         self.min_epsilon = 0.1
 
-        # Things used for peanalizing reward
-        # e.g. Taking too many add actions without a significant reward
-        self.same_action_threshold = 50
-        self.same_action_count = [0 for _ in range(self.net_depth)]
-
         self.num_classes = params['num_classes']
         self.persit_dir = params['persist_dir']
-
-        self.rl_logger, self.q_logger, self.reward_logger, self.action_logger = None, None, None, None
-        self.setup_loggers()
 
         # CNN specific Hyperparametrs
         self.net_depth = params['net_depth'] # the depth of the network (counting pooling + convolution layers)
@@ -57,6 +49,11 @@ class AdaCNNAdaptingQLearner(object):
         self.filter_bound_vec = params['filter_vector'] # a vector that gives the upper bound for each convolution and pooling layer ( use 0 for pooling)
         self.min_filter_threshold = params['filter_min_threshold'] # The minimum bound for each convolution layer
 
+        # Things used for peanalizing reward
+        # e.g. Taking too many add actions without a significant reward
+        self.same_action_threshold = 50
+        self.same_action_count = [0 for _ in range(self.net_depth)]
+
         # Time steps in RL
         self.local_time_stamp = 0
         self.global_time_stamp = 0
@@ -64,6 +61,10 @@ class AdaCNNAdaptingQLearner(object):
         # Of format {s1,a1,s2,a2,s3,a3}
         # NOTE that this doesnt hold the current state
         self.state_history_length = params['state_history_length']
+
+        # Loggers
+        self.verbose_logger, self.q_logger, self.reward_logger, self.action_logger = None, None, None, None
+        self.setup_loggers()
 
         # RL Agent Input/Output sizes
         self.local_actions, self.global_actions = 2, 2
@@ -77,7 +78,7 @@ class AdaCNNAdaptingQLearner(object):
         self.stop_exploring_after = params['stop_exploring_after']
 
         # Experience related hyperparameters
-        self.q_length = 25 * len(self.output_size)  # length of the experience
+        self.q_length = 25 * self.output_size # length of the experience
         self.state_history_collector = []
         self.state_history_dumped = False
         self.experience_per_action = 25
@@ -128,7 +129,7 @@ class AdaCNNAdaptingQLearner(object):
             self.layer_info.append(hidden)  # 128,64,32
         self.layer_info.append(self.output_size)
 
-        self.rl_logger.info('Target Network Layer sizes: %s', self.layer_info)
+        self.verbose_logger.info('Target Network Layer sizes: %s', self.layer_info)
 
         self.tf_weights, self.tf_bias = [], []
         self.tf_target_weights, self.tf_target_biase = [], []
@@ -202,7 +203,7 @@ class AdaCNNAdaptingQLearner(object):
             total += self.n_conv
 
         total += self.global_actions  # finetune and donothing
-        self.verbose_logger('Calculated output action space size: %d',total)
+        self.verbose_logger.info('Calculated output action space size: %d',total)
 
         return total
 
@@ -246,7 +247,7 @@ class AdaCNNAdaptingQLearner(object):
             else:  # last state
                 preproc_input.extend(list(self.normalize_state(item[0])))
 
-        self.rl_logger.debug('Returning (phi): %s\n', preproc_input)
+        self.verbose_logger.debug('Returning (phi): %s\n', preproc_input)
         assert len(state_history) == self.state_history_length
         return preproc_input
 
@@ -436,14 +437,14 @@ class AdaCNNAdaptingQLearner(object):
 
                 # if action is invalid, remove that from the allowed actions
                 if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
-                    self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
+                    self.verbose_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
                         str(la), li, next_filter_count))
                     try:
                         del q_for_actions[action_idx]
                     except:
-                        self.rl_logger.critical('Error Length Q (%d) Action idx (%d)', len(q_for_actions),
+                        self.verbose_logger.critical('Error Length Q (%d) Action idx (%d)', len(q_for_actions),
                                                 action_idx)
-                        self.rl_logger.critical('\tAction %s is not valid li(%d), (Next Filter Count: %d). ',
+                        self.verbose_logger.critical('\tAction %s is not valid li(%d), (Next Filter Count: %d). ',
                                                 str(la), li, next_filter_count)
                     allowed_actions.remove(action_idx)
                     invalid_actions.append(action_idx)
@@ -453,7 +454,7 @@ class AdaCNNAdaptingQLearner(object):
                     max_idx = np.asscalar(np.argmax(q_for_actions))
                     action_idx = allowed_actions[max_idx]
                     layer_actions_list = self.action_list_with_index(action_idx)
-                    self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
+                    self.verbose_logger.debug('\tSelected new action: %s', layer_actions_list)
                     break
                 else:
                     found_valid_action = True
@@ -500,7 +501,7 @@ class AdaCNNAdaptingQLearner(object):
                 # if action is invalid, remove that from the allowed actions
                 if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[
                     li]:
-                    self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
+                    self.verbose_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
                         str(la), li, next_filter_count))
 
                     # invalid_actions.append(action_idx)
@@ -509,7 +510,7 @@ class AdaCNNAdaptingQLearner(object):
                     action_idx = np.random.choice(self.output_size, p=trial_action_probs)
 
                     layer_actions_list = self.action_list_with_index(action_idx)
-                    self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
+                    self.verbose_logger.debug('\tSelected new action: %s', layer_actions_list)
                     break
                 else:
                     found_valid_action = True
@@ -530,7 +531,7 @@ class AdaCNNAdaptingQLearner(object):
             allowed_actions = [tmp for tmp in range(self.output_size)]
 
         while not found_valid_action and action_idx < self.output_size - 2:
-            self.rl_logger.debug('Checking action validity')
+            self.verbose_logger.debug('Checking action validity')
             if action_idx >= self.output_size - 2:
                 found_valid_action = True
                 break
@@ -546,7 +547,7 @@ class AdaCNNAdaptingQLearner(object):
                     next_filter_count = data['filter_counts_list'][li]
 
                 if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
-                    self.rl_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ', str(la), li,
+                    self.verbose_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ', str(la), li,
                                          next_filter_count)
                     allowed_actions.remove(action_idx)
                     invalid_actions.append(action_idx)
@@ -554,7 +555,7 @@ class AdaCNNAdaptingQLearner(object):
 
                     action_idx = np.random.choice(allowed_actions)
                     layer_actions_list = self.action_list_with_index(action_idx)
-                    self.rl_logger.debug('\tSelected new action: %s', layer_actions_list)
+                    self.verbose_logger.debug('\tSelected new action: %s', layer_actions_list)
                     break
                 else:
                     found_valid_action = True
@@ -699,7 +700,7 @@ class AdaCNNAdaptingQLearner(object):
 
         # deterministic selection (if epsilon is not 1 or q is not empty)
         elif np.random.random() > self.epsilon and len(history_t_plus_1) == self.state_history_length:
-            self.rl_logger.info('Choosing action deterministic...')
+            self.verbose_logger.info('Choosing action deterministic...')
             # we create this copy_actions in case we need to change the order the actions processed
             # without changing the original action space (self.actions)
             action_type = 'Greedy'
@@ -707,7 +708,7 @@ class AdaCNNAdaptingQLearner(object):
 
         # random selection
         else:
-            self.rl_logger.info('Choosing action stochastic...')
+            self.verbose_logger.info('Choosing action stochastic...')
             action_type = 'Stochastic'
 
             layer_actions_list = self.get_stochastic_type_action(data,history_t_plus_1)
@@ -735,7 +736,7 @@ class AdaCNNAdaptingQLearner(object):
         self.prev_action = layer_actions_list
         self.prev_state = state
 
-        self.rl_logger.info('\tSelected action: %s\n', layer_actions_list)
+        self.verbose_logger.info('\tSelected action: %s\n', layer_actions_list)
 
         return state, layer_actions_list, invalid_actions
 

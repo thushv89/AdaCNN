@@ -3,7 +3,7 @@ import os
 
 
 
-def get_research_hyperparameters(dataset_name, adapt, use_pooling):
+def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level):
     '''
     These are various research hyperparameters used in AdaCNN.
     Some hyperparameters can be sent as arguments for convenience
@@ -79,19 +79,9 @@ def get_interval_related_hyperparameters(dataset_name):
     return interval_parameters
 
 
-def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling):
+def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, num_labels):
 
     model_hyperparameters = {}
-
-    if dataset_name=='cifar-10':
-        model_hyperparameters['num_labels'] = 10
-    elif dataset_name=='cifar-100':
-        model_hyperparameters['num_labels'] = 100
-    elif dataset_name=='svhn-10':
-        model_hyperparameters['num_labels'] = 10
-    elif dataset_name=='imagenet-250':
-        model_hyperparameters['num_labels'] = 250
-
 
     model_hyperparameters['batch_size'] = 128  # number of datapoints in a single batch
     model_hyperparameters['start_lr'] = 0.01
@@ -136,9 +126,9 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     if dataset_name == 'cifar-10':
 
-        pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
+        pool_size = model_hyperparameters['batch_size'] * 10* num_labels
 
-        if not research_parameters['adapt_structure']:
+        if not adapt_structure:
             cnn_string = "C,3,1,96#C,3,1,96#C,3,1,96#P,3,2,0" \
                          "#C,3,1,192#C,3,1,192#C,3,1,192" \
                          "#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
@@ -155,7 +145,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
         pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
 
-        if not research_parameters['adapt_structure']:
+        if not adapt_structure:
             cnn_string = "C,3,1,64#P,2,2,0#C,3,1,128#P,2,2,0" \
                          "#C,3,1,256#C,3,1,256#P,2,2,0#C,3,1,512" \
                          "#C,3,1,512#P,2,2,0#C,3,1,512#C,3,1,512" \
@@ -175,7 +165,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
         # test_size = 26032
 
-        if not research_parameters['adapt_structure']:
+        if not adapt_structure:
             cnn_string = "C,5,1,128#P,3,2,0#C,5,1,128#P,3,2,0#C,3,1,128#PG,6,4,0#Terminate,0,0,0"
         else:
             cnn_string = "C,5,1,24#P,3,2,0#C,5,1,24#P,3,2,0#C,3,1,24#PG,6,4,0#Terminate,0,0,0"
@@ -190,7 +180,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     if adapt_structure:
         model_hyperparameters['filter_vector'] = filter_vector
-        model_hyperparameters['add_mount'] = add_amount
+        model_hyperparameters['add_amount'] = add_amount
         model_hyperparameters['remove_amount'] = remove_amount
         model_hyperparameters['filter_min_threshold'] = filter_min_threshold
 
@@ -201,6 +191,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
     global research_parameters, interval_parameters
     data_hyperparameters,model_hyperparameters = {},{}
 
+    resize_to = 0
     if dataset_name == 'cifar-10':
         image_size = 24
         num_labels = 10
@@ -208,7 +199,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 50
+        fluctuation = 10
 
     elif dataset_name == 'cifar-100':
 
@@ -218,16 +209,17 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 25
+        fluctuation = 10
 
     elif dataset_name == 'imagenet-250':
-        image_size = 64
+        image_size = 128
         num_labels = 250
         num_channels = 3  # rgb
         dataset_size = 300000
         test_size = 12500
         n_slices = 10
-        fluctuation = 15
+        fluctuation = 5
+        resize_to = 64
 
     elif dataset_name == 'svhn-10':
 
@@ -237,12 +229,14 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 73257
         test_size = 26032
         n_slices = 1
-        fluctuation = 50
+        fluctuation = 10
 
     else:
         raise NotImplementedError
 
+    data_hyperparameters['dataset_name'] = dataset_name
     data_hyperparameters['image_size'] = image_size
+    data_hyperparameters['resize_to'] = resize_to
     data_hyperparameters['n_labels'] = num_labels
     data_hyperparameters['n_channels'] = num_channels
     data_hyperparameters['train_size'] = dataset_size

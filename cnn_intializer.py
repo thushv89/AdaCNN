@@ -2,6 +2,7 @@ import tensorflow as tf
 import constants
 import logging
 import numpy as np
+import sys
 
 TF_WEIGHTS = constants.TF_WEIGHTS
 TF_BIAS = constants.TF_BIAS
@@ -14,21 +15,21 @@ TF_FC_WEIGHT_OUT_STR = constants.TF_FC_WEIGHT_OUT_STR
 TF_ACTIVAIONS_STR = constants.TF_ACTIVAIONS_STR
 TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
 
-logger = logging.getLogger('cnn_initializer_logger')
-logger.setLevel(logging_level)
-console = logging.StreamHandler(sys.stdout)
-console.setFormatter(logging.Formatter(logging_format))
-console.setLevel(logging_level)
-logger.addHandler(console)
+
 
 research_parameters = None
-model_parameters = None
+logger = None
 
+def set_from_main(research_params,logging_level, logging_format):
+    global research_parameters,logger
 
-def set_from_main(research_params, model_params):
-    global research_parameters, model_parameters
     research_parameters = research_params
-    model_parameters = model_params
+    logger = logging.getLogger('cnn_initializer_logger')
+    logger.setLevel(logging_level)
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter(logging_format))
+    console.setLevel(logging_level)
+    logger.addHandler(console)
 
 
 def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
@@ -46,14 +47,14 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
     for op in cnn_ops:
 
         if 'conv' in op:
-            with tf.variable_scope(op) as scope:
+            with tf.variable_scope(op, reuse=False) as scope:
                 tf.get_variable(
                     name=TF_WEIGHTS, shape=cnn_hyps[op]['weights'],
                     initializer=tf.contrib.layers.xavier_initializer_conv2d(),
                     validate_shape=False, dtype=tf.float32)
                 tf.get_variable(
                     name=TF_BIAS,
-                    initializer=tf.constant(np.random.random() * 0.001, shape=[cnn_hyps[op]['weights'][3]]),
+                    initializer=tf.random_uniform(shape=[cnn_hyps[op]['weights'][3]],minval=-0.01, maxval=0.01),
                     validate_shape=False, dtype=tf.float32)
 
                 tf.get_variable(
@@ -66,14 +67,14 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                 logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['weights'][3])
 
         if 'fulcon' in op:
-            with tf.variable_scope(op) as scope:
+            with tf.variable_scope(op, reuse=False) as scope:
                 tf.get_variable(
                     name=TF_WEIGHTS, shape=[cnn_hyps[op]['in'], cnn_hyps[op]['out']],
                     initializer=tf.contrib.layers.xavier_initializer(),
                     validate_shape=False, dtype=tf.float32)
                 tf.get_variable(
                     name=TF_BIAS,
-                    initializer=tf.constant(np.random.random() * 0.001, shape=[cnn_hyps[op]['out']]),
+                    initializer=tf.random_uniform(shape=[cnn_hyps[op]['out']], minval=-0.01, maxval=0.01),
                     validate_shape=False, dtype=tf.float32)
 
                 logger.debug('Weights for %s initialized with size %d,%d',
@@ -82,7 +83,7 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
 
 
 
-def define_velocity_vectors(main_scope):
+def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
     # if using momentum
     vel_var_list = []
     if research_parameters['optimizer'] == 'Momentum':
@@ -152,7 +153,7 @@ def define_velocity_vectors(main_scope):
 
 
 
-def reset_cnn(cnn_hyps):
+def reset_cnn(cnn_hyps,cnn_ops):
     reset_ops = []
     logger.info('CNN Hyperparameters')
     logger.info('%s\n', cnn_hyps)
@@ -235,8 +236,7 @@ def reset_cnn(cnn_hyps):
 
 
 
-def init_tf_hyperparameters():
-    global cnn_ops, cnn_hyperparameters
+def init_tf_hyperparameters(cnn_ops, cnn_hyperparameters):
     tf_hyp_list = {}
     for op in cnn_ops:
         if 'conv' in op:

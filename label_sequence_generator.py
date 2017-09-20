@@ -17,6 +17,13 @@ import matplotlib.pyplot as plt
 logging_level = logging.INFO
 logging_format = '[%(funcName)s] %(message)s'
 
+logger = logging.getLogger('label_sequence_generator_logger')
+logger.setLevel(logging_level)
+console = logging.StreamHandler(sys.stdout)
+console.setFormatter(logging.Formatter(logging_format))
+console.setLevel(logging_level)
+logger.addHandler(console)
+
 # Produce a covariance matrix
 def kernel(a, b):
     """ Squared exponential kernel """
@@ -56,9 +63,10 @@ def sample_from_distribution(dist,size):
 
     label_sequence = get_label_sequence(dist,size)
     cnt = Counter(label_sequence)
-
+    logger.debug('Class distribution')
+    logger.debug(cnt)
     euc_distance = 0
-    euc_threshold = (0.02**2)*dist.size
+    euc_threshold = (0.05**2)*dist.size
     for li in range(dist.size):
         if li in cnt:
             euc_distance += ((cnt[li]*1.0/size)-dist[li])**2
@@ -69,7 +77,7 @@ def sample_from_distribution(dist,size):
         logger.debug('Distribution:')
         logger.debug(dist)
         logger.debug('='*80)
-        logger.debug('Label Sequence Counts')
+        logger.debug('Label Sequence Counts (Normalized)')
         norm_counts = []
         for li in range(dist.size):
             if li in cnt:
@@ -80,20 +88,24 @@ def sample_from_distribution(dist,size):
         logger.debug('='*80)
         logger.debug('')
 
-        logger.debug('Regenerating Label Sequence ...')
-        label_sequence = get_label_sequence(dist,size)
-        for li in range(dist.size):
-            if li in cnt:
-                euc_distance += ((cnt[li] * 1.0 / size) - dist[li]) ** 2
-            else:
-                euc_distance += dist[li] ** 2
+        while euc_distance>euc_threshold:
+            euc_distance = 0
+            logger.info('Regenerating Label Sequence ...')
+            logger.info('Euc distance: %.3f',euc_distance)
+            label_sequence = get_label_sequence(dist,size)
+            cnt = Counter(label_sequence)
+            for li in range(dist.size):
+                if li in cnt:
+                    euc_distance += ((cnt[li] * 1.0 / size) - dist[li]) ** 2
+                else:
+                    euc_distance += dist[li] ** 2
 
     assert euc_distance<euc_threshold
     return label_sequence
 
 
 # generate gaussian priors
-def generate_gaussian_priors_for_labels(full_size, batch_size, fluctuation_normalizer):
+def generate_gaussian_priors_for_labels(full_size, batch_size, fluctuation_normalizer,num_labels):
     chunk_count = int(full_size//batch_size)
 
     # the upper bound of x defines the number of peaks
@@ -138,13 +150,14 @@ def sample_label_sequence_for_batch(n_iterations, f_prior, batch_size, num_label
     if not freeze_index_increment:
         batch_index = (batch_index+1)%n_iterations
 
+    return label_sequence
 
-def create_prior(n_iterations, distribution_type, num_labels, fluctuation_normalizer)
+def create_prior(n_iterations, distribution_type, num_labels, fluctuation_normalizer):
 
     batch_size = 128
 
     if distribution_type=='non-stationary':
-        priors = generate_gaussian_priors_for_labels(n_iterations*batch_size,batch_size,fluctuation_normalizer)
+        priors = generate_gaussian_priors_for_labels(n_iterations*batch_size,batch_size,fluctuation_normalizer,num_labels)
     elif distribution_type=='stationary':
         priors = np.ones((n_iterations,num_labels))*(1.0/num_labels)
 
