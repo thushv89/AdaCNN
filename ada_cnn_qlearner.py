@@ -158,10 +158,15 @@ class AdaCNNAdaptingQLearner(object):
     def setup_loggers(self):
         '''
         Setting up loggers
+        verbose_logger - Log general information for viewing purposes
+        q_logger - Log predicted q values at each time step
+        reward_logger - Log the reward, action for a given time stamp
+        action_logger - Actions taken every step
         :return:
         '''
 
         self.verbose_logger = logging.getLogger('verbose_q_learner_logger')
+        self.verbose_logger.propagate = False
         self.verbose_logger.setLevel(logging.DEBUG)
         vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner.log', mode='w')
         vHandler.setLevel(logging.DEBUG)
@@ -173,6 +178,7 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger.addHandler(v_console)
 
         self.q_logger = logging.getLogger('pred_q_logger')
+        self.q_logger.propagate = False
         self.q_logger.setLevel(logging.INFO)
         q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q.log', mode='w')
         q_distHandler.setFormatter(logging.Formatter('%(message)s'))
@@ -180,6 +186,7 @@ class AdaCNNAdaptingQLearner(object):
         self.q_logger.info(self.get_action_string_for_logging())
 
         self.reward_logger = logging.getLogger('reward_logger')
+        self.reward_logger.propagate = False
         self.reward_logger.setLevel(logging.INFO)
         rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
@@ -187,11 +194,11 @@ class AdaCNNAdaptingQLearner(object):
         self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
 
         self.action_logger = logging.getLogger('action_logger')
+        self.action_logger.propagate = False
         self.action_logger.setLevel(logging.INFO)
         actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions.log', mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
-
 
     def calculate_output_size(self):
         '''
@@ -235,7 +242,7 @@ class AdaCNNAdaptingQLearner(object):
         :return:
         '''
 
-        self.verbose_logger.info('Converting state history to phi')
+        self.verbose_logger.debug('Converting state history to phi')
         self.verbose_logger.debug('Got (state_history): %s', state_history)
         preproc_input = []
         for iindex, item in enumerate(state_history):
@@ -255,6 +262,10 @@ class AdaCNNAdaptingQLearner(object):
     # All neural network related TF operations
 
     def tf_init_mlp(self):
+        '''
+        Initialize the variables for neural network used for q learning
+        :return:
+        '''
         for li in range(len(self.layer_info) - 1):
             self.tf_weights.append(tf.Variable(tf.truncated_normal([self.layer_info[li], self.layer_info[li + 1]],
                                                                    stddev=2. / self.layer_info[li]),
@@ -269,6 +280,13 @@ class AdaCNNAdaptingQLearner(object):
                 tf.Variable(tf.zeros([self.layer_info[li + 1]]), name='target_bias_' + str(li) + '_' + str(li + 1)))
 
     def tf_calc_output(self, tf_state_input):
+        '''
+        Calculate the output till the last layer
+        Middle layers have relu activation
+        Last layer is a linear layer
+        :param tf_state_input:
+        :return:
+        '''
         x = tf_state_input
         for li, (w, b) in enumerate(zip(self.tf_weights[:-1], self.tf_bias[:-1])):
             x = tf.nn.relu(tf.matmul(x, w) + b)
@@ -283,6 +301,12 @@ class AdaCNNAdaptingQLearner(object):
         return tf.matmul(x, self.tf_weights[-1]) + self.tf_bias[-1]
 
     def tf_sqr_loss(self, tf_output, tf_targets):
+        '''
+        Calculate the squared loss between target and output
+        :param tf_output:
+        :param tf_targets:
+        :return:
+        '''
         return tf.reduce_mean((tf_output - tf_targets) ** 2)
 
     def tf_momentum_optimize(self, loss):
@@ -360,7 +384,11 @@ class AdaCNNAdaptingQLearner(object):
         return layer_actions
 
     def get_action_string_for_logging(self):
-        action_str = ''
+        '''
+        Action string for logging purposes (predicted_q.log)
+        :return:
+        '''
+        action_str = 'Time-Stamp,'
         for ci in self.conv_ids:
             action_str += 'Remove-%d,'%ci
         for ci in self.conv_ids:
@@ -371,6 +399,18 @@ class AdaCNNAdaptingQLearner(object):
         return action_str
 
     def index_from_action_list(self, action_list):
+        '''
+        Index of an action with the action list
+        Eg for 7 layer net with C,C,C,P,C,C,C (C-conv and P-pool) (n_conv = 6)
+        for action_list [DoNothing, DoNothing, ...] action_idx = # of actions - 2
+        for action_list [Finetune, Finetune, ...] action_idx = # of actions - 1
+        for action_list [DoNothing, DoNothing, Add, None, DoNothing, DoNothing]
+        since "Add" is in the action, primary index = 0
+        and the secondary action is the layer index of which action is Add, so secondary index = 2
+        and action_idx = 0 * n_conv + 2 = 2
+        :param action_list:
+        :return:
+        '''
         self.verbose_logger.info('Getting action index from action list')
         self.verbose_logger.debug('Got: %s\n', action_list)
         if self.get_action_string(action_list) == \
@@ -410,7 +450,17 @@ class AdaCNNAdaptingQLearner(object):
         self.trial_phase = trial_phase
 
     def get_new_valid_action_when_greedy(self,action_idx,found_valid_action, data, q_for_actions):
-
+        '''
+        ================= Look ahead 1 step (Validate Predicted Action) =========================
+        make sure predicted action stride is not larger than resulting output.
+        make sure predicted kernel size is not larger than the resulting output
+        To avoid such scenarios we create a restricted action space if this happens and chose from that
+        :param action_idx:
+        :param found_valid_action:
+        :param data:
+        :param q_for_actions:
+        :return:
+        '''
         allowed_actions = [tmp for tmp in range(self.output_size)]
         invalid_actions = []
 
@@ -470,8 +520,7 @@ class AdaCNNAdaptingQLearner(object):
             make sure predicted action stride is not larger than resulting output.
             make sure predicted kernel size is not larger than the resulting output
             To avoid such scenarios we create a restricted action space if this happens and chose from that
-
-        :param found_valid_action:
+        :param found_valid_action: Returns True when a valid action is found
         :param data:
         :param trial_action_probs:
         :return:
@@ -563,7 +612,7 @@ class AdaCNNAdaptingQLearner(object):
         if action_idx >= self.output_size - 2:
             found_valid_action = True
 
-        return layer_actions_list, invalid_actions
+        return layer_actions_list, found_valid_action, invalid_actions
 
     def get_explore_type_action(self,data,history_t_plus_1):
 
@@ -673,6 +722,15 @@ class AdaCNNAdaptingQLearner(object):
         return layer_actions_list
 
     def output_action(self, data):
+        '''
+        Output action acording to one of the below methods
+        Explore: action during the exploration (network growth and netowrk shrinkage)
+        Deterministic: action with highest q value
+        Stochastic: action in a stochastic manner
+        :param data:
+        :return:
+        '''
+
         invalid_actions = []
         # data => ['distMSE']['filter_counts']
         # ['filter_counts'] => depth_index : filter_count
@@ -741,6 +799,10 @@ class AdaCNNAdaptingQLearner(object):
         return state, layer_actions_list, invalid_actions
 
     def get_trial_phase_action_probs(self):
+        '''
+        We output action executing probabilities during the exploration stage
+        :return:
+        '''
         if self.trial_phase <= self.trial_phase_threshold / 5.0:
             # more add actions
             # actions are indexed as [{remove actions},{add actions},{do_nothing,finetune}]
@@ -782,21 +844,32 @@ class AdaCNNAdaptingQLearner(object):
         return act_string
 
     def normalize_state(self, s):
+        '''
+        Normalize the layer filter count to [-1, 1]
+        :param s: current state
+        :return:
+        '''
         # state looks like [distMSE, filter_count_1, filter_count_2, ...]
-        ohe_state = np.zeros((1, self.net_depth))
+        norm_state = np.zeros((1, self.net_depth))
         self.verbose_logger.debug('Before normalization: %s', s)
         for ii, item in enumerate(s):
             if self.filter_bound_vec[ii] > 0:
-                ohe_state[0, ii] = item * 1.0 / self.filter_bound_vec[ii]
+                norm_state[0, ii] = item * 1.0 - (self.filter_bound_vec[ii]/2.0)
+                norm_state[0, ii] /= (self.filter_bound_vec[ii]/2.0)
             else:
-                ohe_state[0, ii] = 0
-        self.verbose_logger.debug('\tNormalized state: %s\n', ohe_state)
-        return tuple(ohe_state.flatten())
+                norm_state[0, ii] = -1.0
+        self.verbose_logger.debug('\tNormalized state: %s\n', norm_state)
+        return tuple(norm_state.flatten())
 
     def get_ohe_state_ndarray(self, s):
         return np.asarray(self.normalize_state(s)).reshape(1, -1)
 
     def clean_experience(self):
+        '''
+        Clean experience to reduce the memory requirement
+        We keep a
+        :return:
+        '''
         exp_action_count = {}
         for e_i, [_, ai, _, _, time_stamp] in enumerate(self.experience):
             # phi_t, a_idx, reward, phi_t_plus_1
@@ -953,8 +1026,6 @@ class AdaCNNAdaptingQLearner(object):
                 if self.global_time_stamp > 0 and self.global_time_stamp % self.exp_clean_interval == 0:
                     self.clean_experience()
 
-
-
         si, ai_list, sj = data['prev_state'], data['prev_action'], data['curr_state']
         self.verbose_logger.debug('Si,Ai,Sj: %s,%s,%s', si, ai_list, sj)
 
@@ -983,7 +1054,8 @@ class AdaCNNAdaptingQLearner(object):
         curr_action_string = self.get_action_string(ai_list)
 
         # exponential magnifier to prevent from being taken consecutively
-        if self.trial_phase > 1.0:
+        # Turned off on 21/09/2017
+        '''if self.trial_phase > 1.0:
             if ('add' in curr_action_string or 'remove' in curr_action_string) and self.same_action_count >= 1:
                 self.verbose_logger.info('Reward before magnification: %.5f', reward)
                 if reward > 0:
@@ -999,7 +1071,7 @@ class AdaCNNAdaptingQLearner(object):
                     reward *= min(self.same_action_count + 1, 10)
                 else:  # new
                     self.same_action_count = 0  # reset action count # new
-                self.verbose_logger.info('Reward after magnification: %.5f', reward)
+                self.verbose_logger.info('Reward after magnification: %.5f', reward)'''
 
         # if complete_do_nothing:
         #    reward = -1e-3# * max(self.same_action_count+1,5)

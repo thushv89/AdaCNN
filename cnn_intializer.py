@@ -18,18 +18,19 @@ TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
 
 
 research_parameters = None
-logger = None
+init_logger = None
 
 def set_from_main(research_params,logging_level, logging_format):
-    global research_parameters,logger
+    global research_parameters,init_logger
 
     research_parameters = research_params
-    logger = logging.getLogger('cnn_initializer_logger')
-    logger.setLevel(logging_level)
+    init_logger = logging.getLogger('cnn_initializer_logger')
+    init_logger.propagate = False
+    init_logger.setLevel(logging_level)
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(logging.Formatter(logging_format))
     console.setLevel(logging_level)
-    logger.addHandler(console)
+    init_logger.addHandler(console)
 
 
 def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
@@ -40,10 +41,10 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
     :return:
     '''
 
-    logger.info('CNN Hyperparameters')
-    logger.info('%s\n', cnn_hyps)
+    init_logger.info('CNN Hyperparameters')
+    init_logger.info('%s\n', cnn_hyps)
 
-    logger.info('Initializing the iConvNet (conv_global,pool_global,classifier)...\n')
+    init_logger.info('Initializing the iConvNet (conv_global,pool_global,classifier)...\n')
     for op in cnn_ops:
 
         if 'conv' in op:
@@ -63,8 +64,8 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                                          dtype=tf.float32, name=scope.name + '_activations'),
                     validate_shape=False, trainable=False)
 
-                logger.debug('Weights for %s initialized with size %s', op, str(cnn_hyps[op]['weights']))
-                logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['weights'][3])
+                init_logger.debug('Weights for %s initialized with size %s', op, str(cnn_hyps[op]['weights']))
+                init_logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['weights'][3])
 
         if 'fulcon' in op:
             with tf.variable_scope(op, reuse=False) as scope:
@@ -77,9 +78,9 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                     initializer=tf.random_uniform(shape=[cnn_hyps[op]['out']], minval=-0.01, maxval=0.01),
                     validate_shape=False, dtype=tf.float32)
 
-                logger.debug('Weights for %s initialized with size %d,%d',
+                init_logger.debug('Weights for %s initialized with size %d,%d',
                              op, cnn_hyps[op]['in'], cnn_hyps[op]['out'])
-                logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['out'])
+                init_logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['out'])
 
 
 
@@ -155,10 +156,10 @@ def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
 
 def reset_cnn(cnn_hyps,cnn_ops):
     reset_ops = []
-    logger.info('CNN Hyperparameters')
-    logger.info('%s\n', cnn_hyps)
+    init_logger.info('CNN Hyperparameters')
+    init_logger.info('%s\n', cnn_hyps)
 
-    logger.info('Initializing the iConvNet (conv_global,pool_global,classifier)...\n')
+    init_logger.info('Initializing the iConvNet (conv_global,pool_global,classifier)...\n')
     for op in cnn_ops:
 
         if 'conv' in op:

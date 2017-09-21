@@ -14,7 +14,7 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level)
     '''
     research_parameters = {
         'save_train_test_images': False, # If true will save train and test images randomly (to make sure images are correctly read)
-        'log_class_distribution': True, 'log_distribution_every': 128, # log distribution of data (useful for generating data distribution over time curves)
+        'log_class_distribution': True, 'log_distribution_every': 100, # log distribution of data (useful for generating data distribution over time curves)
         'adapt_structure': adapt,  # Enable AdaCNN behavior
         'hard_pool_acceptance_rate': 0.1,  # Probability with which data is accepted in to the pool
         'replace_op_train_rate': 0.8,  # amount of batches from hard_pool selected to train

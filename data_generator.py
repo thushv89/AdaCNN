@@ -7,7 +7,8 @@ import tensorflow as tf
 
 class DataGenerator(object):
 
-    def __init__(self,batch_size,n_labels,train_size,n_slices, image_size, n_channels, resize_to, data_type, session):
+    def __init__(self,batch_size,n_labels,train_size,n_slices,
+                 image_size, n_channels, resize_to, data_type, session):
         self.batch_size = batch_size
         self.n_labels = n_labels
         self.image_size = image_size
@@ -49,7 +50,8 @@ class DataGenerator(object):
         tf_image_batch = tf.image.random_brightness(tf_image_batch,0.5)
         tf_image_batch = tf.image.random_contrast(tf_image_batch,0.5,1.5)
 
-        tf_image_batch = tf.map_fn(lambda img: tf.image.per_image_standardization(img), tf_image_batch)
+        # Not necessary they are already normalized
+        #tf_image_batch = tf.map_fn(lambda img: tf.image.per_image_standardization(img), tf_image_batch)
 
         return tf_image_batch
 
@@ -65,8 +67,6 @@ class DataGenerator(object):
         global step_in_slice, steps_per_slice, slice_index
 
         dataset_name, resize_to, n_labels = dataset_info['dataset_name'], dataset_info['resize_to'], dataset_info['n_labels']
-
-        part_augment_func = partial(self.get_augmented_sample_for, resize_to=resize_to, dataset_type=dataset_name)
 
         if self.slice_index_changed:
             print('Load data slice')
@@ -97,23 +97,8 @@ class DataGenerator(object):
         np.random.set_state(rng_state)
         np.random.shuffle(sorted_label_list)
 
-        # do not use all the CPUs if there are a lot only use half of them
-        # if using all, leave one free
-        #cpu_count = mp.cpu_count() - 1 if mp.cpu_count() < 32 else mp.cpu_count() // 2
-        #pool = mp.Pool(cpu_count)
-
-        # Prepare data in parallel
-        #multiproc_data = pool.starmap(part_augment_func,zip(image_list,sorted_label_list))
-        #preprocessed_images, preprocessed_labels = zip(*multiproc_data)
-
-        #train_images = np.stack(preprocessed_images,axis=0)
-        #train_labels = np.asarray(preprocessed_labels,dtype=np.int32).reshape(-1,1)
-
         train_images = self.session.run(self.tf_augment_data_func,feed_dict={self.tf_image_ph:np.squeeze(np.stack(image_list))})
         train_labels = np.asarray(sorted_label_list).reshape(-1,1)
-
-        #pool.close()
-        #pool.join()
 
         train_ohe_labels = np.zeros((self.batch_size,self.n_labels),dtype=np.float32)
         train_ohe_labels[np.arange(self.batch_size),train_labels[:,0]] = 1.0

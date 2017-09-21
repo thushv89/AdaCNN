@@ -127,7 +127,7 @@ def apply_gradient_with_pool_momentum(optimizer, learning_rate, global_step):
             continue
         with tf.variable_scope(scope, reuse=True):
             w = tf.get_variable(TF_WEIGHTS)
-            logger.debug('Grads and Vars for variable %s',w.name)
+            logger.debug('Grads and Vars for variable %s', w.name)
             with tf.variable_scope(TF_WEIGHTS, reuse=True):
                 vel = tf.get_variable(TF_POOL_MOMENTUM)
                 grads_and_vars.append((vel * learning_rate, w))

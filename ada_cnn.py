@@ -121,7 +121,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # pool parameters
     pool_size = model_hyperparameters['pool_size']
 
-n_iterations = 1000
+n_iterations = 5000
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -170,7 +170,7 @@ increment_global_step_op = None
 
 # Loggers
 logger = None
-
+perf_logger = None
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
 
@@ -357,20 +357,34 @@ def accuracy(predictions, labels):
             / predictions.shape[0])
 
 
+def setup_loggers(adapt_structure):
+    '''
+    Setting up loggers
+    logger: Main Logger
+    error_logger: Log Train loss, Validation Accuracy, Test Accuracy
+    perf_logger: Logging time
+    hyp_logger: Log hyperparameters
+    :param adapt_structure:
+    :return:
+    '''
 
-def setup_loggers(research_parameters):
-    logger = logging.getLogger('main_logger')
-    logger.setLevel(logging_level)
-    fileHandler = logging.FileHandler(output_dir + os.sep + 'ada_cnn_main.log', mode='w')
-    fileHandler.setLevel(logging.DEBUG)
-    fileHandler.setFormatter(logging.Formatter('%(message)s'))
-    logger.addHandler(fileHandler)
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(logging.Formatter(logging_format))
-    console.setLevel(logging_level)
-    logger.addHandler(console)
+
+    main_logger = logging.getLogger('main_ada_cnn_logger')
+    main_logger.setLevel(logging_level)
+    main_logger.propagate=False
+    # File handler for writing to file
+    main_file_handler = logging.FileHandler(output_dir + os.sep + 'ada_cnn_main.log', mode='w')
+    main_file_handler.setLevel(logging.DEBUG)
+    main_file_handler.setFormatter(logging.Formatter('%(message)s'))
+    main_logger.addHandler(main_file_handler)
+    # Console handler for writing to console
+    main_console = logging.StreamHandler(sys.stdout)
+    main_console.setFormatter(logging.Formatter(logging_format))
+    #main_console.setLevel(logging_level)
+    main_logger.addHandler(main_console)
 
     error_logger = logging.getLogger('error_logger')
+    error_logger.propagate = False
     error_logger.setLevel(logging.INFO)
     errHandler = logging.FileHandler(output_dir + os.sep + 'Error.log', mode='w')
     errHandler.setFormatter(logging.Formatter('%(message)s'))
@@ -378,56 +392,54 @@ def setup_loggers(research_parameters):
     error_logger.info('#Batch_ID,Loss(Train),Valid(Unseen),Test Accuracy')
 
     perf_logger = logging.getLogger('time_logger')
+    perf_logger.propagate = False
     perf_logger.setLevel(logging.INFO)
-    perfHandler = logging.FileHandler(output_dir + os.sep + 'time.log', mode='w')
-    perfHandler.setFormatter(logging.Formatter('%(message)s'))
-    perf_logger.addHandler(perfHandler)
+    perf_handler = logging.FileHandler(output_dir + os.sep + 'time.log', mode='w')
+    perf_handler.setFormatter(logging.Formatter('%(message)s'))
+    perf_logger.addHandler(perf_handler)
     perf_logger.info('#Batch_ID,Time(Full),Time(Train),Op count, Var count')
 
     hyp_logger = logging.getLogger('hyperparameter_logger')
+    hyp_logger.propagate = False
     hyp_logger.setLevel(logging.INFO)
-    hypHandler = logging.FileHandler(output_dir + os.sep + 'Hyperparameter.log', mode='w')
-    hypHandler.setFormatter(logging.Formatter('%(message)s'))
-    hyp_logger.addHandler(hypHandler)
+    hyp_handler = logging.FileHandler(output_dir + os.sep + 'Hyperparameter.log', mode='w')
+    hyp_handler.setFormatter(logging.Formatter('%(message)s'))
+    hyp_logger.addHandler(hyp_handler)
 
-    if research_parameters['adapt_structure']:
-        accuracy_drop_logger = logging.getLogger('accuracy_drop_logger')
-        accuracy_drop_logger.setLevel(logging.INFO)
-        dropHandler = logging.FileHandler(output_dir + os.sep + 'test_accuracy_drop.log', mode='w')
-        dropHandler.setFormatter(logging.Formatter('%(message)s'))
-        accuracy_drop_logger.addHandler(dropHandler)
-        accuracy_drop_logger.info(
-            '#Accuracy Drop Logger\n#last 10 (states,actions,current_pool_accuracy,prev_pool_accuracy) and accuracy drop\n')
-
+    cnn_structure_logger, q_logger = None, None
+    if adapt_structure:
         cnn_structure_logger = logging.getLogger('cnn_structure_logger')
+        main_logger.propagate = False
         cnn_structure_logger.setLevel(logging.INFO)
         structHandler = logging.FileHandler(output_dir + os.sep + 'cnn_structure.log', mode='w')
         structHandler.setFormatter(logging.Formatter('%(message)s'))
         cnn_structure_logger.addHandler(structHandler)
         cnn_structure_logger.info('#batch_id:state:action:reward:#layer_1_hyperparameters#layer_2_hyperparameters#...')
 
-        q_logger = logging.getLogger('q_logger')
+        q_logger = logging.getLogger('q_eval_rand_logger')
+        main_logger.propagate = False
         q_logger.setLevel(logging.INFO)
-        qHandler = logging.FileHandler(output_dir + os.sep + 'QMetric.log', mode='w')
-        qHandler.setFormatter(logging.Formatter('%(message)s'))
-        q_logger.addHandler(qHandler)
-        q_logger.info('#batch_id,pred_q')
+        q_handler = logging.FileHandler(output_dir + os.sep + 'QMetric.log', mode='w')
+        q_handler.setFormatter(logging.Formatter('%(message)s'))
+        q_logger.addHandler(q_handler)
+        q_logger.info('#batch_id,q_metric')
 
-    if research_parameters['log_class_distribution']:
-        class_dist_logger = logging.getLogger('class_dist_logger')
-        class_dist_logger.setLevel(logging.INFO)
-        class_distHandler = logging.FileHandler(output_dir + os.sep + 'class_distribution.log', mode='w')
-        class_distHandler.setFormatter(logging.Formatter('%(message)s'))
-        class_dist_logger.addHandler(class_distHandler)
+    class_dist_logger = logging.getLogger('class_dist_logger')
+    class_dist_logger.propagate = False
+    class_dist_logger.setLevel(logging.INFO)
+    class_dist_handler = logging.FileHandler(output_dir + os.sep + 'class_distribution.log', mode='w')
+    class_dist_handler.setFormatter(logging.Formatter('%(message)s'))
+    class_dist_logger.addHandler(class_dist_handler)
 
     pool_dist_logger = logging.getLogger('pool_distribution_logger')
+    pool_dist_logger.propagate = False
     pool_dist_logger.setLevel(logging.INFO)
-    poolHandler = logging.FileHandler(output_dir + os.sep + 'pool_distribution.log', mode='w')
-    poolHandler.setFormatter(logging.Formatter('%(message)s'))
-    pool_dist_logger.addHandler(poolHandler)
+    pool_handler = logging.FileHandler(output_dir + os.sep + 'pool_distribution.log', mode='w')
+    pool_handler.setFormatter(logging.Formatter('%(message)s'))
+    pool_dist_logger.addHandler(pool_handler)
     pool_dist_logger.info('#Class distribution')
 
-    return logger, perf_logger, accuracy_drop_logger, \
+    return main_logger, perf_logger, \
            cnn_structure_logger, q_logger, class_dist_logger, \
            pool_dist_logger, hyp_logger, error_logger
 
@@ -439,7 +451,7 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
     return current_activations
 
 
-def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
+def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global tf_train_data_batch, tf_train_label_batch, tf_data_weights
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
@@ -456,11 +468,14 @@ def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperpa
     global tf_weights_this,tf_bias_this, tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next
     global tf_weight_shape,tf_in_size
     global increment_global_step_op
+    global logger
 
     # custom momentum optimizing we calculate momentum manually
+    logger.info('Defining Optimizer')
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=1.0)
     increment_global_step_op = tf.assign(global_step, global_step + 1)
     # Test data (Global)
+    logger.info('Defining Test data placeholders')
     tf_test_dataset = tf.placeholder(tf.float32, shape=(batch_size, image_size, image_size, num_channels),
                                      name='TestDataset')
     tf_test_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TestLabels')
@@ -472,10 +487,12 @@ def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperpa
     # [[(grad0gpu0,var0gpu0),...,(gradNgpu0,varNgpu0)],...,[(grad0gpuD,var0gpuD),...,(gradNgpuD,varNgpuD)]]
 
     for gpu_id in range(num_gpus):
+        logger.info('Defining TF operations for GPU ID: %d', gpu_id)
         with tf.device('/gpu:%d' % gpu_id):
             with tf.name_scope('%s_%d' % (TOWER_NAME, gpu_id)) as scope:
                 tf.get_variable_scope().reuse_variables()
                 # Input train data
+                logger.info('\tDefning Training Data placeholders and weights')
                 tf_train_data_batch.append(tf.placeholder(tf.float32,
                                                           shape=(
                                                               batch_size, image_size, image_size, num_channels),
@@ -485,27 +502,32 @@ def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperpa
                 tf_data_weights.append(tf.placeholder(tf.float32, shape=(batch_size), name='TrainWeights'))
 
                 # Training data opearations
+                logger.info('\tDefining logit operations')
                 tower_logit_op, tower_tf_activation_ops = inference(tf_train_data_batch[-1],
                                                                     tf_cnn_hyperparameters, True)
                 tower_logits.append(tower_logit_op)
                 tower_activation_update_ops.append(tower_tf_activation_ops)
 
+                logger.info('\tDefine Loss for each tower')
                 tf_tower_loss = tower_loss(tf_train_data_batch[-1], tf_train_label_batch[-1], True,
                                            tf_data_weights[-1], tf_cnn_hyperparameters)
-                print(session.run(tf_cnn_hyperparameters))
+
                 tower_losses.append(tf_tower_loss)
                 tf_tower_loss_vec = calc_loss_vector(scope, tf_train_data_batch[-1], tf_train_label_batch[-1],
                                                      tf_cnn_hyperparameters)
                 tower_loss_vectors.append(tf_tower_loss_vec)
 
+                logger.info('\tGradient calculation opeartions for tower')
                 tower_grad = cnn_optimizer.gradients(optimizer, tf_tower_loss, global_step,
                                        tf.constant(start_lr, dtype=tf.float32))
                 tower_grads.append(tower_grad)
 
+                logger.info('\tPrediction operations for tower')
                 tower_pred = predict_with_dataset(tf_train_data_batch[-1], tf_cnn_hyperparameters)
                 tower_predictions.append(tower_pred)
 
                 # Pooling data operations
+                logger.info('\tPool related operations')
                 tf_pool_data_batch.append(tf.placeholder(tf.float32,
                                                          shape=(
                                                              batch_size, image_size, image_size, num_channels),
@@ -526,13 +548,9 @@ def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperpa
 
     logger.info('GLOBAL_VARIABLES (all)')
     logger.info('\t%s\n', [v.name for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)])
-    logger.info('GLOBAL_VARIABLES')
-    logger.info('\t%s\n', [v.name for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)])
-    logger.info('TRAINABLE_VARIABLES')
-    logger.info('\t%s\n',
-                [v.name for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)])
 
     with tf.device('/gpu:0'):
+        logger.info('Tower averaging for Gradients for Training data')
         # Train data operations
         # avg_grad_and_vars = [(avggrad0,var0),(avggrad1,var1),...]
         tf_avg_grad_and_vars = average_gradients(tower_grads)
@@ -542,6 +560,7 @@ def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperpa
         tf_mean_activation = mean_tower_activations(tower_activation_update_ops)
         mean_loss_op = tf.reduce_mean(tower_losses)
 
+        logger.info('Tower averaging for Gradients for Pool data')
         # Pool data operations
         tf_pool_avg_gradvars = average_gradients(tower_pool_grads)
         apply_pool_grads_op = cnn_optimizer.apply_gradient_with_pool_momentum(optimizer, start_lr, global_step)
@@ -558,7 +577,6 @@ def define_tf_ops(session, global_step, tf_cnn_hyperparameters, init_cnn_hyperpa
             tf.get_variable_scope().reuse_variables()
             pool_pred = predict_with_dataset(tf_pool_data_batch[0], tf_cnn_hyperparameters)
 
-        # TODO: Scope?
         # GLOBAL: Tensorflow operations for test data
         # Valid data (Next train batch) Unseen
         tf_valid_data_batch = tf.placeholder(tf.float32,
@@ -645,7 +663,7 @@ def distort_img(img):
 def augment_pool_data(hard_pool):
     global pool_dataset, pool_labels
     pool_dataset, pool_labels = hard_pool.get_pool_data(True)
-    if research_parameters['pool_randomize'] and np.random.random() < \
+    '''if research_parameters['pool_randomize'] and np.random.random() < \
             research_parameters['pool_randomize_rate']:
         if use_multiproc:
             try:
@@ -660,7 +678,7 @@ def augment_pool_data(hard_pool):
             distorted_imgs = []
             for img in pool_dataset:
                 distorted_imgs.append(distort_img(img))
-            pool_dataset = np.vstack(distorted_imgs)
+            pool_dataset = np.vstack(distorted_imgs)'''
 
     return pool_dataset, pool_labels
 
@@ -998,7 +1016,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-        if research_parameters['pool_randomize'] and np.random.random() < \
+        '''if research_parameters['pool_randomize'] and np.random.random() < \
                 research_parameters['pool_randomize_rate']:
             try:
                 pool = MPPool(processes=10)
@@ -1007,7 +1025,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
                 pool.close()
                 pool.join()
             except Exception:
-                raise AssertionError
+                raise AssertionError'''
 
         # Train with latter half of the data
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1027,19 +1045,24 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
                                    feed_dict=pool_feed_dict)
 
 def run_actual_finetune_operation(hard_pool_ft):
+    '''
+    Run the finetune opeartion in the default session
+    :param hard_pool_ft:
+    :return:
+    '''
     op = cnn_ops[li]
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
     if research_parameters['pool_randomize'] and np.random.random() < research_parameters[
         'pool_randomize_rate']:
-        try:
+        '''try:
             pool = MPPool(processes=10)
             distorted_imgs = pool.map(distort_img, pool_dataset)
             pool_dataset = np.asarray(distorted_imgs)
             pool.close()
             pool.join()
         except Exception:
-            raise AssertionError
+            raise AssertionError'''
 
     # without if can give problems in exploratory stage because of no data in the pool
     if hard_pool_ft.get_size() > batch_size:
@@ -1072,24 +1095,21 @@ def top_n_accuracy(predictions,labels,n):
             correct_total += 1
     return (100.0 * correct_total)/predictions.shape[0]
 
+def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparameters, model_hyperparameters, interval_hyperparameters, dataset_info):
+
+    hyp_logger.info('#Various hyperparameters')
+    hyp_logger.info('# Initial CNN architecture related hyperparameters')
+    hyp_logger.info(cnn_hyperparameters)
+    hyp_logger.info('# Dataset info')
+    hyp_logger.info(dataset_info)
+    hyp_logger.info('# Research parameters')
+    hyp_logger.info(research_hyperparameters)
+    hyp_logger.info('# Interval parameters')
+    hyp_logger.info(interval_hyperparameters)
+    hyp_logger.info('# Model parameters')
+    hyp_logger.info(model_hyperparameters)
 
 if __name__ == '__main__':
-
-    #global cnn_string, cnn_ops, cnn_hyperparameters, filter_vector
-    #global dataset_info, n_slices, train_size, test_size
-
-    #global tf_train_data_batch, tf_train_label_batch, tf_data_weights
-    #global tf_test_dataset, tf_test_labels
-    #global tf_pool_data_batch, tf_pool_label_batch
-    #global tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions
-    #global tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops, tower_logits
-    #global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
-    #global tf_indices, tf_indices_size
-    #global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, tf_mean_activation, mean_loss_op
-    #global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss
-    #global valid_loss_op, valid_predictions_op, test_predicitons_op
-    #global tf_valid_data_batch, tf_valid_label_batch
-    #global increment_global_step_op
 
     # Various run-time arguments specified
     #
@@ -1129,30 +1149,54 @@ if __name__ == '__main__':
                 use_multiproc = bool(arg)
 
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+        os.mkdir(output_dir)
 
+    # Setting up loggers
+    logger, perf_logger, cnn_structure_logger, \
+    q_logger, class_dist_logger, pool_dist_logger, \
+    hyp_logger, error_logger = setup_loggers(adapt_structure)
+
+    logger.info('Created loggers')
+
+    logger.info('Created Output directory: %s', output_dir)
+    logger.info('Received all the required user arguments at Runtime')
+    logger.debug('Output DIR: %s', output_dir)
+    logger.debug('Number of GPUs: %d', num_gpus)
+    logger.debug('Memory fraction per GPU: %.3f', mem_frac)
+    logger.debug('Number of pool workers for MultiProcessing: %d', pool_workers)
+    logger.debug('Dataset Name: %s', datatype)
+    logger.debug('Data Behavior: %s', behavior)
+    logger.debug('Use AdaCNN: %d', adapt_structure)
+    logger.debug('Use rigid pooling: %d', rigid_pooling)
     # =====================================================================
     # VARIOS SETTING UPS
     # SET FROM MAIN FUNCTIONS OF OTHER CLASSES
     set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling)
     cnn_intializer.set_from_main(research_parameters, logging_level, logging_format)
 
+    logger.info('Creating CNN hyperparameters and operations in the correct format')
     # Getting hyperparameters
     cnn_ops, cnn_hyperparameters, final_2d_width = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
     init_cnn_ops, init_cnn_hyperparameters, final_2d_width = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
 
+    logger.info('Created CNN hyperparameters and operations in the correct format successfully\n')
+
     ada_cnn_adapter.set_from_main(research_parameters, final_2d_width,cnn_ops, cnn_hyperparameters, logging_level, logging_format)
     cnn_optimizer.set_from_main(research_parameters,model_hyperparameters,logging_level,logging_format,cnn_ops)
 
-    # Setting up loggers
-    logger, perf_logger, accuracy_drop_logger, cnn_structure_logger, \
-    q_logger, class_dist_logger, pool_dist_logger, hyp_logger, error_logger = setup_loggers(research_parameters)
+    logger.info('Creating loggers\n')
+    logger.info('=' * 80 + '\n')
+    logger.info('Recognized following convolution operations')
+    logger.info(cnn_ops)
+    logger.info('With following Hyperparameters')
+    logger.info(cnn_hyperparameters)
+    logger.info(('=' * 80) + '\n')
+    logging_hyperparameters(
+        hyp_logger,cnn_hyperparameters,research_parameters,
+        model_hyperparameters,interval_parameters,dataset_info
+    )
 
-    print('\nRecognized following convolution ops')
-    print(cnn_ops)
-    print('Hyperparameters')
-    print(cnn_hyperparameters,'\n')
-
+    logging.info('Reading data from HDF5 File')
     # Datasets
     if datatype=='cifar-10':
         dataset_file= h5py.File("data"+os.sep+"cifar_10_dataset.hdf5", "r")
@@ -1163,16 +1207,7 @@ if __name__ == '__main__':
     train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
     test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
 
-    hyp_logger.info('#Starting hyperparameters')
-    hyp_logger.info(cnn_hyperparameters)
-    hyp_logger.info('#Dataset info')
-    hyp_logger.info(dataset_info)
-    hyp_logger.info('Learning rate: %.5f', start_lr)
-    hyp_logger.info('Batch size: %d', batch_size)
-    hyp_logger.info('#Research parameters')
-    hyp_logger.info(research_parameters)
-    hyp_logger.info('#Interval parameters')
-    hyp_logger.info(interval_parameters)
+    logging.info('Reading data from HDF5 File sucessful.\n')
 
     # Setting up graph parameters
     config = tf.ConfigProto()
@@ -1186,22 +1221,25 @@ if __name__ == '__main__':
     session = tf.InteractiveSession(config=config)
 
     # Defining pool
+    logger.info('Defining pools of data (validation and finetuning)')
     hardness = 0.5
     hard_pool_valid = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
                            num_channels=num_channels, num_labels=num_labels, assert_test=False)
     hard_pool_ft = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
                            num_channels=num_channels, num_labels=num_labels, assert_test=False)
+    logger.info('Defined pools of data successfully\n')
 
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
     # -1 is because we don't want to count pool_global
-    print(cnn_ops)
+
     layer_count = len([op for op in cnn_ops if 'conv' in op or 'pool' in op]) - 1
-    print(layer_count)
+
     # ids of the convolution ops
     convolution_op_ids = []
     for op_i, op in enumerate(cnn_ops):
         if 'conv' in op:
             convolution_op_ids.append(op_i)
+    logger.info('Found all convolution opeartion ids')
 
     # Defining initial hyperparameters as TF variables (so we can change them later during adaptation)
     # Define global set (used for learning rate decay)
@@ -1216,28 +1254,8 @@ if __name__ == '__main__':
         _ = cnn_intializer.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
         logger.info('Defining Velocities for Weights and Bias for CNN operations')
         _ = cnn_intializer.define_velocity_vectors(scope, cnn_ops, cnn_hyperparameters)
+    logger.info(('=' * 80) + '\n')
 
-    # Running initialization opeartion
-    init_op = tf.global_variables_initializer()
-    _ = session.run(init_op)
-
-    # Defining all Tensorflow ops required for
-    # calculating logits, loss, predictions
-    with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True) as scope:
-        define_tf_ops(session,global_step,tf_cnn_hyperparameters,init_cnn_hyperparameters)
-
-    data_gen = data_generator.DataGenerator(batch_size,num_labels,dataset_info['train_size'],dataset_info['n_slices'],
-                                            image_size, dataset_info['n_channels'], dataset_info['resize_to'],
-                                            dataset_info['dataset_name'], session)
-    if behavior=='non-stationary':
-        data_prior = label_sequence_generator.create_prior(n_iterations,behavior,num_labels,data_fluctuation)
-    elif behavior=='stationary':
-        behavior = np.ones((n_iterations, num_labels)) * (1.0 / num_labels)
-    else:
-        raise NotImplementedError
-
-    logger.debug('CNN_HYPERPARAMETERS')
-    logger.debug('\t%s\n', tf_cnn_hyperparameters)
 
     if research_parameters['adapt_structure']:
         # Adapting Policy Learner
@@ -1257,6 +1275,33 @@ if __name__ == '__main__':
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
             trial_phase_threshold=1.0
         )
+
+    # Running initialization opeartion
+    logger.info('Running global variable initializer')
+    init_op = tf.global_variables_initializer()
+    _ = session.run(init_op)
+    logger.info('Variable initialization successful\n')
+
+    # Defining all Tensorflow ops required for
+    # calculating logits, loss, predictions
+    logger.info('Defining all the required Tensorflow operations')
+    with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True) as scope:
+        define_tf_ops(global_step,tf_cnn_hyperparameters,init_cnn_hyperparameters)
+    logger.info('Defined all TF operations successfully\n')
+
+    data_gen = data_generator.DataGenerator(batch_size,num_labels,dataset_info['train_size'],dataset_info['n_slices'],
+                                            image_size, dataset_info['n_channels'], dataset_info['resize_to'],
+                                            dataset_info['dataset_name'], session)
+
+    if behavior=='non-stationary':
+        data_prior = label_sequence_generator.create_prior(n_iterations,behavior,num_labels,data_fluctuation)
+    elif behavior=='stationary':
+        data_prior = np.ones((n_iterations, num_labels)) * (1.0 / num_labels)
+    else:
+        raise NotImplementedError
+
+    logger.debug('CNN_HYPERPARAMETERS')
+    logger.debug('\t%s\n', tf_cnn_hyperparameters)
 
     logger.debug('TRAINABLE_VARIABLES')
     logger.debug('\t%s\n', [v.name for v in tf.trainable_variables()])
@@ -1292,6 +1337,9 @@ if __name__ == '__main__':
     start_adapting = False
     stop_adapting = False
 
+    # need to have a starting value because if the algorithm choose to add the data to validation set very first step
+    train_accuracy = 0
+
     for epoch in range(n_epochs):
         memmap_idx = 0
 
@@ -1306,7 +1354,7 @@ if __name__ == '__main__':
             #logger.debug('tf op count: %d', len(graph.get_operations()))
             logger.debug('=' * 80)
 
-            logger.info('\tTraining with batch %d', batch_id)
+            #logger.info('\tTraining with batch %d', batch_id)
 
             # We load 1 extra batch (chunk_size+1) because we always make the valid batch the batch_id+1
 
@@ -1323,7 +1371,7 @@ if __name__ == '__main__':
             for gpu_id in range(num_gpus):
                 label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior,
                                                                                      batch_size, num_labels)
-                logger.debug('Got label sequence (for batch %d)',global_batch_id)
+                logger.debug('Got label sequence (for batch %d)', global_batch_id)
                 logger.debug(Counter(label_seq))
 
                 b_d, b_l = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
@@ -1371,6 +1419,7 @@ if __name__ == '__main__':
 
             # ==========================================================
             # Updating Pools of data
+
             if np.random.random()<0.5 and epoch==0:
                 if adapt_structure or rigid_pooling:
 
@@ -1415,7 +1464,8 @@ if __name__ == '__main__':
                                                                   batch_labels[gpu_id], axis=0)
 
                 hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                            super_loss_vec, 1.0)
+                                            super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
+                                                          max(0.1, (1.0 - train_accuracy))))
                 logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
                 # =========================================================
@@ -1468,7 +1518,7 @@ if __name__ == '__main__':
             # For AdaCNN if adaptations stopped
             # For rigid pool CNNs from the beginning
             if ((research_parameters['pooling_for_nonadapt'] and
-                     (not research_parameters['adapt_structure'])) or stop_adapting) and \
+                     not research_parameters['adapt_structure']) or stop_adapting) and \
                     (batch_id > 0 and batch_id % interval_parameters['finetune_interval'] == 0):
 
                 logger.info('Pooling for non-adaptive CNN')
@@ -1513,9 +1563,10 @@ if __name__ == '__main__':
                     batch_ohe_test_labels[np.arange(batch_size),batch_test_labels[:,0]] = 1.0
                     feed_test_dict = {tf_test_dataset: batch_test_data, tf_test_labels: batch_ohe_test_labels}
                     test_predictions = session.run(test_predicitons_op, feed_dict=feed_test_dict)
-                    test_accuracies.append(accuracy(test_predictions, batch_test_labels))
+                    test_accuracies.append(accuracy(test_predictions, batch_ohe_test_labels))
 
                     if test_batch_id < 10:
+
                         logger.debug('=' * 80)
                         logger.debug('Actual Test Labels %d', test_batch_id)
                         logger.debug(np.argmax(batch_test_labels, axis=1).flatten()[:5])
@@ -1658,7 +1709,7 @@ if __name__ == '__main__':
                     pool_accuracy = []
                     pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
 
-                    for pool_id in range(hard_pool_valid.get_size()):
+                    for pool_id in range(hard_pool_valid.get_size()//batch_size):
                         pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
                         pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
                         pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
@@ -1702,8 +1753,8 @@ if __name__ == '__main__':
                                            'pool_accuracy': p_accuracy,
                                            'prev_pool_accuracy': prev_pool_accuracy,
                                            'max_pool_accuracy': max_pool_accuracy,
-                                           'valid_accuracy': unseen_valid_accuracy,
-                                           'prev_valid_accuracy': prev_unseen_valid_accuracy,
+                                           'unseen_valid_accuracy': unseen_valid_accuracy,
+                                           'prev_unseen_valid_accuracy': prev_unseen_valid_accuracy,
                                            'invalid_actions': curr_invalid_actions,
                                            'batch_id': global_batch_id,
                                            'layer_index': affected_layer_index}, True)
@@ -1750,7 +1801,7 @@ if __name__ == '__main__':
             # ======================================================
 
             # TODO: Needed?
-            if research_parameters['adapt_structure'] and epoch == 1:
+            if research_parameters['adapt_structure'] and epoch > 1:
                 stop_adapting = True
 
             # AdaCNN Algorithm
