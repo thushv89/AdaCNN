@@ -140,6 +140,7 @@ num_gpus = -1
 # Tensorflow Op / Variable related Python variables
 # Optimizer Related
 optimizer = None
+tf_learning_rate = None
 # Optimizer (Data) Related
 tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, \
 update_train_velocity_op, tf_mean_activation, mean_loss_op = None,None,None,None,None,None
@@ -477,13 +478,16 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_update_hyp_ops, tf_action_info, tf_running_activations
     global tf_weights_this,tf_bias_this, tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next
     global tf_weight_shape,tf_in_size
-    global increment_global_step_op
+    global increment_global_step_op,tf_learning_rate
     global logger
 
     # custom momentum optimizing we calculate momentum manually
     logger.info('Defining Optimizer')
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=1.0)
     increment_global_step_op = tf.assign(global_step, global_step + 1)
+    tf_learning_rate = tf.train.exponential_decay(start_lr, global_step, decay_steps=decay_steps,
+                               decay_rate=decay_rate, staircase=True)
+
     # Test data (Global)
     logger.info('Defining Test data placeholders')
     tf_test_dataset = tf.placeholder(tf.float32, shape=(batch_size, image_size, image_size, num_channels),
@@ -1143,12 +1147,12 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs = [0.1 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0.7 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.05, 0.15])
-    elif epoch==1 and trial_phase>=1.0 and trial_phase<1.6:
+    elif epoch==1 and trial_phase>=1.0 and trial_phase<1.7:
         logger.info('Shrink phase')
         trial_action_probs = [0.6 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.05, 0.15])
-    elif epoch==1 and trial_phase>=1.6 and trial_phase<2.0:
+    elif epoch==1 and trial_phase>=1.7 and trial_phase<2.0:
         logger.info('Finetune phase')
         trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
@@ -1643,9 +1647,7 @@ if __name__ == '__main__':
                 logger.info('=' * 60)
                 logger.info('\tBatch ID: %d' % batch_id)
                 if decay_learning_rate:
-                    logger.info('\tLearning rate: %.5f' % session.run(
-                        tf.train.exponential_decay(start_lr, global_step, decay_steps=decay_steps,
-                                                   decay_rate=decay_rate, staircase=True)))
+                    logger.info('\tLearning rate: %.5f' % session.run(tf_learning_rate))
                 else:
                     logger.info('\tLearning rate: %.5f' % start_lr)
 
