@@ -98,8 +98,10 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
-    model_hyperparameters['epochs'] = 5
-
+    model_hyperparameters['epochs'] = 20
+    model_hyperparameters['start_eps'] = 0.5
+    model_hyperparameters['eps_decay'] = 0.9
+    model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001
     model_hyperparameters['lrn_beta'] = 0.75

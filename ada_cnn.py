@@ -59,6 +59,9 @@ TOWER_NAME = constants.TOWER_NAME
 TF_ADAPTATION_NAME_SCOPE = constants.TF_ADAPTATION_NAME_SCOPE
 TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
 
+start_eps = None
+eps_decay = None
+valid_acc_decay = None
 
 def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling):
     global interval_parameters, model_hyperparameters, research_parameters, dataset_info, cnn_string, filter_vector
@@ -69,6 +72,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     global use_dropout, in_dropout_rate, dropout_rate
     global pool_size
     global use_loc_res_norm, lrn_radius, lrn_alpha, lrn_beta
+    global start_eps,eps_decay,valid_acc_decay
 
     # Data specific parameters
     dataset_info = cnn_hyperparameters_getter.get_data_specific_hyperparameters(dataset_name, dataset_behavior,
@@ -121,6 +125,10 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # pool parameters
     pool_size = model_hyperparameters['pool_size']
 
+    start_eps = model_hyperparameters['start_eps']
+    eps_decay = model_hyperparameters['eps_decay']
+    valid_acc_decay = model_hyperparameters['validation_set_accumulation_decay']
+
 n_iterations = 5000
 cnn_ops, cnn_hyperparameters = None, None
 
@@ -167,6 +175,8 @@ tf_weights_this,tf_bias_this = None, None
 tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
 tf_weight_shape,tf_in_size = None, None
 increment_global_step_op = None
+
+adapt_period = None
 
 # Loggers
 logger = None
@@ -1086,6 +1096,14 @@ def run_actual_finetune_operation(hard_pool_ft):
 
 
 def top_n_accuracy(predictions,labels,n):
+    '''
+    Gives the top-n accuracy instead of top-1 accuracy
+    Useful for large datasets
+    :param predictions:
+    :param labels:
+    :param n:
+    :return:
+    '''
     assert predictions.shape[0] == labels.shape[0]
     correct_total = 0
     for pred_item, lbl_item in zip(predictions,labels):
@@ -1095,7 +1113,9 @@ def top_n_accuracy(predictions,labels,n):
             correct_total += 1
     return (100.0 * correct_total)/predictions.shape[0]
 
-def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparameters, model_hyperparameters, interval_hyperparameters, dataset_info):
+
+def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparameters,
+                            model_hyperparameters, interval_hyperparameters, dataset_info):
 
     hyp_logger.info('#Various hyperparameters')
     hyp_logger.info('# Initial CNN architecture related hyperparameters')
@@ -1108,6 +1128,83 @@ def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparam
     hyp_logger.info(interval_hyperparameters)
     hyp_logger.info('# Model parameters')
     hyp_logger.info(model_hyperparameters)
+
+
+def get_explore_action_probs(epoch, trial_phase, n_conv):
+
+    if epoch == 0 and trial_phase<0.4:
+        logger.info('Finetune phase')
+        remove_last = 0.001
+        trial_action_probs = [0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        trial_action_probs.extend([0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.1, .9])
+    elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
+        logger.info('Growth phase')
+        trial_action_probs = [0.1 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        trial_action_probs.extend([0.7 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.05, 0.15])
+    elif epoch==1 and trial_phase>=1.0 and trial_phase<1.6:
+        logger.info('Shrink phase')
+        trial_action_probs = [0.6 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.05, 0.15])
+    elif epoch==1 and trial_phase>=1.6 and trial_phase<2.0:
+        logger.info('Finetune phase')
+        trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.1, 0.9])
+
+    return trial_action_probs
+
+# Continuous adaptation
+def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch, trial_phase, n_conv, eps, adaptation_period):
+    '''
+    Continuously adapting the structure
+    :param q_learner:
+    :param data:
+    :param epoch:
+    :param trial_phase:
+    :param n_conv:
+    :param eps:
+    :param adaptation_period:
+    :return:
+    '''
+    if epoch == 0 or epoch == 1:
+        # Grow the network mostly (Until half) then fix
+        logger.info('Explore Stage')
+        state, action, invalid_actions = q_learner.output_action_with_type(data, 'Explore', p_action=get_explore_action_probs(epoch, trial_phase, n_conv))
+    elif epoch > 1:
+        logger.info('Epsilon: %.3f',eps)
+        if adaptation_period=='first':
+            if (trial_phase - floor(trial_phase))<=0.5:
+                logger.info('Greedy Adapting period of epoch')
+                if np.random.random() >= eps:
+                    state, action, invalid_actions = q_learner.output_action_with_type(
+                        data, 'Greedy')
+
+                else:
+                    state, action, invalid_actions = q_learner.output_action_with_type(
+                        data, 'Stochastic'
+                    )
+            else:
+                logger.info('Greedy Not adapting period of epoch')
+                state, action, invalid_actions = q_learner.get_finetune_action(data)
+        if adaptation_period == 'last':
+            if (trial_phase - floor(trial_phase)) > 0.5:
+                logger.info('Greedy Adapting period of epoch')
+                if np.random.random() >= eps:
+                    state, action, invalid_actions = q_learner.output_action_with_type(
+                        data, 'Greedy')
+
+                else:
+                    state, action, invalid_actions = q_learner.output_action_with_type(
+                        data, 'Stochastic'
+                    )
+            else:
+                logger.info('Not adapting period of epoch')
+                state, action, invalid_actions = q_learner.get_finetune_action(data)
+
+    return state, action, invalid_actions
 
 if __name__ == '__main__':
 
@@ -1348,6 +1445,7 @@ if __name__ == '__main__':
         for batch_id in range(0, n_iterations - num_gpus, num_gpus):
 
             global_batch_id = (n_iterations * epoch) + batch_id
+            trial_phase = (global_batch_id * 1.0 / n_iterations)
             t0 = time.clock()  # starting time for a batch
 
             logger.debug('=' * 80)
@@ -1420,7 +1518,7 @@ if __name__ == '__main__':
             # ==========================================================
             # Updating Pools of data
 
-            if np.random.random()<0.5 and epoch==0:
+            if np.random.random()<0.5*(valid_acc_decay**(epoch)):
                 if adapt_structure or rigid_pooling:
 
                     # Concatenate current 'num_gpus' batches to a single matrix
@@ -1553,7 +1651,9 @@ if __name__ == '__main__':
 
                 logger.info('\tMinibatch Mean Loss: %.3f' % mean_train_loss)
                 logger.info('\tValidation Accuracy (Unseen): %.3f' % unseen_valid_accuracy)
-                logger.info('\tHard pool acceptance rate: %.2f', research_parameters['hard_pool_acceptance_rate'])
+                logger.info('\tValidation accumulation rate %.3f', 0.5*(valid_acc_decay**epoch))
+                logger.info('\tTrial phase: %.3f',trial_phase)
+
                 test_accuracies = []
                 for test_batch_id in range(test_size // batch_size):
                     batch_test_data = test_dataset[test_batch_id * batch_size:(test_batch_id + 1) * batch_size, :, :, :]
@@ -1651,12 +1751,14 @@ if __name__ == '__main__':
                             filter_dict[op_i] = 0
                             filter_list.append(0)
 
-                    current_state, current_action, curr_invalid_actions = adapter.output_action(
-                        {'filter_counts': filter_dict, 'filter_counts_list': filter_list})
-                    stop_adapting = adapter.get_stop_adapting_boolean()
+                    # Turned off 21/09/2017
+                    # current_state, current_action, curr_invalid_actions = adapter.output_action(
+                    #    {'filter_counts': filter_dict, 'filter_counts_list': filter_list})
+                    current_state, current_action, curr_invalid_actions = get_continuous_adaptation_action_in_different_epochs(
+                        adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list}, epoch=epoch,
+                        trial_phase=trial_phase, n_conv=len(convolution_op_ids), eps=start_eps, adaptation_period=adapt_period)
 
-                    adapter.update_trial_phase(
-                        (global_batch_id * epoch + batch_id) * 1.0 / ((batch_size*n_iterations) // batch_size))
+                    adapter.update_trial_phase(trial_phase)
 
                     for li, la in enumerate(current_action):
                         # pooling and fulcon layers
@@ -1800,14 +1902,13 @@ if __name__ == '__main__':
                 session.run(inc_global_step(global_step))
             # ======================================================
 
-            # TODO: Needed?
-            if research_parameters['adapt_structure'] and epoch > 1:
-                stop_adapting = True
-
             # AdaCNN Algorithm
             if research_parameters['adapt_structure']:
                 if epoch > 1:
                     session.run(increment_global_step_op)
+                    start_eps = max([start_eps*eps_decay,0.1])
+                    adapt_period = np.random.choice(['first','last'])
+                    stop_adapting = adapter.check_if_should_stop_adapting()
 
             else:
                 # Noninc pool algorithm

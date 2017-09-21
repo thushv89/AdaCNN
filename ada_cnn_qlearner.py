@@ -101,6 +101,7 @@ class AdaCNNAdaptingQLearner(object):
         self.ft_saturated_count = 0
         self.max_q_ft = -1000
         self.stop_adapting = False
+        self.current_q_for_actions = None
 
         # Trial Phase (Usually the first epoch related)
         self.trial_phase = 0
@@ -154,6 +155,9 @@ class AdaCNNAdaptingQLearner(object):
         init_op = tf.variables_initializer(all_variables)
         _ = self.session.run(init_op)
 
+    def get_finetune_action(self,data):
+        state = data['filter_counts_list']
+        return state, [self.actions[1] if li in self.conv_ids else None for li in range(self.net_depth)],[]
 
     def setup_loggers(self):
         '''
@@ -514,7 +518,24 @@ class AdaCNNAdaptingQLearner(object):
 
         return layer_actions_list, found_valid_action,invalid_actions
 
-    def get_new_valid_action_when_exploring(self,action_idx, found_valid_action, data,trial_action_probs):
+    def check_if_should_stop_adapting(self):
+
+        if np.argmax(self.current_q_for_actions) == self.output_size - 1:
+            if self.current_q_for_actions[-1] > self.max_q_ft:
+                self.max_q_ft = self.current_q_for_actions[-1]
+                self.ft_saturated_count = 0
+                self.stop_adapting = False
+            else:
+                self.ft_saturated_count += 1
+
+            if self.ft_saturated_count > self.threshold_stop_adapting:
+                self.stop_adapting = True
+        else:
+            self.ft_saturated_count = 0
+
+        return self.stop_adapting
+
+    def get_new_valid_action_when_exploring(self, action_idx, found_valid_action, data,trial_action_probs):
         '''
             ================= Look ahead 1 step (Validate Predicted Action) =========================
             make sure predicted action stride is not larger than resulting output.
@@ -526,6 +547,7 @@ class AdaCNNAdaptingQLearner(object):
         :return:
         '''
 
+        invalid_actions=[]
         layer_actions_list = self.action_list_with_index(action_idx)
         # while loop for checkin the validity of the action and choosing another if not
         while not found_valid_action and action_idx < self.output_size - 2:
@@ -567,10 +589,11 @@ class AdaCNNAdaptingQLearner(object):
         if action_idx >= self.output_size - 2:
             found_valid_action = True
 
-        return layer_actions_list,found_valid_action
+        return layer_actions_list,found_valid_action,invalid_actions
 
     def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data, q_for_actions):
 
+        layer_actions_list = self.action_list_with_index(action_idx)
         invalid_actions = []
         if self.global_time_stamp > self.stop_exploring_after:
             allowed_actions = np.argsort(q_for_actions).flatten()[floor(
@@ -614,16 +637,13 @@ class AdaCNNAdaptingQLearner(object):
 
         return layer_actions_list, found_valid_action, invalid_actions
 
-    def get_explore_type_action(self,data,history_t_plus_1):
+    def get_explore_type_action(self,data,history_t_plus_1, explore_action_probs):
 
-        trial_action_probs = self.get_trial_phase_action_probs()
-
-        action_idx = np.random.choice(self.output_size, p=trial_action_probs)
-
+        action_idx = np.random.choice(self.output_size, p=explore_action_probs)
 
         found_valid_action = False
-        layer_actions_list, found_valid_action = self.get_new_valid_action_when_exploring(
-            action_idx, found_valid_action, data, trial_action_probs=trial_action_probs
+        layer_actions_list, found_valid_action, invalid_actions = self.get_new_valid_action_when_exploring(
+            action_idx, found_valid_action, data, trial_action_probs=explore_action_probs
         )
 
         assert found_valid_action
@@ -644,14 +664,14 @@ class AdaCNNAdaptingQLearner(object):
                         len(history_t_plus_1) == self.state_history_length:
             self.rand_state_list.append(self.phi(history_t_plus_1))
 
-
-        return layer_actions_list
+        return layer_actions_list, invalid_actions
 
     def get_greedy_type_action(self,data,history_t_plus_1):
 
         curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
         q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
         q_for_actions = q_for_actions.flatten().tolist()
+        self.current_q_for_actions = q_for_actions
 
         q_value_strings = ''
         for q_val in q_for_actions:
@@ -662,24 +682,14 @@ class AdaCNNAdaptingQLearner(object):
         # Finding when to stop adapting
         # for this we choose the point the finetune operation has the
         # maximum utility compared to other actions and itself previously
-        if self.trial_phase > self.trial_phase_threshold * 1.5 and np.argmax(q_for_actions) == self.output_size - 1:
-            if q_for_actions[-1] > self.max_q_ft:
-                assert self.trial_phase >= 1.0
-                self.max_q_ft = q_for_actions[-1]
-                self.ft_saturated_count = 0
-            else:
-                self.ft_saturated_count += 1
 
-            if self.ft_saturated_count > self.threshold_stop_adapting:
-                self.stop_adapting = True
-        else:
-            self.ft_saturated_count = 0
-
-        action_type = 'Deterministic'
         action_idx = np.asscalar(np.argmax(q_for_actions))
 
-        if np.random.random() < 0.25:
-            action_idx = np.asscalar(np.argsort(q_for_actions).flatten()[-2])
+        if np.random.random() < 0.5:
+            if np.random.random() < 0.5:
+                action_idx = np.asscalar(np.argsort(q_for_actions).flatten()[-2])
+            else:
+                action_idx = np.asscalar(np.argsort(q_for_actions).flatten()[-3])
 
         found_valid_action = False
         layer_actions_list, found_valid_action, invalid_actions = self.get_new_valid_action_when_greedy(
@@ -690,16 +700,17 @@ class AdaCNNAdaptingQLearner(object):
 
         assert found_valid_action
 
-        return layer_actions_list
+        return layer_actions_list, invalid_actions
 
     def get_stochastic_type_action(self,data, history_t_plus_1):
 
         curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
         q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
+        self.current_q_for_actions = q_for_actions
 
         # not to restrict from the beginning
         if self.global_time_stamp > self.stop_exploring_after:
-            rand_indices = np.argsort(q_for_actions).flatten()[:-1]  # Only get a random index from the highest q values
+            rand_indices = np.argsort(q_for_actions).flatten()[:-1]  # Only get a random index from the actions except last
             self.verbose_logger.info('Allowed action indices: %s', rand_indices)
             action_idx = np.random.choice(rand_indices)
         else:
@@ -715,11 +726,75 @@ class AdaCNNAdaptingQLearner(object):
 
         # Check if the next filter count is invalid for any layer
         found_valid_action = False
-        layer_actions_list, invalid_actions = self.get_new_valid_action_when_stochastic(action_idx,found_valid_action,data,q_for_actions)
+        layer_actions_list, found_valid_action, invalid_actions = self.get_new_valid_action_when_stochastic(action_idx,found_valid_action,data,q_for_actions)
 
         assert found_valid_action
 
-        return layer_actions_list
+        return layer_actions_list, invalid_actions
+
+    def output_action_with_type(self, data, action_type, **kwargs):
+        '''
+        Output action acording to one of the below methods
+        Explore: action during the exploration (network growth and netowrk shrinkage)
+        Deterministic: action with highest q value
+        Stochastic: action in a stochastic manner
+        :param data:
+        :return:
+        '''
+
+        state = []
+        state.extend(data['filter_counts_list'])
+
+        self.verbose_logger.info('Data for (Depth Index,DistMSE,Filter Count) %s\n' % str(state))
+        history_t_plus_1 = list(self.current_state_history)
+        history_t_plus_1.append([state])
+
+        self.verbose_logger.debug('Current state history: %s\n', self.current_state_history)
+        self.verbose_logger.debug('history_t+1:%s\n', history_t_plus_1)
+        self.verbose_logger.debug('Epsilons: %.3f\n', self.epsilon)
+        self.verbose_logger.info('Trial phase: %.3f\n', self.trial_phase)
+
+        if action_type == 'Explore':
+            layer_actions_list,invalid_actions = self.get_explore_type_action(data,history_t_plus_1,kwargs['p_action'])
+
+        # deterministic selection (if epsilon is not 1 or q is not empty)
+        elif action_type == 'Greedy':
+            self.verbose_logger.info('Choosing action deterministic...')
+            # we create this copy_actions in case we need to change the order the actions processed
+            # without changing the original action space (self.actions)
+            layer_actions_list,invalid_actions = self.get_greedy_type_action(data,history_t_plus_1)
+
+        # random selection
+        elif action_type == 'Stochastic':
+            self.verbose_logger.info('Choosing action stochastic...')
+            layer_actions_list,invalid_actions = self.get_stochastic_type_action(data,history_t_plus_1)
+
+        else:
+            raise NotImplementedError
+
+        self.verbose_logger.debug('=' * 60)
+        self.verbose_logger.debug('State')
+        self.verbose_logger.debug(state)
+        self.verbose_logger.debug('Action (%s)',action_type)
+        self.verbose_logger.debug(layer_actions_list)
+        self.verbose_logger.debug('=' * 60)
+
+        if self.prev_action is not None and \
+                        self.get_action_string(layer_actions_list) == self.get_action_string(self.prev_action):
+            self.same_action_count += 1
+
+        else:
+            self.same_action_count = 0
+
+        self.action_logger.info('%s,%s,%s,%.3f', action_type, state, layer_actions_list, self.epsilon)
+
+        self.prev_action = layer_actions_list
+        self.prev_state = state
+
+        self.verbose_logger.info('\tSelected action: %s\n', layer_actions_list)
+
+        return state, layer_actions_list, invalid_actions
+
 
     def output_action(self, data):
         '''
@@ -754,7 +829,7 @@ class AdaCNNAdaptingQLearner(object):
         assert n_conv_first_half + n_conv_last_half == self.n_conv
         if self.trial_phase < self.trial_phase_threshold:
             action_type = 'Explore'
-            layer_actions_list = self.get_explore_type_action(data,history_t_plus_1)
+            layer_actions_list,invalid_actions = self.get_explore_type_action(data,history_t_plus_1)
 
         # deterministic selection (if epsilon is not 1 or q is not empty)
         elif np.random.random() > self.epsilon and len(history_t_plus_1) == self.state_history_length:
@@ -762,14 +837,14 @@ class AdaCNNAdaptingQLearner(object):
             # we create this copy_actions in case we need to change the order the actions processed
             # without changing the original action space (self.actions)
             action_type = 'Greedy'
-            layer_actions_list = self.get_greedy_type_action(data,history_t_plus_1)
+            layer_actions_list,invalid_actions = self.get_greedy_type_action(data,history_t_plus_1)
 
         # random selection
         else:
             self.verbose_logger.info('Choosing action stochastic...')
             action_type = 'Stochastic'
 
-            layer_actions_list = self.get_stochastic_type_action(data,history_t_plus_1)
+            layer_actions_list,invalid_actions = self.get_stochastic_type_action(data,history_t_plus_1)
 
         # decay epsilon
         if self.trial_phase >= self.trial_phase_threshold:
