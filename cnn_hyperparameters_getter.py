@@ -140,7 +140,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
 
             filter_vector = [96, 96, 96, 0, 192, 192, 192]
-            add_amount, remove_amount = 8, 4
+            add_amount, remove_amount = 4, 2
             filter_min_threshold = 24
 
     elif dataset_name== 'imagenet-250':
@@ -161,7 +161,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
             filter_vector = [64, 0, 128, 0, 256, 256, 0, 512, 512, 0, 512, 512]
             filter_min_threshold = 24
-            add_amount, remove_amount = 16, 8
+            add_amount, remove_amount = 8, 4
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels

@@ -100,7 +100,8 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     data_fluctuation = dataset_info['fluctuation_factor']
 
     cnn_string = model_hyperparameters['cnn_string']
-    filter_vector = model_hyperparameters['filter_vector']
+    if adapt_structure:
+        filter_vector = model_hyperparameters['filter_vector']
 
     start_lr = model_hyperparameters['start_lr']
     decay_learning_rate = model_hyperparameters['decay_learning_rate']
@@ -125,8 +126,9 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # pool parameters
     pool_size = model_hyperparameters['pool_size']
 
-    start_eps = model_hyperparameters['start_eps']
-    eps_decay = model_hyperparameters['eps_decay']
+    if adapt_structure:
+        start_eps = model_hyperparameters['start_eps']
+        eps_decay = model_hyperparameters['eps_decay']
     valid_acc_decay = model_hyperparameters['validation_set_accumulation_decay']
 
 n_iterations = 5000
@@ -182,6 +184,8 @@ adapt_period = None
 # Loggers
 logger = None
 perf_logger = None
+
+
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
 
@@ -222,7 +226,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 x = utils.lrelu(x + b, name=scope.name + '/top')
 
                 activation_ops.append(
-                    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_max(x, [0, 1, 2]), validate_shape=False))
+                    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(x, [0, 1, 2]), validate_shape=False))
 
                 if use_loc_res_norm and op == last_conv_id:
                     x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha,
@@ -344,10 +348,6 @@ def mean_tower_activations(tower_activations):
 
         mean_activations.append(tf.reduce_mean(stacked_activations, [0]))
     return mean_activations
-
-
-def inc_global_step(global_step):
-    return global_step + 1
 
 
 def predict_with_logits(logits):
@@ -1135,23 +1135,42 @@ def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparam
 
 
 def get_explore_action_probs(epoch, trial_phase, n_conv):
-
+    '''
+    Explration action probabilities. We manually specify a probabilities of a stochastic policy
+    used to explore the state space adequately
+    :param epoch:
+    :param trial_phase:
+    :param n_conv:
+    :return:
+    '''
     if epoch == 0 and trial_phase<0.4:
         logger.info('Finetune phase')
-        remove_last = 0.001
         trial_action_probs = [0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.1, .9])
+
     elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
         logger.info('Growth phase')
-        trial_action_probs = [0.1 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        # There is 0.1 amount probability to be divided between all the remove actions
+        # We give 1/10 th as for other remove actions for the last remove action
+        remove_action_prob = 0.1*(10.0/11.0)
+        trial_action_probs_without_last = [remove_action_prob/(1.0*(n_conv-1)) for _ in range(n_conv-1)]
+        trial_action_probs = list(trial_action_probs_without_last) + [0.1-remove_action_prob]
+
         trial_action_probs.extend([0.7 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.05, 0.15])
+
     elif epoch==1 and trial_phase>=1.0 and trial_phase<1.7:
         logger.info('Shrink phase')
-        trial_action_probs = [0.6 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        # There is 0.6 amount probability to be divided between all the remove actions
+        # We give 1/10 th as for other remove actions for the last remove action
+        remove_action_prob = 0.6 * (10.0 / 11.0)
+        trial_action_probs_without_last = [remove_action_prob / (1.0 * (n_conv - 1)) for _ in range(n_conv - 1)]
+        trial_action_probs = list(trial_action_probs_without_last) + [0.6 - remove_action_prob]
+
         trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.05, 0.15])
+
     elif epoch==1 and trial_phase>=1.7 and trial_phase<2.0:
         logger.info('Finetune phase')
         trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
@@ -1173,11 +1192,17 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
     :param adaptation_period:
     :return:
     '''
+
+    adapting_now = False
     if epoch == 0 or epoch == 1:
         # Grow the network mostly (Until half) then fix
         logger.info('Explore Stage')
-        state, action, invalid_actions = q_learner.output_action_with_type(data, 'Explore', p_action=get_explore_action_probs(epoch, trial_phase, n_conv))
-    elif epoch > 1:
+        state, action, invalid_actions = q_learner.output_action_with_type(
+            data, 'Explore', p_action=get_explore_action_probs(epoch, trial_phase, n_conv)
+        )
+        adapting_now = True
+
+    else:
         logger.info('Epsilon: %.3f',eps)
         if adaptation_period=='first':
             if (trial_phase - floor(trial_phase))<=0.5:
@@ -1190,9 +1215,11 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Stochastic'
                     )
+                adapting_now = True
             else:
                 logger.info('Greedy Not adapting period of epoch')
                 state, action, invalid_actions = q_learner.get_finetune_action(data)
+                adapting_now = False
         if adaptation_period == 'last':
             if (trial_phase - floor(trial_phase)) > 0.5:
                 logger.info('Greedy Adapting period of epoch')
@@ -1204,11 +1231,12 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Stochastic'
                     )
+                adapting_now=True
             else:
                 logger.info('Not adapting period of epoch')
                 state, action, invalid_actions = q_learner.get_finetune_action(data)
-
-    return state, action, invalid_actions
+                adapting_now = False
+    return state, action, invalid_actions, adapting_now
 
 if __name__ == '__main__':
 
@@ -1419,7 +1447,7 @@ if __name__ == '__main__':
             logger.debug('\tDefining rolling activation mean for %s', op)
             rolling_ativation_means[op] = np.zeros([cnn_hyperparameters[op]['weights'][3]])
     act_decay = 0.9
-    current_state, current_action = None, None
+    current_state, current_action,curr_adaptation_status = None, None,None
     unseen_valid_accuracy, prev_unseen_valid_accuracy = 0, 0
 
     current_q_learn_op_id = 0
@@ -1756,7 +1784,7 @@ if __name__ == '__main__':
                     # Turned off 21/09/2017
                     # current_state, current_action, curr_invalid_actions = adapter.output_action(
                     #    {'filter_counts': filter_dict, 'filter_counts_list': filter_list})
-                    current_state, current_action, curr_invalid_actions = get_continuous_adaptation_action_in_different_epochs(
+                    current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
                         adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list}, epoch=epoch,
                         trial_phase=trial_phase, n_conv=len(convolution_op_ids), eps=start_eps, adaptation_period=adapt_period)
 
@@ -1806,80 +1834,84 @@ if __name__ == '__main__':
                     prev_unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
                     # =============================================================
 
+                    # ==================================================================
+                    # Policy Update (Update policy only when we take actions actually using the qlearner)
+                    # (Not just outputting finetune action)
+                    # ==================================================================
+                    if curr_adaptation_status:
 
-                    # ======================================
-                    # Policy Update
-                    # ======================================
-                    pool_accuracy = []
-                    pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
+                        # ==================================================================
+                        # Calculating pool accuracy
+                        pool_accuracy = []
+                        pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
 
-                    for pool_id in range(hard_pool_valid.get_size()//batch_size):
-                        pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
-                        pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
-                        pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
-                                          tf_pool_label_batch[0]: pbatch_labels}
-                        p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
-                        if num_labels<=100:
-                            pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
-                        else:
-                            pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
+                        for pool_id in range(hard_pool_valid.get_size()//batch_size):
+                            pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
+                            pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
+                            pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
+                                              tf_pool_label_batch[0]: pbatch_labels}
+                            p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
+                            if num_labels<=100:
+                                pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
+                            else:
+                                pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
+                        # ===============================================================================
 
-                    # don't use current state as the next state, current state is for a different layer
-                    next_state = []
-                    affected_layer_index = 0
-                    for li, la in enumerate(current_action):
-                        if la is None:
-                            assert li not in convolution_op_ids
-                            next_state.append(0)
-                            continue
-                        elif la[0] == 'add':
-                            next_state.append(current_state[li] + la[1])
-                            affected_layer_index = li
-                        elif la[0] == 'remove':
-                            next_state.append(current_state[li] - la[1])
-                            affected_layer_index = li
-                        else:
-                            next_state.append(current_state[li])
+                        # don't use current state as the next state, current state is for a different layer
+                        next_state = []
+                        affected_layer_index = 0
+                        for li, la in enumerate(current_action):
+                            if la is None:
+                                assert li not in convolution_op_ids
+                                next_state.append(0)
+                                continue
+                            elif la[0] == 'add':
+                                next_state.append(current_state[li] + la[1])
+                                affected_layer_index = li
+                            elif la[0] == 'remove':
+                                next_state.append(current_state[li] - la[1])
+                                affected_layer_index = li
+                            else:
+                                next_state.append(current_state[li])
 
-                    next_state = tuple(next_state)
+                        next_state = tuple(next_state)
 
-                    logger.info('\tState (prev): %s', str(current_state))
-                    logger.info('\tAction (prev): %s', str(current_action))
-                    logger.info('\tState (next): %s\n', str(next_state))
-                    p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
-                    logger.info('\tPool Accuracy: %.3f\n', p_accuracy)
-                    logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
-                    assert not np.isnan(p_accuracy)
-                    adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
-                                           'curr_state': next_state,
-                                           'next_accuracy': None,
-                                           'prev_accuracy': None,
-                                           'pool_accuracy': p_accuracy,
-                                           'prev_pool_accuracy': prev_pool_accuracy,
-                                           'max_pool_accuracy': max_pool_accuracy,
-                                           'unseen_valid_accuracy': unseen_valid_accuracy,
-                                           'prev_unseen_valid_accuracy': prev_unseen_valid_accuracy,
-                                           'invalid_actions': curr_invalid_actions,
-                                           'batch_id': global_batch_id,
-                                           'layer_index': affected_layer_index}, True)
+                        logger.info('\tState (prev): %s', str(current_state))
+                        logger.info('\tAction (prev): %s', str(current_action))
+                        logger.info('\tState (next): %s\n', str(next_state))
+                        p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+                        logger.info('\tPool Accuracy: %.3f\n', p_accuracy)
+                        logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
+                        assert not np.isnan(p_accuracy)
 
-                    if len(state_action_history) > 10:
-                        del state_action_history[0]
+                        # ================================================================================
+                        # Actual updating of the policy
+                        adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
+                                               'curr_state': next_state,
+                                               'next_accuracy': None,
+                                               'prev_accuracy': None,
+                                               'pool_accuracy': p_accuracy,
+                                               'prev_pool_accuracy': prev_pool_accuracy,
+                                               'max_pool_accuracy': max_pool_accuracy,
+                                               'unseen_valid_accuracy': unseen_valid_accuracy,
+                                               'prev_unseen_valid_accuracy': prev_unseen_valid_accuracy,
+                                               'invalid_actions': curr_invalid_actions,
+                                               'batch_id': global_batch_id,
+                                               'layer_index': affected_layer_index}, True)
+                        # ===================================================================================
 
-                    state_action_history.append([current_state, current_action, p_accuracy, prev_pool_accuracy])
+                        cnn_structure_logger.info(
+                            '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
+                            current_action, np.mean(pool_accuracy),
+                            utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
+                        )
 
-                    cnn_structure_logger.info(
-                        '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
-                        current_action, np.mean(pool_accuracy),
-                        utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
-                    )
+                        q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
 
-                    q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
+                        logger.debug('Resetting both data distribution means')
 
-                    logger.debug('Resetting both data distribution means')
-
-                    max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
-                    prev_pool_accuracy = p_accuracy
+                        max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
+                        prev_pool_accuracy = p_accuracy
 
                 if batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0:
 
@@ -1898,24 +1930,24 @@ if __name__ == '__main__':
                 perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
                                  (t1_train - t0_train) / num_gpus, op_count, var_count)
 
-            # =======================================================
-            # Decay learning rate (if set)
-            if decay_learning_rate and epoch >= 1:
-                session.run(inc_global_step(global_step))
-            # ======================================================
+        # =======================================================
+        # Decay learning rate (if set)
+        if decay_learning_rate and epoch >= 1:
+            session.run(increment_global_step_op)
+        # ======================================================
 
-            # AdaCNN Algorithm
-            if research_parameters['adapt_structure']:
-                if epoch > 1:
-                    session.run(increment_global_step_op)
-                    start_eps = max([start_eps*eps_decay,0.1])
-                    adapt_period = np.random.choice(['first','last'])
-                    stop_adapting = adapter.check_if_should_stop_adapting()
+        # AdaCNN Algorithm
+        if research_parameters['adapt_structure']:
+            if epoch > 1:
+                session.run(increment_global_step_op)
+                start_eps = max([start_eps*eps_decay,0.1])
+                adapt_period = np.random.choice(['first','last'])
+                stop_adapting = adapter.check_if_should_stop_adapting()
 
+        else:
+            # Noninc pool algorithm
+            if research_parameters['pooling_for_nonadapt']:
+                session.run(increment_global_step_op)
+            # Noninc algorithm
             else:
-                # Noninc pool algorithm
-                if research_parameters['pooling_for_nonadapt']:
-                    session.run(increment_global_step_op)
-                # Noninc algorithm
-                else:
-                    session.run(increment_global_step_op)
+                session.run(increment_global_step_op)
