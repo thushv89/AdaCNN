@@ -1145,9 +1145,9 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
     '''
     if epoch == 0 and trial_phase<0.4:
         logger.info('Finetune phase')
-        trial_action_probs = [0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
-        trial_action_probs.extend([0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, .9])
+        trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        trial_action_probs.extend([0.3 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.1, .6])
 
     elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
         logger.info('Growth phase')
@@ -1157,8 +1157,8 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs_without_last = [remove_action_prob/(1.0*(n_conv-1)) for _ in range(n_conv-1)]
         trial_action_probs = list(trial_action_probs_without_last) + [0.1-remove_action_prob]
 
-        trial_action_probs.extend([0.7 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.15])
+        trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.05, 0.25])
 
     elif epoch==1 and trial_phase>=1.0 and trial_phase<1.7:
         logger.info('Shrink phase')
@@ -1168,14 +1168,14 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs_without_last = [remove_action_prob / (1.0 * (n_conv - 1)) for _ in range(n_conv - 1)]
         trial_action_probs = list(trial_action_probs_without_last) + [0.6 - remove_action_prob]
 
-        trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.15])
+        trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.05, 0.25])
 
     elif epoch==1 and trial_phase>=1.7 and trial_phase<2.0:
         logger.info('Finetune phase')
-        trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+        trial_action_probs = [0.3 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, 0.9])
+        trial_action_probs.extend([0.1, 0.6])
 
     return trial_action_probs
 
@@ -1216,11 +1216,13 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                         data, 'Stochastic'
                     )
                 adapting_now = True
+
             else:
                 logger.info('Greedy Not adapting period of epoch')
                 state, action, invalid_actions = q_learner.get_finetune_action(data)
                 adapting_now = False
-        if adaptation_period == 'last':
+
+        elif adaptation_period == 'last':
             if (trial_phase - floor(trial_phase)) > 0.5:
                 logger.info('Greedy Adapting period of epoch')
                 if np.random.random() >= eps:
@@ -1236,6 +1238,10 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                 logger.info('Not adapting period of epoch')
                 state, action, invalid_actions = q_learner.get_finetune_action(data)
                 adapting_now = False
+
+        else:
+            raise NotImplementedError
+
     return state, action, invalid_actions, adapting_now
 
 if __name__ == '__main__':
@@ -1448,7 +1454,7 @@ if __name__ == '__main__':
             rolling_ativation_means[op] = np.zeros([cnn_hyperparameters[op]['weights'][3]])
     act_decay = 0.9
     current_state, current_action,curr_adaptation_status = None, None,None
-    unseen_valid_accuracy, prev_unseen_valid_accuracy = 0, 0
+    prev_unseen_valid_accuracy = 0
 
     current_q_learn_op_id = 0
     logger.info('Convolutional Op IDs: %s', convolution_op_ids)
@@ -1465,7 +1471,7 @@ if __name__ == '__main__':
     # Stop and start adaptations when necessary
     start_adapting = False
     stop_adapting = False
-
+    adapt_period = 'first'
     # need to have a starting value because if the algorithm choose to add the data to validation set very first step
     train_accuracy = 0
 
@@ -1831,7 +1837,7 @@ if __name__ == '__main__':
                     feed_valid_dict = {tf_valid_data_batch: batch_valid_data,
                                        tf_valid_label_batch: batch_valid_labels}
                     unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                    prev_unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
+                    after_adapt_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
                     # =============================================================
 
                     # ==================================================================
@@ -1876,12 +1882,16 @@ if __name__ == '__main__':
 
                         next_state = tuple(next_state)
 
+                        logger.info('='*80)
                         logger.info('\tState (prev): %s', str(current_state))
                         logger.info('\tAction (prev): %s', str(current_action))
-                        logger.info('\tState (next): %s\n', str(next_state))
+                        logger.info('\tState (next): %s', str(next_state))
                         p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
-                        logger.info('\tPool Accuracy: %.3f\n', p_accuracy)
+                        logger.info('\tPool Accuracy: %.3f', p_accuracy)
+                        logger.info('\tValid accuracy (Before Adapt): %.3f', unseen_valid_accuracy)
+                        logger.info('\tValid accuracy (After Adapt): %.3f', after_adapt_valid_accuracy)
                         logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
+                        logger.info(('=' * 80)+'\n')
                         assert not np.isnan(p_accuracy)
 
                         # ================================================================================
@@ -1893,8 +1903,8 @@ if __name__ == '__main__':
                                                'pool_accuracy': p_accuracy,
                                                'prev_pool_accuracy': prev_pool_accuracy,
                                                'max_pool_accuracy': max_pool_accuracy,
-                                               'unseen_valid_accuracy': unseen_valid_accuracy,
-                                               'prev_unseen_valid_accuracy': prev_unseen_valid_accuracy,
+                                               'unseen_valid_accuracy': after_adapt_valid_accuracy,
+                                               'prev_unseen_valid_accuracy': unseen_valid_accuracy,
                                                'invalid_actions': curr_invalid_actions,
                                                'batch_id': global_batch_id,
                                                'layer_index': affected_layer_index}, True)
@@ -1942,7 +1952,9 @@ if __name__ == '__main__':
                 session.run(increment_global_step_op)
                 start_eps = max([start_eps*eps_decay,0.1])
                 adapt_period = np.random.choice(['first','last'])
-                stop_adapting = adapter.check_if_should_stop_adapting()
+                # At the moment not stopping adaptations for any reason
+                # stop_adapting = adapter.check_if_should_stop_adapting()
+
 
         else:
             # Noninc pool algorithm

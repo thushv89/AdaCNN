@@ -109,7 +109,7 @@ class AdaCNNAdaptingQLearner(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.session = params['session']
-        self.tf_state_input, self.tf_q_targets = None,None
+        self.tf_state_input, self.tf_q_targets, self.tf_q_mask = None,None,None
         self.tf_out_op,self.tf_out_target_op = None,None
         self.tf_weights, self.tf_bias = None, None
         self.tf_loss_op,self.tf_optimize_op = None,None
@@ -141,10 +141,11 @@ class AdaCNNAdaptingQLearner(object):
         self.tf_init_mlp()
         self.tf_state_input = tf.placeholder(tf.float32, shape=(None, self.input_size), name='InputDataset')
         self.tf_q_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
+        self.tf_q_mask = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargeMask')
 
         self.tf_out_op = self.tf_calc_output(self.tf_state_input)
         self.tf_out_target_op = self.tf_calc_output_target(self.tf_state_input)
-        self.tf_loss_op = self.tf_sqr_loss(self.tf_out_op, self.tf_q_targets)
+        self.tf_loss_op = self.tf_sqr_loss(self.tf_out_op, self.tf_q_targets, self.tf_q_mask)
         self.tf_optimize_op = self.tf_momentum_optimize(self.tf_loss_op)
 
         self.tf_target_update_ops = self.tf_target_weight_copy_op()
@@ -173,7 +174,7 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger.propagate = False
         self.verbose_logger.setLevel(logging.DEBUG)
         vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner.log', mode='w')
-        vHandler.setLevel(logging.DEBUG)
+        vHandler.setLevel(logging.INFO)
         vHandler.setFormatter(logging.Formatter('%(message)s'))
         self.verbose_logger.addHandler(vHandler)
         v_console = logging.StreamHandler(sys.stdout)
@@ -304,14 +305,14 @@ class AdaCNNAdaptingQLearner(object):
 
         return tf.matmul(x, self.tf_weights[-1]) + self.tf_bias[-1]
 
-    def tf_sqr_loss(self, tf_output, tf_targets):
+    def tf_sqr_loss(self, tf_output, tf_targets, tf_mask):
         '''
         Calculate the squared loss between target and output
         :param tf_output:
         :param tf_targets:
         :return:
         '''
-        return tf.reduce_mean((tf_output - tf_targets) ** 2)
+        return tf.reduce_mean(((tf_output*tf_mask) - tf_targets) ** 2)
 
     def tf_momentum_optimize(self, loss):
         optimizer = tf.train.MomentumOptimizer(learning_rate=self.learning_rate,
@@ -1020,7 +1021,7 @@ class AdaCNNAdaptingQLearner(object):
         # total gain should be negative for taking add action before half way througl a layer
         # total gain should be positve for taking add action after half way througl a layer
         total = 0
-        split_factor = 0.51
+        split_factor = 0.6
         for l_i,(c_depth, p_depth, up_dept) in enumerate(zip(curr_comp,prev_comp,filter_bound_vec)):
             if up_dept>0 and abs(c_depth-p_depth) > 0:
                 total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
@@ -1057,6 +1058,9 @@ class AdaCNNAdaptingQLearner(object):
                 self.verbose_logger.info('Training the Q Approximator with Experience...')
                 self.verbose_logger.debug('(Q) Total experience data: %d', len(self.experience))
 
+                # =====================================================
+                # Returns a batch of experience
+                # ====================================================
                 if len(self.experience) > self.batch_size:
                     exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                     self.verbose_logger.debug('Experience indices: %s', exp_indices)
@@ -1082,15 +1086,16 @@ class AdaCNNAdaptingQLearner(object):
                 self.verbose_logger.debug('\tTarget Q Values %s:', target_q[:5])
                 assert target_q.size <= self.batch_size
 
-                y = np.multiply(y, target_q.reshape(-1, 1))
+                # This gives y values by multiplying one-hot-encded actions (bxaction_size) in the experience tuples
+                # with target q values (bx1)
+                ohe_targets = np.multiply(y, target_q.reshape(-1, 1))
 
                 # since the state contain layer id, let us make the layer id one-hot encoded
                 self.verbose_logger.debug('X (shape): %s, Y (shape): %s', x.shape, y.shape)
                 self.verbose_logger.debug('X: \n%s, Y: \n%s', str(x[:3, :]), str(y[:3]))
 
-                # self.regressor.partial_fit(x, y)
-                _ = self.session.run([self.tf_loss_op, self.tf_optimize_op], feed_dict={
-                    self.tf_state_input: x, self.tf_q_targets: y
+                _ = self.session.run([self.tf_optimize_op], feed_dict={
+                    self.tf_state_input: x, self.tf_q_targets: ohe_targets, self.tf_q_mask: y
                 })
 
                 if self.global_time_stamp % self.target_update_rate == 0 and self.local_time_stamp % self.n_conv == 0:
@@ -1107,8 +1112,12 @@ class AdaCNNAdaptingQLearner(object):
         curr_action_string = self.get_action_string(ai_list)
         comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
                                                 curr_action_string)
-        mean_accuracy = (data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0
-        immediate_mean_accuracy = (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
+        mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
+                        ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
+        immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
+                                  (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
+
+        self.verbose_logger.info('Complexity penalty: %.5f', comp_gain)
 
         aux_penalty, prev_aux_penalty = 0, 0
         for li, la in enumerate(ai_list):
@@ -1125,7 +1134,7 @@ class AdaCNNAdaptingQLearner(object):
             else:
                 continue
 
-        reward = mean_accuracy - comp_gain + immediate_mean_accuracy # new
+        reward = mean_accuracy - comp_gain + 0.5*immediate_mean_accuracy # new
         curr_action_string = self.get_action_string(ai_list)
 
         # exponential magnifier to prevent from being taken consecutively
