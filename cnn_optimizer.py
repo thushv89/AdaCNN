@@ -121,7 +121,7 @@ def apply_gradient_with_pool_momentum(optimizer, learning_rate, global_step):
     if model_parameters['decay_learning_rate']:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=model_parameters['decay_rate'], staircase=True))
+                                                              decay_rate=model_parameters['adapt_decay_rate'], staircase=True))
     for scope in cnn_ops:
         if 'pool' in scope:
             continue
@@ -192,7 +192,7 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
     if model_parameters['decay_learning_rate']:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=model_parameters['decay_rate'], staircase=True))
+                                                              decay_rate=model_parameters['adapt_decay_rate'], staircase=True))
     else:
         learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')
 

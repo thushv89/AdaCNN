@@ -66,7 +66,7 @@ def sample_from_distribution(dist,size):
     logger.debug('Class distribution')
     logger.debug(cnt)
     euc_distance = 0
-    euc_threshold = (0.05**2)*dist.size
+    euc_threshold = (0.1**2)*dist.size
     for li in range(dist.size):
         if li in cnt:
             euc_distance += ((cnt[li]*1.0/size)-dist[li])**2

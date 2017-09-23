@@ -18,7 +18,7 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level)
         'adapt_structure': adapt,  # Enable AdaCNN behavior
         'hard_pool_acceptance_rate': 0.1,  # Probability with which data is accepted in to the pool
         'replace_op_train_rate': 0.8,  # amount of batches from hard_pool selected to train
-        'optimizer': 'Momentum', 'momentum': 0.9, 'pool_momentum': 0.0,  # Two momentums one for data one for pool
+        'optimizer': 'Momentum', 'momentum': 0.0, 'pool_momentum': 0.9,  # Two momentums one for data one for pool
         'use_custom_momentum_opt': True, # Use a custom implemented momentum (Tensorflow builtin optimizer doesnot support variable size tensors
         'remove_filters_by': 'Activation', # The criteria for removing filters (AdaCNN) set of minimum maximum mean activations
         'optimize_end_to_end': True, # if true functions such as add and finetune will optimize the network from starting layer to end (fulcon_out)
@@ -84,10 +84,11 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters = {}
 
     model_hyperparameters['batch_size'] = 128  # number of datapoints in a single batch
-    model_hyperparameters['start_lr'] = 0.01
+    model_hyperparameters['start_lr'] = 0.005
     model_hyperparameters['min_learning_rate'] = 0.0001
     model_hyperparameters['decay_learning_rate'] = True
-    model_hyperparameters['decay_rate'] = 0.5
+    model_hyperparameters['decay_rate'] = 0.75
+    model_hyperparameters['adapt_decay_rate'] = 0.9 # decay rate used for adaptation related optimziations
     model_hyperparameters['dropout_rate'] = 0.5
     model_hyperparameters['in_dropout_rate'] = 0.2
     model_hyperparameters['use_dropout'] = True
@@ -101,7 +102,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['epochs'] = 20
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
-    model_hyperparameters['validation_set_accumulation_decay'] = 0.75
+    model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001
     model_hyperparameters['lrn_beta'] = 0.75
@@ -114,14 +115,14 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     if dataset_behavior == 'non-stationary':
         model_hyperparameters['include_l2_loss'] = False
-        model_hyperparameters['use_loc_res_norm'] = True
+        model_hyperparameters['use_loc_res_norm'] = False
         model_hyperparameters['lrn_radius'] = 5
         model_hyperparameters['lrn_alpha'] = 0.0001
         model_hyperparameters['lrn_beta'] = 0.75
-        model_hyperparameters['start_lr'] = 0.01
+        model_hyperparameters['start_lr'] = 0.008
 
     elif dataset_behavior == 'stationary':
-        model_hyperparameters['start_lr'] = 0.008
+        model_hyperparameters['start_lr'] = 0.01
         model_hyperparameters['include_l2_loss'] = True
         model_hyperparameters['beta'] = 0.0005
         model_hyperparameters['use_loc_res_norm'] = False
@@ -142,6 +143,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [96, 96, 96, 0, 192, 192, 192]
             add_amount, remove_amount = 4, 2
             filter_min_threshold = 24
+        model_hyperparameters['n_tasks'] = 4
 
     elif dataset_name== 'imagenet-250':
 
@@ -162,6 +164,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [64, 0, 128, 0, 256, 256, 0, 512, 512, 0, 512, 512]
             filter_min_threshold = 24
             add_amount, remove_amount = 8, 4
+        model_hyperparameters['n_tasks'] = 10
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
@@ -174,7 +177,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [128, 0, 128, 0, 128]
             add_amount, remove_amount = 4, 2
             filter_min_threshold = 12
-
+        model_hyperparameters['n_tasks'] = 4
     model_hyperparameters['cnn_string'] = cnn_string
 
     if adapt_structure or use_pooling:
