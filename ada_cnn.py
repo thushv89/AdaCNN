@@ -136,7 +136,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 5000
+n_iterations = 10000
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -1295,7 +1295,7 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
             new_data_prior[dist_i,labels_of_each_task[task_id]] = data_prior[dist_i]
             if print_i < 2:
                 logger.info('Sample label sequence')
-                logger.info(new_data_prior[-1])
+                logger.info(new_data_prior[dist_i])
             print_i += 1
 
     assert new_data_prior.shape[0]==len(data_prior)
@@ -1549,6 +1549,15 @@ if __name__ == '__main__':
 
         for task in range(n_tasks):
 
+            if np.random.random()<0.6:
+                research_parameters['momentum']=0.9
+                research_parameters['pool_momentum']=0.0
+            else:
+                research_parameters['momentum']=0.0
+                research_parameters['pool_momentum']=0.9
+
+            cnn_optimizer.update_hyperparameters(research_parameters)
+
             # we stop 'num_gpus' items before the ideal number of training batches
             # because we always keep num_gpus items for valid data in memory
             for batch_id in range(0, n_iter_per_task - num_gpus, num_gpus):
@@ -1672,10 +1681,12 @@ if __name__ == '__main__':
                             single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                       batch_labels[gpu_id], axis=0)
 
-                    hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
-                                                              max(0.1, (1.0 - train_accuracy))))
-                    logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
+                    # Higer rates of accumulating data causes the pool to lose uniformity
+                    if np.random.random()<0.2:
+                        hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
+                                                    super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
+                                                                  max(0.1, (1.0 - train_accuracy))))
+                        logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
                     # =========================================================
                     # # Training Phase (Optimization)
@@ -2015,7 +2026,7 @@ if __name__ == '__main__':
 
         # =======================================================
         # Decay learning rate (if set)
-        if (research_parameters['adapt_structure'] or research_parameters['rigid_pooling']) and decay_learning_rate and epoch > 1:
+        if (research_parameters['adapt_structure'] or research_parameters['pooling_for_nonadapt']) and decay_learning_rate and epoch > 1:
             session.run(increment_global_step_op)
         # ======================================================
 

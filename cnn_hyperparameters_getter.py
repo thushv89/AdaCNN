@@ -84,7 +84,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters = {}
 
     model_hyperparameters['batch_size'] = 128  # number of datapoints in a single batch
-    model_hyperparameters['start_lr'] = 0.005
+    model_hyperparameters['start_lr'] = 0.01
     model_hyperparameters['min_learning_rate'] = 0.0001
     model_hyperparameters['decay_learning_rate'] = True
     model_hyperparameters['decay_rate'] = 0.75
@@ -132,16 +132,16 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         pool_size = model_hyperparameters['batch_size'] * 10* num_labels
 
         if not adapt_structure:
-            cnn_string = "C,3,1,96#C,3,1,96#C,3,1,96#P,3,2,0" \
-                         "#C,3,1,192#C,3,1,192#C,3,1,192" \
-                         "#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
+                         "#C,3,1,288#C,3,1,288#C,3,1,288" \
+                         "#PG,3,2,0#Terminate,0,0,0"
         else:
             cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#P,3,2,0" \
                          "#C,3,1,32#C,3,1,32#C,3,1,32" \
-                         "#PG,3,2,0#FC,2048,0,0#Terminate,0,0,0"
+                         "#PG,3,2,0#Terminate,0,0,0"
 
-            filter_vector = [96, 96, 96, 0, 192, 192, 192]
-            add_amount, remove_amount = 4, 2
+            filter_vector = [144, 144, 144, 0, 288, 288, 288]
+            add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
         model_hyperparameters['n_tasks'] = 4
 

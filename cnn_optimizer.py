@@ -33,6 +33,10 @@ def set_from_main(research_params, model_params, logging_level, logging_format, 
     console.setLevel(logging_level)
     logger.addHandler(console)
 
+def update_hyperparameters(research_hyp):
+    global research_parameters
+    research_parameters = research_hyp
+
 
 def gradients(optimizer, loss, global_step, learning_rate):
     # grad_and_vars [(grads_w,w),(grads_b,b)]

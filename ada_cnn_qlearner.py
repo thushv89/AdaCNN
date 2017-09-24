@@ -117,6 +117,7 @@ class AdaCNNAdaptingQLearner(object):
 
         self.prev_action, self.prev_state = None, None
 
+        self.qlearner_id = params['qlearner_id']
 
     def setup_tf_network_and_ops(self,params):
         '''
@@ -173,7 +174,7 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger = logging.getLogger('verbose_q_learner_logger')
         self.verbose_logger.propagate = False
         self.verbose_logger.setLevel(logging.DEBUG)
-        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner.log', mode='w')
+        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner' + str(self.qlearner_id) +'.log', mode='w')
         vHandler.setLevel(logging.INFO)
         vHandler.setFormatter(logging.Formatter('%(message)s'))
         self.verbose_logger.addHandler(vHandler)
@@ -185,7 +186,7 @@ class AdaCNNAdaptingQLearner(object):
         self.q_logger = logging.getLogger('pred_q_logger')
         self.q_logger.propagate = False
         self.q_logger.setLevel(logging.INFO)
-        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q.log', mode='w')
+        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q'+str(self.qlearner_id)+'.log', mode='w')
         q_distHandler.setFormatter(logging.Formatter('%(message)s'))
         self.q_logger.addHandler(q_distHandler)
         self.q_logger.info(self.get_action_string_for_logging())
@@ -193,7 +194,7 @@ class AdaCNNAdaptingQLearner(object):
         self.reward_logger = logging.getLogger('reward_logger')
         self.reward_logger.propagate = False
         self.reward_logger.setLevel(logging.INFO)
-        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward.log', mode='w')
+        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward'+str(self.qlearner_id)+'.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
         self.reward_logger.addHandler(rewarddistHandler)
         self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
@@ -201,7 +202,7 @@ class AdaCNNAdaptingQLearner(object):
         self.action_logger = logging.getLogger('action_logger')
         self.action_logger.propagate = False
         self.action_logger.setLevel(logging.INFO)
-        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions.log', mode='w')
+        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions'+str(self.qlearner_id)+'.log', mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
 
@@ -587,8 +588,8 @@ class AdaCNNAdaptingQLearner(object):
                 else:
                     found_valid_action = True
 
-        if action_idx >= self.output_size - 2:
-            found_valid_action = True
+            if action_idx >= self.output_size - 2:
+                found_valid_action = True
 
         return layer_actions_list,found_valid_action,invalid_actions
 
@@ -596,12 +597,9 @@ class AdaCNNAdaptingQLearner(object):
 
         layer_actions_list = self.action_list_with_index(action_idx)
         invalid_actions = []
-        if self.global_time_stamp > self.stop_exploring_after:
-            allowed_actions = np.argsort(q_for_actions).flatten()[floor(
-                1.0 * self.output_size / 4.0):]  # Only get a random index from the highest q values
-            allowed_actions = allowed_actions.tolist()
-        else:
-            allowed_actions = [tmp for tmp in range(self.output_size)]
+
+        allowed_actions = np.argsort(q_for_actions).flatten()[1:]  # Only get a random index from the highest q values
+        allowed_actions = allowed_actions.tolist()
 
         while not found_valid_action and action_idx < self.output_size - 2:
             self.verbose_logger.debug('Checking action validity')
@@ -633,8 +631,8 @@ class AdaCNNAdaptingQLearner(object):
                 else:
                     found_valid_action = True
 
-        if action_idx >= self.output_size - 2:
-            found_valid_action = True
+            if action_idx >= self.output_size - 2:
+                found_valid_action = True
 
         return layer_actions_list, found_valid_action, invalid_actions
 
@@ -653,6 +651,7 @@ class AdaCNNAdaptingQLearner(object):
             curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
             q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
             q_for_actions = q_for_actions.flatten().tolist()
+            self.current_q_for_actions = q_for_actions
 
             q_value_strings = ''
             for q_val in q_for_actions:
@@ -711,7 +710,7 @@ class AdaCNNAdaptingQLearner(object):
 
         # not to restrict from the beginning
         if self.global_time_stamp > self.stop_exploring_after:
-            rand_indices = np.argsort(q_for_actions).flatten()[:-1]  # Only get a random index from the actions except last
+            rand_indices = np.argsort(q_for_actions).flatten()[1:]  # Only get a random index from the actions except last
             self.verbose_logger.info('Allowed action indices: %s', rand_indices)
             action_idx = np.random.choice(rand_indices)
         else:
@@ -796,6 +795,8 @@ class AdaCNNAdaptingQLearner(object):
 
         return state, layer_actions_list, invalid_actions
 
+    def get_current_q_vector(self):
+        return self.current_q_for_actions
 
     def output_action(self, data):
         '''
