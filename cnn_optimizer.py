@@ -177,6 +177,48 @@ def optimize_with_momentum(optimizer, loss, global_step, learning_rate):
     return grad_update_ops, vel_update_ops
 
 
+def zero_out_pool_and_training_momentums(tf_cnn_hyperparameters):
+    vel_update_ops = []
+
+    for op in cnn_ops:
+        if 'conv' in op and 'fulcon' in op:
+            with tf.variable_scope(op) as scope:
+
+                # update velocity vector
+                with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    w_train_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                    vel_update_ops.append(
+                        tf.assign(w_vel,
+                                  tf.zeros(shape=[tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][0],
+                                                  tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][1],
+                                                  tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][2],
+                                                  tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][3]],dtype=tf.float32))
+                    )
+                    vel_update_ops.append(
+                        tf.assign(w_train_vel,
+                                  tf.zeros(shape=[tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][0],
+                                                  tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][1],
+                                                  tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][2],
+                                                  tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][3]],dtype=tf.float32))
+                    )
+
+                with tf.variable_scope(TF_BIAS) as child_scope:
+                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    b_train_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+
+                    vel_update_ops.append(
+                        tf.assign(b_vel,
+                                  tf.zeros(shape=[tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][3]],dtype=tf.float32))
+                    )
+                    vel_update_ops.append(
+                        tf.assign(b_train_vel,
+                                  tf.zeros(shape=[tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][3]],
+                                           dtype=tf.float32))
+                    )
+
+    return vel_update_ops
+
 def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, avg_grad_and_vars,
                                       tf_cnn_hyperparameters, learning_rate, global_step):
     '''

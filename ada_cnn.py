@@ -151,6 +151,7 @@ tf_learning_rate = None
 # Optimizer (Data) Related
 tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, \
 update_train_velocity_op, tf_mean_activation, mean_loss_op = None,None,None,None,None,None
+tf_zero_out_momentums = None
 
 # Optimizer (Pool) Related
 tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss = None, None, None, None, None
@@ -477,6 +478,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
     global tf_indices, tf_indices_size
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, tf_mean_activation, mean_loss_op
+    global tf_zero_out_momentums
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
     global tf_valid_data_batch,tf_valid_label_batch
@@ -656,6 +658,9 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
                             tf.constant(start_lr, dtype=tf.float32), global_step
                         )
+
+                        tf_zero_out_momentums = cnn_optimizer.zero_out_pool_and_training_momentums(tf_cnn_hyperparameters)
+
 
                     elif 'fulcon' in tmp_op:
                         tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size)
@@ -1529,6 +1534,7 @@ if __name__ == '__main__':
 
         for task in range(n_tasks):
 
+
             if np.random.random()<0.8:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
@@ -1537,7 +1543,8 @@ if __name__ == '__main__':
                 research_parameters['pool_momentum']=0.9
 
             cnn_optimizer.update_hyperparameters(research_parameters)
-
+            # At the beginning of each task zero out the momentums
+            session.run(tf_zero_out_momentums)
             # we stop 'num_gpus' items before the ideal number of training batches
             # because we always keep num_gpus items for valid data in memory
             for batch_id in range(0, n_iter_per_task - num_gpus, num_gpus):
