@@ -653,7 +653,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         # tf_replace_ind_ops[tmp_op] = get_rm_indices_with_distance(tmp_op,tf_action_info,tf_cnn_hyperparameters)
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
-                            tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
+                            tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
                             tf.constant(start_lr, dtype=tf.float32), global_step
                         )
 
@@ -753,12 +753,14 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     :param hard_pool_ft:
     :return:
     '''
+    global current_adapted_op,current_adapted_indices
     amount_to_add = ai[1]
 
     if current_op != last_conv_id:
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
 
+    # Run the session and change the tensorflow variables (weights bias and velocities)
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
@@ -855,7 +857,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         })
 
     # optimize the newly added fiterls only
-    pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
+    # Turned off issue #11
+    '''pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
     if research_parameters['pool_randomize'] and np.random.random() < research_parameters[
         'pool_randomize_rate']:
         try:
@@ -865,7 +868,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             pool.close()
             pool.join()
         except Exception:
-            raise AssertionError
+            raise AssertionError'''
 
     # this was done to increase performance and reduce overfitting
     # instead of optimizing with every single batch in the pool
@@ -881,44 +884,15 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 rolling_ativation_means[current_op].shape)
 
     # This is a pretty important step
-    # Unless you run this onces, the sizes of weights do not change
+    # Unless you run this once, the sizes of weights do not change
     _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
     pbatch_train_count = 0
 
-    # Train only with half of the batch
-    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-        if np.random.random() < research_parameters['replace_op_train_rate']:
-            pbatch_data, pbatch_labels = [], []
-            pool_feed_dict = {
-                tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
-                                      cnn_hyperparameters[current_op]['weights'][3])}
+    current_adapted_op = current_op
+    current_adapted_indices = np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
+                                      cnn_hyperparameters[current_op]['weights'][3])
 
-            for gpu_id in range(num_gpus):
-                pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                    pool_id + gpu_id + 1) * batch_size,
-                                   :, :, :])
-                pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                     pool_id + gpu_id + 1) * batch_size,
-                                     :])
-                pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
-                                       tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
-
-            pbatch_train_count += 1
-
-            current_activations_list, _, _ = session.run(
-                [tf_mean_pool_activations, tf_slice_optimize[current_op],
-                 tf_slice_vel_update[current_op]],
-                feed_dict=pool_feed_dict
-            )
-
-            current_activations = get_activation_dictionary(current_activations_list, cnn_ops,
-                                                            convolution_op_ids)
-            # update rolling activation means
-            for op, op_activations in current_activations.items():
-                assert current_activations[op].size == cnn_hyperparameters[op]['weights'][3]
-                rolling_ativation_means[op] = act_decay * rolling_ativation_means[op] + \
-                                              current_activations[op]
-
+    # Finetune the net with hard_pool_ft
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
         if research_parameters['pool_randomize'] and np.random.random() < \
@@ -948,6 +922,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
                                    feed_dict=pool_feed_dict)
+
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
     _, rm_indices = session.run(tf_rm_filters_ops[current_op],
@@ -1047,7 +1022,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
             except Exception:
                 raise AssertionError'''
 
-        # Train with latter half of the data
+        # Train with latter hard_pool_ft
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
@@ -1153,7 +1128,7 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         logger.info('Finetune phase')
         trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0.3 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, .6])
+        trial_action_probs.extend([0.2, .5])
 
     elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
         logger.info('Growth phase')
@@ -1164,7 +1139,7 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs = list(trial_action_probs_without_last) + [0.1-remove_action_prob]
 
         trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.25])
+        trial_action_probs.extend([0.1, 0.2])
 
     elif epoch==1 and trial_phase>=1.0 and trial_phase<1.7:
         logger.info('Shrink phase')
@@ -1175,13 +1150,17 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs = list(trial_action_probs_without_last) + [0.6 - remove_action_prob]
 
         trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.25])
+        trial_action_probs.extend([0.1, 0.2])
 
     elif epoch==1 and trial_phase>=1.7 and trial_phase<2.0:
         logger.info('Finetune phase')
-        trial_action_probs = [0.3 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
+
+        remove_action_prob = 0.3 * (10.0 / 11.0)
+        trial_action_probs_without_last = [remove_action_prob / (1.0 * (n_conv - 1)) for _ in range(n_conv - 1)]
+        trial_action_probs = list(trial_action_probs_without_last) + [0.3 - remove_action_prob]
+
         trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, 0.6])
+        trial_action_probs.extend([0.2, 0.5])
 
     return trial_action_probs
 
@@ -1450,7 +1429,6 @@ if __name__ == '__main__':
         _ = cnn_intializer.define_velocity_vectors(scope, cnn_ops, cnn_hyperparameters)
     logger.info(('=' * 80) + '\n')
 
-
     if research_parameters['adapt_structure']:
         # Adapting Policy Learner
         state_history_length = 4
@@ -1467,7 +1445,7 @@ if __name__ == '__main__':
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'], remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
-            trial_phase_threshold=1.0
+            trial_phase_threshold=1.0, qlearner_id=0
         )
 
     # Running initialization opeartion
@@ -1545,11 +1523,13 @@ if __name__ == '__main__':
 
     n_iter_per_task = n_iterations//n_tasks
 
+    current_adapted_op, current_adapted_indices, current_action_type = None,None, adapter.get_donothing_action_type()
+
     for epoch in range(n_epochs):
 
         for task in range(n_tasks):
 
-            if np.random.random()<0.6:
+            if np.random.random()<0.0:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
             else:
@@ -1622,6 +1602,7 @@ if __name__ == '__main__':
                         tf_train_data_batch[gpu_id]: batch_data[-1], tf_train_label_batch[gpu_id]: batch_labels[-1],
                         tf_data_weights[gpu_id]: batch_weights[-1]
                     })
+
                 # =========================================================
 
                 t0_train = time.clock()
@@ -1689,11 +1670,28 @@ if __name__ == '__main__':
                         logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
                     # =========================================================
-                    # # Training Phase (Optimization)
-                    for _ in range(iterations_per_batch):
-                        _, _ = session.run(
-                            [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                        )
+                    # Training Phase (Optimization)
+                    # If not adapt structure, naively optimize CNN
+                    if not adapt_structure:
+                        for _ in range(iterations_per_batch):
+                            _, _ = session.run(
+                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                            )
+                    # if adapt_structure, only optimize the newly added parameters with the
+                    # new training data
+                    else:
+                        for _ in range(iterations_per_batch):
+                            if current_action_type==adapter.get_add_action_type():
+
+                                train_feed_dict.update({tf_indices: current_adapted_indices})
+                                _, _ = session.run(
+                                    [tf_slice_optimize[current_adapted_op], tf_slice_vel_update[current_op]], feed_dict=train_feed_dict
+                                )
+
+                            elif current_action_type == adapter.get_donothing_action_type() or curr_adaptation_status:
+                                _, _ = session.run(
+                                    [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                                )
 
                 t1_train = time.clock()
 
@@ -1834,6 +1832,7 @@ if __name__ == '__main__':
 
                         logger.info('Finetuning before starting adaptations. (To gain a reasonable accuracy to start with)')
 
+                        current_action_type = adapter.get_donothing_action_type()
                         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
                         # without if can give problems in exploratory stage because of no data in the pool
@@ -1862,6 +1861,94 @@ if __name__ == '__main__':
                     if (start_adapting and not stop_adapting) and batch_id > 0 and \
                                             batch_id % interval_parameters['policy_interval'] == 0:
 
+                        # ==================================================================
+                        # Policy Update (Update policy only when we take actions actually using the qlearner)
+                        # (Not just outputting finetune action)
+                        # ==================================================================
+                        if current_state is not None and curr_adaptation_status:
+
+                            # ==================================================================
+                            # Calculating pool accuracy
+                            pool_accuracy = []
+                            pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
+
+                            for pool_id in range(hard_pool_valid.get_size() // batch_size):
+                                pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
+                                pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
+                                pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
+                                                  tf_pool_label_batch[0]: pbatch_labels}
+                                p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
+                                if num_labels <= 100:
+                                    pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
+                                else:
+                                    pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
+                            # ===============================================================================
+
+                            # don't use current state as the next state, current state is for a different layer
+                            # Calculate the new state after executing current action on the previous state
+                            next_state = []
+                            affected_layer_index = 0
+                            for li, la in enumerate(current_action):
+                                if la is None:
+                                    assert li not in convolution_op_ids
+                                    next_state.append(0)
+                                    continue
+                                elif la[0] == 'add':
+                                    next_state.append(current_state[li] + la[1])
+                                    affected_layer_index = li
+                                elif la[0] == 'remove':
+                                    next_state.append(current_state[li] - la[1])
+                                    affected_layer_index = li
+                                else:
+                                    next_state.append(current_state[li])
+
+                            next_state = tuple(next_state)
+
+                            logger.info(('=' * 25)+' Update Summary ' + ('=' * 25))
+                            logger.info('\tState (prev): %s', str(current_state))
+                            logger.info('\tAction (prev): %s', str(current_action))
+                            logger.info('\tState (next): %s', str(next_state))
+                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+                            logger.info('\tPool Accuracy: %.3f', p_accuracy)
+                            logger.info('\tValid accuracy (Before Adapt): %.3f', prev_unseen_valid_accuracy)
+                            logger.info('\tValid accuracy (After Adapt): %.3f', unseen_valid_accuracy)
+                            logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
+                            logger.info(('=' * 80) + '\n')
+                            assert not np.isnan(p_accuracy)
+
+                            # ================================================================================
+                            # Actual updating of the policy
+                            adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
+                                                   'curr_state': next_state,
+                                                   'next_accuracy': None,
+                                                   'prev_accuracy': None,
+                                                   'pool_accuracy': p_accuracy,
+                                                   'prev_pool_accuracy': prev_pool_accuracy,
+                                                   'max_pool_accuracy': max_pool_accuracy,
+                                                   'unseen_valid_accuracy': unseen_valid_accuracy,
+                                                   'prev_unseen_valid_accuracy': prev_unseen_valid_accuracy,
+                                                   'invalid_actions': curr_invalid_actions,
+                                                   'batch_id': global_batch_id,
+                                                   'layer_index': affected_layer_index}, True)
+                            # ===================================================================================
+
+                            cnn_structure_logger.info(
+                                '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
+                                current_action, np.mean(pool_accuracy),
+                                utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
+                            )
+
+                            q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
+
+                            logger.debug('Resetting both data distribution means')
+
+                            max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
+                            prev_pool_accuracy = p_accuracy
+                            prev_unseen_valid_accuracy = unseen_valid_accuracy
+
+                        # ============================================================
+                        # Outputting the action and executing the action
+                        # =============================================================
                         filter_dict, filter_list = {}, []
                         for op_i, op in enumerate(cnn_ops):
                             if 'conv' in op:
@@ -1877,6 +1964,9 @@ if __name__ == '__main__':
                             adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list}, epoch=epoch,
                             global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids),
                             eps=start_eps, adaptation_period=adapt_period)
+
+                        current_action_type = adapter.get_action_type_with_action_list(current_action)
+                        logger.info('Current action type: %s',current_action_type)
 
                         adapter.update_trial_phase(global_trial_phase)
 
@@ -1909,104 +1999,6 @@ if __name__ == '__main__':
                                 run_actual_finetune_operation(hard_pool_ft)
                                 break
 
-                        # =============================================================
-                        # Validation Phase (Use single tower) (After adaptations)
-                        v_label_seq = label_sequence_generator.sample_label_sequence_for_batch(
-                            n_iterations, data_prior, batch_size, num_labels, freeze_index_increment=True
-                        )
-                        batch_valid_data, batch_valid_labels = data_gen.generate_data_with_label_sequence(
-                            train_dataset, train_labels, v_label_seq, dataset_info
-                        )
-
-                        feed_valid_dict = {tf_valid_data_batch: batch_valid_data,
-                                           tf_valid_label_batch: batch_valid_labels}
-                        unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                        after_adapt_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
-                        # =============================================================
-
-                        # ==================================================================
-                        # Policy Update (Update policy only when we take actions actually using the qlearner)
-                        # (Not just outputting finetune action)
-                        # ==================================================================
-                        if curr_adaptation_status:
-
-                            # ==================================================================
-                            # Calculating pool accuracy
-                            pool_accuracy = []
-                            pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
-
-                            for pool_id in range(hard_pool_valid.get_size()//batch_size):
-                                pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
-                                pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
-                                pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
-                                                  tf_pool_label_batch[0]: pbatch_labels}
-                                p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
-                                if num_labels<=100:
-                                    pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
-                                else:
-                                    pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
-                            # ===============================================================================
-
-                            # don't use current state as the next state, current state is for a different layer
-                            next_state = []
-                            affected_layer_index = 0
-                            for li, la in enumerate(current_action):
-                                if la is None:
-                                    assert li not in convolution_op_ids
-                                    next_state.append(0)
-                                    continue
-                                elif la[0] == 'add':
-                                    next_state.append(current_state[li] + la[1])
-                                    affected_layer_index = li
-                                elif la[0] == 'remove':
-                                    next_state.append(current_state[li] - la[1])
-                                    affected_layer_index = li
-                                else:
-                                    next_state.append(current_state[li])
-
-                            next_state = tuple(next_state)
-
-                            logger.info('='*80)
-                            logger.info('\tState (prev): %s', str(current_state))
-                            logger.info('\tAction (prev): %s', str(current_action))
-                            logger.info('\tState (next): %s', str(next_state))
-                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
-                            logger.info('\tPool Accuracy: %.3f', p_accuracy)
-                            logger.info('\tValid accuracy (Before Adapt): %.3f', unseen_valid_accuracy)
-                            logger.info('\tValid accuracy (After Adapt): %.3f', after_adapt_valid_accuracy)
-                            logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
-                            logger.info(('=' * 80)+'\n')
-                            assert not np.isnan(p_accuracy)
-
-                            # ================================================================================
-                            # Actual updating of the policy
-                            adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
-                                                   'curr_state': next_state,
-                                                   'next_accuracy': None,
-                                                   'prev_accuracy': None,
-                                                   'pool_accuracy': p_accuracy,
-                                                   'prev_pool_accuracy': prev_pool_accuracy,
-                                                   'max_pool_accuracy': max_pool_accuracy,
-                                                   'unseen_valid_accuracy': after_adapt_valid_accuracy,
-                                                   'prev_unseen_valid_accuracy': unseen_valid_accuracy,
-                                                   'invalid_actions': curr_invalid_actions,
-                                                   'batch_id': global_batch_id,
-                                                   'layer_index': affected_layer_index}, True)
-                            # ===================================================================================
-
-                            cnn_structure_logger.info(
-                                '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
-                                current_action, np.mean(pool_accuracy),
-                                utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
-                            )
-
-                            q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
-
-                            logger.debug('Resetting both data distribution means')
-
-                            max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
-                            prev_pool_accuracy = p_accuracy
-
                     if batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0:
 
                         # with open(output_dir + os.sep + 'Q_' + str(epoch) + "_" + str(batch_id)+'.pickle', 'wb') as f:
@@ -2035,6 +2027,8 @@ if __name__ == '__main__':
             if epoch > 1:
                 start_eps = max([start_eps*eps_decay,0.1])
                 adapt_period = np.random.choice(['first','last','both'])
+                # Turned off issue #11
+                # adapt_period = np.random.choice(['first','last','both'])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
         else:

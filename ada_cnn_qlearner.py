@@ -25,6 +25,8 @@ logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 class AdaCNNAdaptingQLearner(object):
     def __init__(self, **params):
 
+        self.qlearner_id = params['qlearner_id']
+
         self.actions = [
             ('do_nothing', 0), ('finetune', 0),
             ('add', params['add_amount']), ('remove', params['remove_amount'])
@@ -117,7 +119,6 @@ class AdaCNNAdaptingQLearner(object):
 
         self.prev_action, self.prev_state = None, None
 
-        self.qlearner_id = params['qlearner_id']
 
     def setup_tf_network_and_ops(self,params):
         '''
@@ -518,6 +519,7 @@ class AdaCNNAdaptingQLearner(object):
         if action_idx >= self.output_size - 2:
             found_valid_action = True
 
+        found_valid_action = True
         return layer_actions_list, found_valid_action,invalid_actions
 
     def check_if_should_stop_adapting(self):
@@ -591,6 +593,8 @@ class AdaCNNAdaptingQLearner(object):
             if action_idx >= self.output_size - 2:
                 found_valid_action = True
 
+        found_valid_action = True
+
         return layer_actions_list,found_valid_action,invalid_actions
 
     def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data, q_for_actions):
@@ -633,6 +637,8 @@ class AdaCNNAdaptingQLearner(object):
 
             if action_idx >= self.output_size - 2:
                 found_valid_action = True
+
+        found_valid_action = True
 
         return layer_actions_list, found_valid_action, invalid_actions
 
@@ -1281,3 +1287,30 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_stop_adapting_boolean(self):
         return self.stop_adapting
+
+    def get_add_action_type(self):
+        return 'Add'
+
+    def get_remove_action_type(self):
+        return 'Remove'
+
+    def get_finetune_action_type(self):
+        return 'Finetune'
+
+    def get_donothing_action_type(self):
+        return "DoNothing"
+
+    def get_action_type_with_action_list(self,action_list):
+        for li,la in enumerate(action_list):
+            if la is None:
+                continue
+
+            if la[0]=='add':
+                return self.get_add_action_type()
+            elif la[0]=='remove':
+                return self.get_remove_action_type()
+            elif la[0]=='finetune':
+                return self.get_finetune_action_type()
+
+        return self.get_donothing_action_type()
+
