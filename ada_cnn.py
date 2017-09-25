@@ -1529,7 +1529,7 @@ if __name__ == '__main__':
 
         for task in range(n_tasks):
 
-            if np.random.random()<0.0:
+            if np.random.random()<0.8:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
             else:
@@ -1688,7 +1688,7 @@ if __name__ == '__main__':
                                     [tf_slice_optimize[current_adapted_op], tf_slice_vel_update[current_op]], feed_dict=train_feed_dict
                                 )
 
-                            elif current_action_type == adapter.get_donothing_action_type() or curr_adaptation_status:
+                            elif current_action_type == adapter.get_donothing_action_type() or not curr_adaptation_status:
                                 _, _ = session.run(
                                     [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
                                 )
