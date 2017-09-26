@@ -231,7 +231,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 x = utils.lrelu(x + b, name=scope.name + '/top')
 
                 activation_ops.append(
-                    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(x, [0, 1, 2]), validate_shape=False))
+                    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(w, [0, 1, 2]), validate_shape=False))
 
                 if use_loc_res_norm and op == last_conv_id:
                     x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha,
