@@ -27,6 +27,7 @@ import data_generator
 import label_sequence_generator
 import h5py
 
+
 logging_level = logging.INFO
 logging_format = '[%(funcName)s] %(message)s'
 
@@ -1518,6 +1519,8 @@ if __name__ == '__main__':
     # Reward for Q-Learner
     prev_pool_accuracy = 0
     max_pool_accuracy = 0
+    pool_acc_queue = []
+    valid_acc_queue = []
 
     # Stop and start adaptations when necessary
     start_adapting = False
@@ -1735,6 +1738,10 @@ if __name__ == '__main__':
                 feed_valid_dict = {tf_valid_data_batch: batch_valid_data, tf_valid_label_batch: batch_valid_labels}
                 unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
                 unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
+
+                valid_acc_queue.append(unseen_valid_accuracy)
+                if len(valid_acc_queue) > state_history_length + 1:
+                    del valid_acc_queue[0]
                 # =============================================================
 
                 # ================================================================
@@ -1888,6 +1895,12 @@ if __name__ == '__main__':
                                     pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
                                 else:
                                     pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
+
+                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+                            pool_acc_queue.append(p_accuracy)
+                            if len(pool_acc_queue)>state_history_length+1:
+                                del pool_acc_queue[0]
+
                             # ===============================================================================
 
                             # don't use current state as the next state, current state is for a different layer
@@ -1914,7 +1927,6 @@ if __name__ == '__main__':
                             logger.info('\tState (prev): %s', str(current_state))
                             logger.info('\tAction (prev): %s', str(current_action))
                             logger.info('\tState (next): %s', str(next_state))
-                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
                             logger.info('\tPool Accuracy: %.3f', p_accuracy)
                             logger.info('\tValid accuracy (Before Adapt): %.3f', prev_unseen_valid_accuracy)
                             logger.info('\tValid accuracy (After Adapt): %.3f', unseen_valid_accuracy)
@@ -1929,10 +1941,10 @@ if __name__ == '__main__':
                                                    'next_accuracy': None,
                                                    'prev_accuracy': None,
                                                    'pool_accuracy': p_accuracy,
-                                                   'prev_pool_accuracy': prev_pool_accuracy,
+                                                   'prev_pool_accuracy': pool_acc_queue[0],
                                                    'max_pool_accuracy': max_pool_accuracy,
                                                    'unseen_valid_accuracy': unseen_valid_accuracy,
-                                                   'prev_unseen_valid_accuracy': prev_unseen_valid_accuracy,
+                                                   'prev_unseen_valid_accuracy': valid_acc_queue[0],
                                                    'invalid_actions': curr_invalid_actions,
                                                    'batch_id': global_batch_id,
                                                    'layer_index': affected_layer_index}, True)
