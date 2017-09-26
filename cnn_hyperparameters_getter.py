@@ -95,7 +95,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['use_loc_res_norm'] = False
     # keep beta small (0.2 is too much >0.002 seems to be fine)
     model_hyperparameters['include_l2_loss'] = True
-    model_hyperparameters['beta'] = 1e-5
+    model_hyperparameters['beta'] = 5e-4
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1

@@ -762,18 +762,18 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
-                        tf_weights_this: np.random.normal(scale=0.01, size=(
+                        tf_weights_this: np.random.normal(scale=0.001, size=(
                             cnn_hyperparameters[current_op]['weights'][0],
                             cnn_hyperparameters[current_op]['weights'][1],
                             cnn_hyperparameters[current_op]['weights'][2], amount_to_add)),
-                        tf_bias_this: np.random.normal(scale=0.01, size=(amount_to_add)),
+                        tf_bias_this: np.random.normal(scale=0.001, size=(amount_to_add)),
 
-                        tf_weights_next: np.random.normal(scale=0.01, size=(
+                        tf_weights_next: np.random.normal(scale=0.001, size=(
                             cnn_hyperparameters[next_conv_op]['weights'][0],
                             cnn_hyperparameters[next_conv_op]['weights'][1],
                             amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])
                                                           ) if last_conv_id != current_op else
-                        np.random.normal(scale=0.01, size=(
+                        np.random.normal(scale=0.001, size=(
                             amount_to_add * final_2d_width * final_2d_width,
                             cnn_hyperparameters[first_fc]['out'], 1, 1)),
                         tf_running_activations: rolling_ativation_means[current_op],
@@ -1523,6 +1523,8 @@ if __name__ == '__main__':
     act_decay = 0.9
     current_state, current_action,curr_adaptation_status = None, None,None
     prev_unseen_valid_accuracy = 0
+    pool_acc_queue = []
+    valid_acc_queue = []
 
     current_q_learn_op_id = 0
     logger.info('Convolutional Op IDs: %s', convolution_op_ids)
@@ -1684,7 +1686,7 @@ if __name__ == '__main__':
                     # Higer rates of accumulating data causes the pool to lose uniformity
                     if np.random.random()<0.2:
                         hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                    super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
+                                                       super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
                                                                   max(0.1, (1.0 - train_accuracy))))
                         logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
@@ -1731,6 +1733,11 @@ if __name__ == '__main__':
                 feed_valid_dict = {tf_valid_data_batch: batch_valid_data, tf_valid_label_batch: batch_valid_labels}
                 unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
                 unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
+
+                valid_acc_queue.append(unseen_valid_accuracy)
+                if len(valid_acc_queue) > state_history_length + 1:
+                    del valid_acc_queue[0]
+
                 # =============================================================
 
                 # ================================================================
@@ -1862,6 +1869,96 @@ if __name__ == '__main__':
                     if (start_adapting and not stop_adapting) and batch_id > 0 and \
                                             batch_id % interval_parameters['policy_interval'] == 0:
 
+                        # ==================================================================
+                        # Policy Update (Update policy only when we take actions actually using the qlearner)
+                        # (Not just outputting finetune action)
+                        # ==================================================================
+                        if curr_adaptation_status and current_state:
+
+                            # ==================================================================
+                            # Calculating pool accuracy
+                            pool_accuracy = []
+                            pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
+
+                            for pool_id in range(hard_pool_valid.get_size() // batch_size):
+                                pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
+                                pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
+                                pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
+                                                  tf_pool_label_batch[0]: pbatch_labels}
+                                p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
+                                if num_labels <= 100:
+                                    pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
+                                else:
+                                    pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
+
+                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+                            pool_acc_queue.append(p_accuracy)
+                            if len(pool_acc_queue) > state_history_length + 1:
+                                del pool_acc_queue[0]
+                            # ===============================================================================
+
+                            # don't use current state as the next state, current state is for a different layer
+                            next_state = []
+                            affected_layer_index = 0
+                            for li, la in enumerate(current_action):
+                                if la is None:
+                                    assert li not in convolution_op_ids
+                                    next_state.append(0)
+                                    continue
+                                elif la[0] == 'add':
+                                    next_state.append(current_state[li] + la[1])
+                                    affected_layer_index = li
+                                elif la[0] == 'remove':
+                                    next_state.append(current_state[li] - la[1])
+                                    affected_layer_index = li
+                                else:
+                                    next_state.append(current_state[li])
+
+                            next_state = tuple(next_state)
+
+                            logger.info(('=' * 40) + ' Update Summary ' + ('=' * 40))
+                            logger.info('\tState (prev): %s', str(current_state))
+                            logger.info('\tAction (prev): %s', str(current_action))
+                            logger.info('\tState (next): %s', str(next_state))
+                            logger.info('\tPool Accuracy: %.3f', p_accuracy)
+                            logger.info('\tValid accuracy (Before Adapt): %.3f', unseen_valid_accuracy)
+                            logger.info('\tValid accuracy (After Adapt): %.3f', prev_unseen_valid_accuracy)
+                            logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
+                            logger.info(('=' * 80) + '\n')
+                            assert not np.isnan(p_accuracy)
+
+                            # ================================================================================
+                            # Actual updating of the policy
+                            adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
+                                                   'curr_state': next_state,
+                                                   'next_accuracy': None,
+                                                   'prev_accuracy': None,
+                                                   'pool_accuracy': pool_acc_queue[-1],
+                                                   'prev_pool_accuracy': pool_acc_queue[0],
+                                                   'max_pool_accuracy': max_pool_accuracy,
+                                                   'unseen_valid_accuracy': valid_acc_queue[-1],
+                                                   'prev_unseen_valid_accuracy': valid_acc_queue[0],
+                                                   'invalid_actions': curr_invalid_actions,
+                                                   'batch_id': global_batch_id,
+                                                   'layer_index': affected_layer_index}, True)
+                            # ===================================================================================
+
+                            cnn_structure_logger.info(
+                                '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
+                                current_action, np.mean(pool_accuracy),
+                                utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
+                            )
+
+                            q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
+
+                            logger.debug('Resetting both data distribution means')
+
+                            max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
+                            prev_pool_accuracy = p_accuracy
+
+                        # ===================================================================================
+                        # Execute action according to the policy
+                        # ==================================================================================
                         filter_dict, filter_list = {}, []
                         for op_i, op in enumerate(cnn_ops):
                             if 'conv' in op:
@@ -1908,104 +2005,7 @@ if __name__ == '__main__':
                                 # pooling takes place here
                                 run_actual_finetune_operation(hard_pool_ft)
                                 break
-
                         # =============================================================
-                        # Validation Phase (Use single tower) (After adaptations)
-                        v_label_seq = label_sequence_generator.sample_label_sequence_for_batch(
-                            n_iterations, data_prior, batch_size, num_labels, freeze_index_increment=True
-                        )
-                        batch_valid_data, batch_valid_labels = data_gen.generate_data_with_label_sequence(
-                            train_dataset, train_labels, v_label_seq, dataset_info
-                        )
-
-                        feed_valid_dict = {tf_valid_data_batch: batch_valid_data,
-                                           tf_valid_label_batch: batch_valid_labels}
-                        unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                        after_adapt_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
-                        # =============================================================
-
-                        # ==================================================================
-                        # Policy Update (Update policy only when we take actions actually using the qlearner)
-                        # (Not just outputting finetune action)
-                        # ==================================================================
-                        if curr_adaptation_status:
-
-                            # ==================================================================
-                            # Calculating pool accuracy
-                            pool_accuracy = []
-                            pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
-
-                            for pool_id in range(hard_pool_valid.get_size()//batch_size):
-                                pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
-                                pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
-                                pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
-                                                  tf_pool_label_batch[0]: pbatch_labels}
-                                p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
-                                if num_labels<=100:
-                                    pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
-                                else:
-                                    pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
-                            # ===============================================================================
-
-                            # don't use current state as the next state, current state is for a different layer
-                            next_state = []
-                            affected_layer_index = 0
-                            for li, la in enumerate(current_action):
-                                if la is None:
-                                    assert li not in convolution_op_ids
-                                    next_state.append(0)
-                                    continue
-                                elif la[0] == 'add':
-                                    next_state.append(current_state[li] + la[1])
-                                    affected_layer_index = li
-                                elif la[0] == 'remove':
-                                    next_state.append(current_state[li] - la[1])
-                                    affected_layer_index = li
-                                else:
-                                    next_state.append(current_state[li])
-
-                            next_state = tuple(next_state)
-
-                            logger.info('='*80)
-                            logger.info('\tState (prev): %s', str(current_state))
-                            logger.info('\tAction (prev): %s', str(current_action))
-                            logger.info('\tState (next): %s', str(next_state))
-                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
-                            logger.info('\tPool Accuracy: %.3f', p_accuracy)
-                            logger.info('\tValid accuracy (Before Adapt): %.3f', unseen_valid_accuracy)
-                            logger.info('\tValid accuracy (After Adapt): %.3f', after_adapt_valid_accuracy)
-                            logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
-                            logger.info(('=' * 80)+'\n')
-                            assert not np.isnan(p_accuracy)
-
-                            # ================================================================================
-                            # Actual updating of the policy
-                            adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
-                                                   'curr_state': next_state,
-                                                   'next_accuracy': None,
-                                                   'prev_accuracy': None,
-                                                   'pool_accuracy': p_accuracy,
-                                                   'prev_pool_accuracy': prev_pool_accuracy,
-                                                   'max_pool_accuracy': max_pool_accuracy,
-                                                   'unseen_valid_accuracy': after_adapt_valid_accuracy,
-                                                   'prev_unseen_valid_accuracy': unseen_valid_accuracy,
-                                                   'invalid_actions': curr_invalid_actions,
-                                                   'batch_id': global_batch_id,
-                                                   'layer_index': affected_layer_index}, True)
-                            # ===================================================================================
-
-                            cnn_structure_logger.info(
-                                '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
-                                current_action, np.mean(pool_accuracy),
-                                utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
-                            )
-
-                            q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
-
-                            logger.debug('Resetting both data distribution means')
-
-                            max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
-                            prev_pool_accuracy = p_accuracy
 
                     if batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0:
 

@@ -1,3 +1,4 @@
+
 __author__ = 'Thushan Ganegedara'
 
 from enum import IntEnum
@@ -24,6 +25,7 @@ logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 class AdaCNNAdaptingQLearner(object):
     def __init__(self, **params):
+
 
         self.actions = [
             ('do_nothing', 0), ('finetune', 0),
@@ -117,7 +119,6 @@ class AdaCNNAdaptingQLearner(object):
 
         self.prev_action, self.prev_state = None, None
 
-        self.qlearner_id = params['qlearner_id']
 
     def setup_tf_network_and_ops(self,params):
         '''
@@ -174,7 +175,7 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger = logging.getLogger('verbose_q_learner_logger')
         self.verbose_logger.propagate = False
         self.verbose_logger.setLevel(logging.DEBUG)
-        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner' + str(self.qlearner_id) +'.log', mode='w')
+        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner'  +'.log', mode='w')
         vHandler.setLevel(logging.INFO)
         vHandler.setFormatter(logging.Formatter('%(message)s'))
         self.verbose_logger.addHandler(vHandler)
@@ -186,7 +187,7 @@ class AdaCNNAdaptingQLearner(object):
         self.q_logger = logging.getLogger('pred_q_logger')
         self.q_logger.propagate = False
         self.q_logger.setLevel(logging.INFO)
-        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q'+str(self.qlearner_id)+'.log', mode='w')
+        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q'+'.log', mode='w')
         q_distHandler.setFormatter(logging.Formatter('%(message)s'))
         self.q_logger.addHandler(q_distHandler)
         self.q_logger.info(self.get_action_string_for_logging())
@@ -194,7 +195,7 @@ class AdaCNNAdaptingQLearner(object):
         self.reward_logger = logging.getLogger('reward_logger')
         self.reward_logger.propagate = False
         self.reward_logger.setLevel(logging.INFO)
-        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward'+str(self.qlearner_id)+'.log', mode='w')
+        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward'+'.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
         self.reward_logger.addHandler(rewarddistHandler)
         self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
@@ -202,7 +203,7 @@ class AdaCNNAdaptingQLearner(object):
         self.action_logger = logging.getLogger('action_logger')
         self.action_logger.propagate = False
         self.action_logger.setLevel(logging.INFO)
-        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions'+str(self.qlearner_id)+'.log', mode='w')
+        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions'+'.log', mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
 
@@ -518,6 +519,7 @@ class AdaCNNAdaptingQLearner(object):
         if action_idx >= self.output_size - 2:
             found_valid_action = True
 
+        found_valid_action = True
         return layer_actions_list, found_valid_action,invalid_actions
 
     def check_if_should_stop_adapting(self):
@@ -591,6 +593,8 @@ class AdaCNNAdaptingQLearner(object):
             if action_idx >= self.output_size - 2:
                 found_valid_action = True
 
+        found_valid_action = True
+
         return layer_actions_list,found_valid_action,invalid_actions
 
     def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data, q_for_actions):
@@ -633,6 +637,8 @@ class AdaCNNAdaptingQLearner(object):
 
             if action_idx >= self.output_size - 2:
                 found_valid_action = True
+
+        found_valid_action = True
 
         return layer_actions_list, found_valid_action, invalid_actions
 
@@ -1070,8 +1076,7 @@ class AdaCNNAdaptingQLearner(object):
                     x, y, r, next_state = self.get_xy_with_experince(self.experience)
 
                 if self.global_time_stamp < 5:
-                    assert np.max(x) <= 1.0 and np.max(x) >= -1.0 \
-                           and np.max(y) <= 1.0 and np.max(y) >= -1.0
+                    assert np.max(x) <= 1.0 and np.max(x) >= -1.0 and np.max(y) <= 1.0 and np.max(y) >= -1.0
 
                 self.verbose_logger.debug('Summary of Structured Experience data')
                 self.verbose_logger.debug('\tX:%s', x.shape)
@@ -1148,7 +1153,6 @@ class AdaCNNAdaptingQLearner(object):
                 else:
                     reward *= min(self.same_action_count + 1, 10)
                 self.verbose_logger.info('Reward after magnification: %.5f', reward)
-
             # encourage taking finetune action consecutively
             if 'finetune' in curr_action_string and self.same_action_count >= 1:
                 self.verbose_logger.info('Reward before magnification: %.5f', reward)
@@ -1281,3 +1285,29 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_stop_adapting_boolean(self):
         return self.stop_adapting
+
+    def get_add_action_type(self):
+        return 'Add'
+
+    def get_remove_action_type(self):
+        return 'Remove'
+
+    def get_finetune_action_type(self):
+        return 'Finetune'
+
+    def get_donothing_action_type(self):
+        return "DoNothing"
+
+    def get_action_type_with_action_list(self,action_list):
+        for li,la in enumerate(action_list):
+            if la is None:
+                continue
+
+            if la[0]=='add':
+                return self.get_add_action_type()
+            elif la[0]=='remove':
+                return self.get_remove_action_type()
+            elif la[0]=='finetune':
+                return self.get_finetune_action_type()
+
+        return self.get_donothing_action_type()
