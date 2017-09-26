@@ -769,18 +769,18 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
-                        tf_weights_this: np.random.normal(scale=0.01, size=(
+                        tf_weights_this: np.random.normal(scale=0.00001, size=(
                             cnn_hyperparameters[current_op]['weights'][0],
                             cnn_hyperparameters[current_op]['weights'][1],
                             cnn_hyperparameters[current_op]['weights'][2], amount_to_add)),
-                        tf_bias_this: np.random.normal(scale=0.01, size=(amount_to_add)),
+                        tf_bias_this: np.random.normal(scale=0.00001, size=(amount_to_add)),
 
-                        tf_weights_next: np.random.normal(scale=0.01, size=(
+                        tf_weights_next: np.random.normal(scale=0.00001, size=(
                             cnn_hyperparameters[next_conv_op]['weights'][0],
                             cnn_hyperparameters[next_conv_op]['weights'][1],
                             amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])
                                                           ) if last_conv_id != current_op else
-                        np.random.normal(scale=0.01, size=(
+                        np.random.normal(scale=0.00001, size=(
                             amount_to_add * final_2d_width * final_2d_width,
                             cnn_hyperparameters[first_fc]['out'], 1, 1)),
                         tf_running_activations: rolling_ativation_means[current_op],
@@ -1534,8 +1534,7 @@ if __name__ == '__main__':
 
         for task in range(n_tasks):
 
-
-            if np.random.random()<0.8:
+            if np.random.random()<0.5:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
             else:
@@ -1544,7 +1543,7 @@ if __name__ == '__main__':
 
             cnn_optimizer.update_hyperparameters(research_parameters)
             # At the beginning of each task zero out the momentums
-            session.run(tf_zero_out_momentums)
+            # session.run(tf_zero_out_momentums)
             # we stop 'num_gpus' items before the ideal number of training batches
             # because we always keep num_gpus items for valid data in memory
             for batch_id in range(0, n_iter_per_task - num_gpus, num_gpus):
