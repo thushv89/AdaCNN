@@ -1196,7 +1196,7 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.05, 0.25])
 
-    elif epoch==1 and trial_phase>=1.0 and trial_phase<1.7:
+    elif epoch==2 and trial_phase>=2.0 and trial_phase<2.7:
         logger.info('Shrink phase')
         # There is 0.6 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
@@ -1207,7 +1207,7 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
         trial_action_probs.extend([0.05, 0.25])
 
-    elif epoch==1 and trial_phase>=1.7 and trial_phase<2.0:
+    elif epoch==2 and trial_phase>=2.7 and trial_phase<3.0:
         logger.info('Finetune phase')
         trial_action_probs = [0.3 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
         trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
@@ -1230,19 +1230,39 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
     '''
 
     adapting_now = None
-    if epoch == 0 or epoch == 1:
-        # Grow the network mostly (Until half) then fix
-        logger.info('Explore Stage')
+    if epoch == 0:
+        # Grow the network mostly (Exploration)
+        logger.info('Explorative Growth Stage')
         state, action, invalid_actions = q_learner.output_action_with_type(
             data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv)
         )
         adapting_now = True
+    elif epoch == 1:
+        # Grow the network mostly (Exploration)
+        logger.info('Deterministic Growth Stage')
 
+        if np.random.random() >= eps:
+            state, action, invalid_actions = q_learner.output_action_with_type(
+                data, 'Greedy')
+
+        else:
+            state, action, invalid_actions = q_learner.output_action_with_type(
+                data, 'Stochastic'
+            )
+        adapting_now = True
+    elif epoch == 2:
+        # Grow the network mostly (Exploration)
+        logger.info('Explorative Pruning Stage')
+        state, action, invalid_actions = q_learner.output_action_with_type(
+            data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv)
+        )
+        adapting_now = True
     else:
+
         logger.info('Epsilon: %.3f',eps)
         if adaptation_period=='first':
             if local_trial_phase<=0.5:
-                logger.info('Greedy Adapting period of epoch')
+                logger.info('Greedy Pruning period of epoch (first)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Greedy')
@@ -1260,7 +1280,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
 
         elif adaptation_period == 'last':
             if local_trial_phase > 0.5:
-                logger.info('Greedy Adapting period of epoch')
+                logger.info('Greedy Pruning period of epoch (last)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Greedy')
@@ -1485,8 +1505,8 @@ if __name__ == '__main__':
         # Adapting Policy Learner
         current_adaptive_dropout = get_adaptive_dropout()
         state_history_length = 4
-        adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            discount_rate=0.9, fit_interval=1,
+        growth_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
+            qlearner_type='growth', discount_rate=0.9, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, net_depth=layer_count,
@@ -1497,6 +1517,23 @@ if __name__ == '__main__':
             state_history_length=state_history_length,
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'], remove_amount=model_hyperparameters['remove_amount'],
+            num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
+            trial_phase_threshold=1.0
+        )
+
+        prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
+            qlearner_type='prune', discount_rate=0.9, fit_interval=1,
+            exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
+            filter_vector=filter_vector,
+            conv_ids=convolution_op_ids, net_depth=layer_count,
+            n_conv=len([op for op in cnn_ops if 'conv' in op]),
+            epsilon=0.5, target_update_rate=20,
+            batch_size=32, persist_dir=output_dir,
+            session=session, random_mode=False,
+            state_history_length=state_history_length,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
+            rand_state_length=32, add_amount=model_hyperparameters['add_amount'],
+            remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
             trial_phase_threshold=1.0
         )
@@ -1578,7 +1615,16 @@ if __name__ == '__main__':
 
     n_iter_per_task = n_iterations//n_tasks
 
+    running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
+    binned_data_dist_decay = 0.5
+    current_action_type = growth_adapter.get_naivetrain_action_type()
+
     for epoch in range(n_epochs):
+
+        if epoch < 2:
+            adapter = growth_adapter
+        else:
+            adapter = prune_adapter
 
         for task in range(n_tasks):
 
@@ -1637,6 +1683,12 @@ if __name__ == '__main__':
                         class_dist_logger.info('%d,%s', batch_id, dist_str)
 
                     cnt = Counter(np.argmax(batch_labels[-1], axis=1))
+                    label_count_sorted = [v for (k,v) in sorted(cnt.items())]*1.0/batch_size
+                    if model_hyperparameters['binned_data_dist_length'] != num_labels:
+                        split_label_count_sorted = np.split(label_count_sorted,model_hyperparameters['binned_data_dist_length'])
+                        label_count_sorted = [np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted]
+                    running_binned_data_dist_vector = binned_data_dist_decay * np.asarray(label_count_sorted) + (1.0-binned_data_dist_decay) * running_binned_data_dist_vector
+
                     if behavior == 'non-stationary':
                         batch_w = np.zeros((batch_size,))
                         batch_labels_int = np.argmax(batch_labels[-1], axis=1)
@@ -1724,10 +1776,11 @@ if __name__ == '__main__':
 
                     # =========================================================
                     # # Training Phase (Optimization)
-                    for _ in range(iterations_per_batch):
-                        _, _ = session.run(
-                            [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                        )
+                    if current_action_type != adapter.get_donothing_action_type():
+                        for _ in range(iterations_per_batch):
+                            _, _ = session.run(
+                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                            )
 
                 t1_train = time.clock()
 
@@ -2002,15 +2055,18 @@ if __name__ == '__main__':
                                 filter_dict[op_i] = 0
                                 filter_list.append(0)
 
-                        # current_state, current_action, curr_invalid_actions = adapter.output_action(
-                        #    {'filter_counts': filter_dict, 'filter_counts_list': filter_list})
+                        # For epoch 0 and 1
+                        # Epoch 0: Randomly grow the network
+                        # Epoch 1: Deterministically grow the network
                         current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
-                            adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list}, epoch=epoch,
+                            adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list, 'binned_data_dist':running_binned_data_dist_vector.tolist()}, epoch=epoch,
                             global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids),
                             eps=start_eps, adaptation_period=adapt_period)
 
-                        adapter.update_trial_phase(global_trial_phase)
-
+                        current_action_type = adapter.get_action_type_with_action_list(current_action)
+                        # reset the binned data distribution
+                        running_binned_data_dist_vector = np.zeros(
+                            (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
                         for li, la in enumerate(current_action):
                             # pooling and fulcon layers
                             if la is None or la[0] == 'do_nothing':
@@ -2039,6 +2095,7 @@ if __name__ == '__main__':
                                 # pooling takes place here
                                 run_actual_finetune_operation(hard_pool_ft)
                                 break
+
                         # =============================================================
 
                     if batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0:
