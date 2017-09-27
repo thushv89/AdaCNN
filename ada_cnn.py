@@ -772,6 +772,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     :param hard_pool_ft:
     :return:
     '''
+    global current_adaptive_dropout
     amount_to_add = ai[1]
 
     if current_op != last_conv_id:
@@ -975,6 +976,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                    feed_dict=pool_feed_dict)
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
+    global current_adaptive_dropout
     _, rm_indices = session.run(tf_rm_filters_ops[current_op],
                                 feed_dict={
                                     tf_action_info: np.asarray([li, 0, ai[1]]),
@@ -1766,9 +1768,10 @@ if __name__ == '__main__':
                 unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
                 unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
 
-                valid_acc_queue.append(unseen_valid_accuracy)
-                if len(valid_acc_queue) > state_history_length + 1:
-                    del valid_acc_queue[0]
+                if adapt_structure:
+                    valid_acc_queue.append(unseen_valid_accuracy)
+                    if len(valid_acc_queue) > state_history_length + 1:
+                        del valid_acc_queue[0]
 
                 # =============================================================
 
