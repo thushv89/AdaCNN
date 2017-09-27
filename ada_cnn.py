@@ -1627,6 +1627,9 @@ if __name__ == '__main__':
 
         for task in range(n_tasks):
 
+            # We set the max pool accuracy to zero at the begining of each task.
+            # Because in my opinion, pool accuracy treats each task differently
+            max_pool_accuracy = 0.0
             if np.random.random()<0.6:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
