@@ -170,7 +170,7 @@ class AdaCNNAdaptingQLearner(object):
         _ = self.session.run(init_op)
 
     def get_finetune_action(self,data):
-        state = data['filter_counts_list'] + data['binned_distribution']
+        state = data['filter_counts_list'] + data['binned_data_dist']
         return state, [self.actions[1] if li in self.conv_ids else None for li in range(self.net_depth)],[]
 
     def setup_loggers(self):
@@ -1143,10 +1143,12 @@ class AdaCNNAdaptingQLearner(object):
         curr_action_string = self.get_action_string(ai_list)
         comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
                                                 curr_action_string)
-        mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
-                        ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
-        immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
-                                  (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
+        # Turned off 28/09/2017
+        #mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
+        #                ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
+        mean_accuracy = (1.0/self.num_classes) if data['pool_accuracy'] > data['max_pool_accuracy'] else 0.0
+        #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
+        #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
         self.verbose_logger.info('Complexity penalty: %.5f', comp_gain)
 
@@ -1165,7 +1167,7 @@ class AdaCNNAdaptingQLearner(object):
             else:
                 continue
 
-        reward = mean_accuracy - comp_gain + 0.5*immediate_mean_accuracy # new
+        reward = mean_accuracy - comp_gain #+ 0.5*immediate_mean_accuracy # new
         curr_action_string = self.get_action_string(ai_list)
 
         # exponential magnifier to prevent from being taken consecutively
