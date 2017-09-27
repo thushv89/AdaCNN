@@ -1612,14 +1612,16 @@ if __name__ == '__main__':
 
     running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
     binned_data_dist_decay = 0.5
-    current_action_type = growth_adapter.get_naivetrain_action_type()
+
+    current_action_type = growth_adapter.get_naivetrain_action_type() if adapt_structure else None
 
     for epoch in range(n_epochs):
 
-        if epoch < 2:
-            adapter = growth_adapter
-        else:
-            adapter = prune_adapter
+        if adapt_structure:
+            if epoch < 2:
+                adapter = growth_adapter
+            else:
+                adapter = prune_adapter
 
         for task in range(n_tasks):
 
@@ -1772,7 +1774,7 @@ if __name__ == '__main__':
 
                     # =========================================================
                     # # Training Phase (Optimization)
-                    if current_action_type != adapter.get_donothing_action_type():
+                    if (not adapt_structure) or current_action_type != adapter.get_donothing_action_type():
                         for _ in range(iterations_per_batch):
                             _, _ = session.run(
                                 [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
@@ -1815,9 +1817,10 @@ if __name__ == '__main__':
                 unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
                 unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
 
-                valid_acc_queue.append(unseen_valid_accuracy)
-                if len(valid_acc_queue) > state_history_length + 1:
-                    del valid_acc_queue[0]
+                if adapt_structure:
+                    valid_acc_queue.append(unseen_valid_accuracy)
+                    if len(valid_acc_queue) > state_history_length + 1:
+                        del valid_acc_queue[0]
 
                 # =============================================================
 

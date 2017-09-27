@@ -366,12 +366,14 @@ class AdaCNNAdaptingQLearner(object):
 
     def action_list_with_index(self, action_idx):
         '''
+        self.actions [('do_nothing', 0), ('finetune', 0),('naive_train', 0),
+                ('remove', params['remove_amount'])]
         How action_idx turned into action list
           convert the idx to binary representation (example 10=> 0b1010)
           get text [2:] to discard first two letters
           prepend 0s to it so the length is equal to number of conv layers
         :param action_idx:
-        :return:
+        :return: 0...n_conv for add actions corresponding to each layer n_conv + 1 -> do_nothing, n_conv+2 -> finetune n_conv + 3 -> naive_train
         '''
         self.verbose_logger.info('Getting action list from action index')
         self.verbose_logger.debug('Got (idx): %d\n', action_idx)
@@ -1146,7 +1148,7 @@ class AdaCNNAdaptingQLearner(object):
         # Turned off 28/09/2017
         #mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
         #                ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
-        mean_accuracy = (1.0/self.num_classes) if data['pool_accuracy'] > data['max_pool_accuracy'] else 0.0
+        mean_accuracy = (1.0/self.num_classes) if data['pool_accuracy'] > data['max_pool_accuracy'] else -(1.0/self.num_classes)
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
