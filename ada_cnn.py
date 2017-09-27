@@ -1181,18 +1181,18 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
     '''
     if epoch == 0 and trial_phase<0.4:
         logger.info('Finetune phase')
-        trial_action_probs = [0.1 / (1.0 * n_conv) for _ in range(n_conv)]  # add
-        trial_action_probs.extend([0.3, .3, 0.3])
+        trial_action_probs = [0.2 / (1.0 * n_conv) for _ in range(n_conv)]  # add
+        trial_action_probs.extend([0.26, .26, 0.28])
 
-    elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
+    elif epoch == 0 and trial_phase >= 0.4 and trial_phase < 1.0:
         logger.info('Growth phase')
         # There is 0.1 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
         trial_action_probs = []
         trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, 0.2, 0.1])
+        trial_action_probs.extend([0.13, 0.13, 0.14])
 
-    elif epoch==2 and trial_phase>=2.0 and trial_phase<2.7:
+    elif epoch == 2 and trial_phase >= 2.0 and trial_phase < 2.7:
         logger.info('Shrink phase')
         # There is 0.6 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
@@ -1202,11 +1202,11 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
 
         trial_action_probs.extend([0.13, 0.13, 0.14])
 
-    elif epoch==2 and trial_phase>=2.7 and trial_phase<3.0:
+    elif epoch == 2 and trial_phase >= 2.7 and trial_phase < 3.0:
         logger.info('Finetune phase')
         trial_action_probs = []
-        trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.3, 0.3, 0.3])
+        trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.26, 0.26, 0.28])
 
     return trial_action_probs
 
@@ -2032,7 +2032,8 @@ if __name__ == '__main__':
                                 utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
                             )
 
-                            q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
+                            # The growth adapter has the random states for Q_eval^rand
+                            q_logger.info('%d,%.5f', global_batch_id, growth_adapter.get_average_Q())
 
                             logger.debug('Resetting both data distribution means')
 

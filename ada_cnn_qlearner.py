@@ -31,7 +31,7 @@ class AdaCNNAdaptingQLearner(object):
         if self.qlearner_type=='growth':
             self.actions = [
                 ('do_nothing', 0), ('finetune', 0),('naive_train', 0),
-                ('add', params['remove_amount'])
+                ('add', params['add_amount'])
             ]
         elif self.qlearner_type=='prune':
             self.actions = [
@@ -183,10 +183,10 @@ class AdaCNNAdaptingQLearner(object):
         :return:
         '''
 
-        self.verbose_logger = logging.getLogger('verbose_q_learner_logger')
+        self.verbose_logger = logging.getLogger('verbose_q_learner_logger_'+self.qlearner_type)
         self.verbose_logger.propagate = False
         self.verbose_logger.setLevel(logging.DEBUG)
-        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner' + self.qlearner_type  +'.log', mode='w')
+        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner_' + self.qlearner_type  +'.log', mode='w')
         vHandler.setLevel(logging.INFO)
         vHandler.setFormatter(logging.Formatter('%(message)s'))
         self.verbose_logger.addHandler(vHandler)
@@ -195,26 +195,26 @@ class AdaCNNAdaptingQLearner(object):
         v_console.setLevel(logging_level)
         self.verbose_logger.addHandler(v_console)
 
-        self.q_logger = logging.getLogger('pred_q_logger')
+        self.q_logger = logging.getLogger('pred_q_logger_'+self.qlearner_type)
         self.q_logger.propagate = False
         self.q_logger.setLevel(logging.INFO)
-        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q' + self.qlearner_type +'.log', mode='w')
+        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q_' + self.qlearner_type +'.log', mode='w')
         q_distHandler.setFormatter(logging.Formatter('%(message)s'))
         self.q_logger.addHandler(q_distHandler)
         self.q_logger.info(self.get_action_string_for_logging())
 
-        self.reward_logger = logging.getLogger('reward_logger')
+        self.reward_logger = logging.getLogger('reward_logger'+self.qlearner_type)
         self.reward_logger.propagate = False
         self.reward_logger.setLevel(logging.INFO)
-        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward'+ self.qlearner_type +'.log', mode='w')
+        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward_'+ self.qlearner_type +'.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
         self.reward_logger.addHandler(rewarddistHandler)
         self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
 
-        self.action_logger = logging.getLogger('action_logger')
+        self.action_logger = logging.getLogger('action_logger'+self.qlearner_type)
         self.action_logger.propagate = False
         self.action_logger.setLevel(logging.INFO)
-        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions'+ self.qlearner_type + '.log', mode='w')
+        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions_'+ self.qlearner_type + '.log', mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
 
@@ -381,7 +381,7 @@ class AdaCNNAdaptingQLearner(object):
             primary_action = action_idx // self.n_conv  # action
             secondary_action = action_idx % self.n_conv  # the layer the action will be executed
             if primary_action == 0:
-                tmp_a = self.actions[2]
+                tmp_a = self.actions[3]
 
             for ci, c_id in enumerate(self.conv_ids):
                 if ci == secondary_action:
@@ -406,10 +406,10 @@ class AdaCNNAdaptingQLearner(object):
         :return:
         '''
         action_str = 'Time-Stamp,'
-        if self.qlearner_type=='growth':
+        if self.qlearner_type=='prune':
             for ci in self.conv_ids:
                 action_str += 'Remove-%d,'%ci
-        elif self.qlearner_type=='prune':
+        elif self.qlearner_type=='growth':
             for ci in self.conv_ids:
                 action_str += 'Add-%d,' % ci
         else:
@@ -458,7 +458,7 @@ class AdaCNNAdaptingQLearner(object):
                 if la is None:
                     continue
 
-                if la == self.actions[2]:
+                if la == self.actions[self.global_actions]:
                     secondary_idx = conv_id
                     primary_idx = 0
 
