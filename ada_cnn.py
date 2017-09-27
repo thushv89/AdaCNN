@@ -356,7 +356,8 @@ def mean_tower_activations(tower_activations):
 
             mean_activations.append(tf.reduce_mean(stacked_activations, [0]))
     else:
-        mean_activations = tf.reduce_mean(tower_activations,[0])
+        for act_single_tower in tower_activations[0]:
+            mean_activations.append(act_single_tower)
 
     return mean_activations
 
@@ -1665,6 +1666,7 @@ if __name__ == '__main__':
                     [mean_loss_op, concat_loss_vec_op,
                      tf_mean_activation, tower_predictions], feed_dict=train_feed_dict
                 )
+
                 # =========================================================
 
                 # ==========================================================
