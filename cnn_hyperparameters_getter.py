@@ -17,7 +17,6 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level)
         'log_class_distribution': True, 'log_distribution_every': 24, # log distribution of data (useful for generating data distribution over time curves)
         'adapt_structure': adapt,  # Enable AdaCNN behavior
         'hard_pool_acceptance_rate': 0.1,  # Probability with which data is accepted in to the pool
-        'replace_op_train_rate': 0.8,  # amount of batches from hard_pool selected to train
         'optimizer': 'Momentum', 'momentum': 0.0, 'pool_momentum': 0.9,  # Two momentums one for data one for pool
         'use_custom_momentum_opt': True, # Use a custom implemented momentum (Tensorflow builtin optimizer doesnot support variable size tensors
         'remove_filters_by': 'Activation', # The criteria for removing filters (AdaCNN) set of minimum maximum mean activations
@@ -143,7 +142,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [144, 144, 144, 0, 288, 288, 288]
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
-        model_hyperparameters['n_tasks'] = 4
+        model_hyperparameters['n_tasks'] = 2
 
     elif dataset_name== 'imagenet-250':
 

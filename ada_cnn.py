@@ -43,7 +43,7 @@ cnn_string, filter_vector = None,None
 batch_size = None
 start_lr, decay_learning_rate, decay_rate, decay_steps = None,None,None,None
 beta, include_l2_loss = None,None
-use_dropout, in_dropout_rate, dropout_rate = None, None, None
+use_dropout, in_dropout_rate, dropout_rate, current_adaptive_dropout = None, None, None,None
 pool_size = None
 use_loc_res_norm, lrn_radius, lrn_alpha, lrn_beta = None, None, None, None
 
@@ -70,7 +70,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     global n_epochs, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation
     global start_lr, decay_learning_rate, decay_rate, decay_steps
     global batch_size, beta, include_l2_loss
-    global use_dropout, in_dropout_rate, dropout_rate
+    global use_dropout, in_dropout_rate, dropout_rate, current_adaptive_dropout
     global pool_size
     global use_loc_res_norm, lrn_radius, lrn_alpha, lrn_beta
     global start_eps,eps_decay,valid_acc_decay
@@ -118,6 +118,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     use_dropout = model_hyperparameters['use_dropout']
     in_dropout_rate = model_hyperparameters['in_dropout_rate']
     dropout_rate = model_hyperparameters['dropout_rate']
+    current_adaptive_dropout = dropout_rate
 
     # Local Response Normalization
     use_loc_res_norm = model_hyperparameters['use_loc_res_norm']
@@ -168,6 +169,7 @@ pool_pred = None
 tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions = [], [], [], [], []
 tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops = [], [], []
 tower_logits = []
+tf_dropout_rate = None
 
 # Test/Valid related
 valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
@@ -249,7 +251,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                                    strides=cnn_hyperparameters[op]['stride'],
                                    padding=cnn_hyperparameters[op]['padding'])
             if training and use_dropout:
-                x = tf.nn.dropout(x, keep_prob=1.0 - dropout_rate, name='dropout')
+                x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
             if use_loc_res_norm and 'pool_global' != op:
                 x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha, beta=lrn_beta)
@@ -270,7 +272,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     x = tf.reshape(x, [batch_size, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]])
                     x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
                     if training and use_dropout:
-                        x = tf.nn.dropout(x, keep_prob=1.0 - dropout_rate, name='dropout')
+                        x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
                 elif 'fulcon_out' == op:
                     x = tf.matmul(x, w) + b
@@ -278,7 +280,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 else:
                     x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
                     if training and use_dropout:
-                        x = tf.nn.dropout(x, keep_prob=1.0 - dropout_rate, name='dropout')
+                        x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
     return x, activation_ops
 
@@ -343,15 +345,19 @@ def concat_loss_vector_towers(tower_loss_vectors):
 
 def mean_tower_activations(tower_activations):
     mean_activations = []
-    for a_i in zip(*tower_activations):
-        stacked_activations = None
-        for a in a_i:
-            if stacked_activations is None:
-                stacked_activations = tf.identity(a)
-            else:
-                stacked_activations = tf.stack([stacked_activations, a], axis=0)
+    if len(tower_activations)>1:
+        for act_towers in zip(*tower_activations):
+            stacked_activations = None
+            for a in act_towers:
+                if stacked_activations is None:
+                    stacked_activations = tf.identity(a)
+                else:
+                    stacked_activations = tf.stack([stacked_activations, a], axis=0)
 
-        mean_activations.append(tf.reduce_mean(stacked_activations, [0]))
+            mean_activations.append(tf.reduce_mean(stacked_activations, [0]))
+    else:
+        mean_activations = tf.reduce_mean(tower_activations,[0])
+
     return mean_activations
 
 
@@ -473,7 +479,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions
-    global tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops, tower_logits
+    global tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops, tower_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
     global tf_indices, tf_indices_size
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, tf_mean_activation, mean_loss_op
@@ -494,6 +500,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     tf_learning_rate = tf.train.exponential_decay(start_lr, global_step, decay_steps=decay_steps,
                                decay_rate=decay_rate, staircase=True)
 
+    tf_dropout_rate = tf.Variable(dropout_rate,trainable=False,dtype=tf.float32,name='tf_dropout_rate')
     # Test data (Global)
     logger.info('Defining Test data placeholders')
     tf_test_dataset = tf.placeholder(tf.float32, shape=(batch_size, image_size, image_size, num_channels),
@@ -719,8 +726,18 @@ def get_pool_valid_accuracy(hard_pool_valid):
     return np.mean(tmp_pool_accuracy)
 
 
+def get_adaptive_dropout():
+    global cnn_hyperparameters,cnn_ops, dropout_rate,filter_vector
+    current_depth_total = 0
+    for scope in cnn_ops:
+        if 'conv' in scope:
+            current_depth_total += cnn_hyperparameters[scope]['weights'][3]
+
+    return dropout_rate*np.sqrt(current_depth_total*1.0/sum(filter_vector))
+
+
 def fintune_with_pool_ft(hard_pool_ft):
-    global apply_pool_grads_op, update_pool_velocity_ops
+    global apply_pool_grads_op, update_pool_velocity_ops,current_adaptive_dropout
 
     if hard_pool_ft.get_size() > batch_size:
         # Randomize data in the batch
@@ -730,6 +747,7 @@ def fintune_with_pool_ft(hard_pool_ft):
                              (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[
                                   (pool_id + gpu_id) * batch_size:(pool_id + gpu_id + 1) * batch_size, :, :,
@@ -880,18 +898,23 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     logger.info('\tSize of Rolling mean vector for %s: %s', current_op,
                 rolling_ativation_means[current_op].shape)
 
+
+    current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
+    train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
     pbatch_train_count = 0
 
     # Train only with half of the batch
     for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-        if np.random.random() < research_parameters['replace_op_train_rate']:
+        if np.random.random() < research_parameters['finetune_rate']:
             pbatch_data, pbatch_labels = [], []
+
             pool_feed_dict = {
                 tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
                                       cnn_hyperparameters[current_op]['weights'][3])}
+            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
 
             for gpu_id in range(num_gpus):
                 pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
@@ -936,6 +959,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                              (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
                                                                                    pool_id + gpu_id + 1) * batch_size,
@@ -1030,6 +1054,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
     logger.info('\tSize of Rolling mean vector for %s: %s', current_op,
                 rolling_ativation_means[current_op].shape)
 
+    current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
     _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
@@ -1051,6 +1076,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
                                                                                    pool_id + gpu_id + 1) * batch_size,
@@ -1070,6 +1096,8 @@ def run_actual_finetune_operation(hard_pool_ft):
     :param hard_pool_ft:
     :return:
     '''
+    global current_adaptive_dropout
+
     op = cnn_ops[li]
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
@@ -1091,6 +1119,7 @@ def run_actual_finetune_operation(hard_pool_ft):
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
                                                                                    pool_id + gpu_id + 1) * batch_size,
@@ -1453,6 +1482,7 @@ if __name__ == '__main__':
 
     if research_parameters['adapt_structure']:
         # Adapting Policy Learner
+        current_adaptive_dropout = get_adaptive_dropout()
         state_history_length = 4
         adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
             discount_rate=0.9, fit_interval=1,
@@ -1488,7 +1518,7 @@ if __name__ == '__main__':
                                             dataset_info['dataset_name'], session)
 
     if datatype=='cifar-10':
-        labels_per_task = 2
+        labels_per_task = 5
         labels_of_each_task = [[0,1,2,3,4],[5,6,7,8,9]]
 
     elif datatype=='cifar-100':
@@ -1585,7 +1615,7 @@ if __name__ == '__main__':
                 # Feed dicitonary with placeholders for each tower
                 batch_data, batch_labels, batch_weights = [], [], []
                 train_feed_dict = {}
-
+                train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                 # ========================================================
                 # Creating data batchs for the towers
                 for gpu_id in range(num_gpus):
@@ -1684,7 +1714,7 @@ if __name__ == '__main__':
                                                                       batch_labels[gpu_id], axis=0)
 
                     # Higer rates of accumulating data causes the pool to lose uniformity
-                    if np.random.random()<0.2:
+                    if np.random.random()<0.1:
                         hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                        super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
                                                                   max(0.1, (1.0 - train_accuracy))))
@@ -1779,6 +1809,7 @@ if __name__ == '__main__':
                     logger.info('\tMinibatch Mean Loss: %.3f' % mean_train_loss)
                     logger.info('\tValidation Accuracy (Unseen): %.3f' % unseen_valid_accuracy)
                     logger.info('\tValidation accumulation rate %.3f', 0.5*(valid_acc_decay**epoch))
+                    logger.info('\tCurrent adaptive Dropout: %.3f', current_adaptive_dropout)
                     logger.info('\tTrial phase: %.3f (Local) %.3f (Global)', local_trial_phase, global_trial_phase)
 
                     test_accuracies = []
@@ -1849,6 +1880,7 @@ if __name__ == '__main__':
                             for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
                                 if np.random.random() < research_parameters['finetune_rate']:
                                     pool_feed_dict = {}
+                                    pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                                     for gpu_id in range(num_gpus):
                                         pbatch_data = pool_dataset[
                                                       (pool_id + gpu_id) * batch_size:
