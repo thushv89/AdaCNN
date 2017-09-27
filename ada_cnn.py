@@ -1181,20 +1181,16 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
     '''
     if epoch == 0 and trial_phase<0.4:
         logger.info('Finetune phase')
-        trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
-        trial_action_probs.extend([0.3 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, .6])
+        trial_action_probs = [0.1 / (1.0 * n_conv) for _ in range(n_conv)]  # add
+        trial_action_probs.extend([0.3, .3, 0.3])
 
     elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
         logger.info('Growth phase')
         # There is 0.1 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
-        remove_action_prob = 0.1*(10.0/11.0)
-        trial_action_probs_without_last = [remove_action_prob/(1.0*(n_conv-1)) for _ in range(n_conv-1)]
-        trial_action_probs = list(trial_action_probs_without_last) + [0.1-remove_action_prob]
-
+        trial_action_probs = []
         trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.25])
+        trial_action_probs.extend([0.1, 0.2, 0.1])
 
     elif epoch==2 and trial_phase>=2.0 and trial_phase<2.7:
         logger.info('Shrink phase')
@@ -1204,14 +1200,13 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs_without_last = [remove_action_prob / (1.0 * (n_conv - 1)) for _ in range(n_conv - 1)]
         trial_action_probs = list(trial_action_probs_without_last) + [0.6 - remove_action_prob]
 
-        trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.25])
+        trial_action_probs.extend([0.13, 0.13, 0.14])
 
     elif epoch==2 and trial_phase>=2.7 and trial_phase<3.0:
         logger.info('Finetune phase')
-        trial_action_probs = [0.3 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
-        trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, 0.6])
+        trial_action_probs = []
+        trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.3, 0.3, 0.3])
 
     return trial_action_probs
 
@@ -1518,7 +1513,7 @@ if __name__ == '__main__':
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'], remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
-            trial_phase_threshold=1.0
+            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
         )
 
         prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
@@ -1535,7 +1530,7 @@ if __name__ == '__main__':
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'],
             remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
-            trial_phase_threshold=1.0
+            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
         )
 
     # Running initialization opeartion
@@ -1683,10 +1678,11 @@ if __name__ == '__main__':
                         class_dist_logger.info('%d,%s', batch_id, dist_str)
 
                     cnt = Counter(np.argmax(batch_labels[-1], axis=1))
-                    label_count_sorted = [v for (k,v) in sorted(cnt.items())]*1.0/batch_size
+                    label_count_sorted = np.asarray([cnt[ci] if ci in cnt.keys() else 0.0 for ci in range(num_labels)])*1.0/batch_size
                     if model_hyperparameters['binned_data_dist_length'] != num_labels:
                         split_label_count_sorted = np.split(label_count_sorted,model_hyperparameters['binned_data_dist_length'])
-                        label_count_sorted = [np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted]
+                        label_count_sorted = np.asarray([np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted])
+
                     running_binned_data_dist_vector = binned_data_dist_decay * np.asarray(label_count_sorted) + (1.0-binned_data_dist_decay) * running_binned_data_dist_vector
 
                     if behavior == 'non-stationary':
@@ -1954,7 +1950,7 @@ if __name__ == '__main__':
                     # ==================================================================
                     # Actual Adaptations
                     if (start_adapting and not stop_adapting) and batch_id > 0 and \
-                                            batch_id % interval_parameters['policy_interval'] == 0:
+                                            batch_id % interval_parameters['policy_interval'] == 4:
 
                         # ==================================================================
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
@@ -2067,12 +2063,12 @@ if __name__ == '__main__':
                         # reset the binned data distribution
                         running_binned_data_dist_vector = np.zeros(
                             (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
+
+
                         for li, la in enumerate(current_action):
                             # pooling and fulcon layers
                             if la is None or la[0] == 'do_nothing':
                                 continue
-
-                            logger.info('Got state: %s, action: %s', str(current_state), str(la))
 
                             # where all magic happens (adding and removing filters)
                             si, ai = current_state, la

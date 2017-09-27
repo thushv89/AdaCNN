@@ -40,6 +40,7 @@ class AdaCNNAdaptingQLearner(object):
             ]
         else:
             raise AttributeError
+        self.binned_data_dist_length = params['binned_data_dist_length']
 
         # RL Agent Specifict Hyperparameters
         self.discount_rate = params['discount_rate']
@@ -128,7 +129,7 @@ class AdaCNNAdaptingQLearner(object):
 
         self.prev_action, self.prev_state = None, None
 
-        self.binned_data_dist_length = params['binned_data_dist_length']
+
 
     def setup_tf_network_and_ops(self,params):
         '''
