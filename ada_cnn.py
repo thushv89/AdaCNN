@@ -138,7 +138,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 600
+n_iterations = 5000
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -1394,10 +1394,9 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
     pruned_cnn_hyps = {}
     prev_op = None
     for op in cnn_ops:
-        print(current_cnn_hyperparams)
-        print(pruned_cnn_hyps)
+
         if 'conv' in op:
-            print(prev_op)
+
             if op=='conv_0':
                 pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
                                        'stride': list(current_cnn_hyperparams[op]['stride']),
@@ -2229,7 +2228,6 @@ if __name__ == '__main__':
                     var_count = len(tf.global_variables()) + len(tf.local_variables()) + len(tf.model_variables())
                     perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
                                      (t1_train - t0_train) / num_gpus, op_count, var_count)
-
 
         if adapt_structure:
 
