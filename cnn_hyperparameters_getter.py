@@ -99,6 +99,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
     model_hyperparameters['epochs'] = 20
+    model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
@@ -109,22 +110,15 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-    if adapt_structure:
-        model_hyperparameters['epochs'] += 2  # for the trial one
+    #if adapt_structure:
+    #    model_hyperparameters['epochs'] += 1  # for the trial one
 
-    if dataset_behavior == 'non-stationary':
-        model_hyperparameters['include_l2_loss'] = False
-        model_hyperparameters['use_loc_res_norm'] = False
-        model_hyperparameters['lrn_radius'] = 5
-        model_hyperparameters['lrn_alpha'] = 0.0001
-        model_hyperparameters['lrn_beta'] = 0.75
-        model_hyperparameters['start_lr'] = 0.008
-
-    elif dataset_behavior == 'stationary':
-        model_hyperparameters['start_lr'] = 0.01
-        model_hyperparameters['include_l2_loss'] = True
-        model_hyperparameters['beta'] = 0.0005
-        model_hyperparameters['use_loc_res_norm'] = False
+    model_hyperparameters['include_l2_loss'] = True
+    model_hyperparameters['use_loc_res_norm'] = False
+    model_hyperparameters['lrn_radius'] = 5
+    model_hyperparameters['lrn_alpha'] = 0.0005
+    model_hyperparameters['lrn_beta'] = 0.75
+    model_hyperparameters['start_lr'] = 0.01
 
     if dataset_name == 'cifar-10':
 
@@ -165,6 +159,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             add_amount, remove_amount = 8, 4
         model_hyperparameters['n_tasks'] = 10
         model_hyperparameters['binned_data_dist_length'] = 25
+        model_hyperparameters['n_iterations'] = 10000
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
