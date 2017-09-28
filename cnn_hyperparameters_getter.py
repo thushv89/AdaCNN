@@ -98,7 +98,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
-    model_hyperparameters['epochs'] = 20
+    model_hyperparameters['epochs'] = 10
+    model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
@@ -109,22 +110,11 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-    if adapt_structure:
-        model_hyperparameters['epochs'] += 2  # for the trial one
 
-    if dataset_behavior == 'non-stationary':
-        model_hyperparameters['include_l2_loss'] = False
-        model_hyperparameters['use_loc_res_norm'] = False
-        model_hyperparameters['lrn_radius'] = 5
-        model_hyperparameters['lrn_alpha'] = 0.0001
-        model_hyperparameters['lrn_beta'] = 0.75
-        model_hyperparameters['start_lr'] = 0.008
-
-    elif dataset_behavior == 'stationary':
-        model_hyperparameters['start_lr'] = 0.01
-        model_hyperparameters['include_l2_loss'] = True
-        model_hyperparameters['beta'] = 0.0005
-        model_hyperparameters['use_loc_res_norm'] = False
+    model_hyperparameters['start_lr'] = 0.01
+    model_hyperparameters['include_l2_loss'] = True
+    model_hyperparameters['beta'] = 0.0005
+    model_hyperparameters['use_loc_res_norm'] = False
 
     if dataset_name == 'cifar-10':
 
@@ -143,9 +133,9 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
         model_hyperparameters['n_tasks'] = 2
-
+        model_hyperparameters['binned_data_dist_length'] = 10
     elif dataset_name== 'imagenet-250':
-
+        model_hyperparameters['epochs'] = 8
         pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
 
         if not adapt_structure:
@@ -164,6 +154,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_min_threshold = 24
             add_amount, remove_amount = 8, 4
         model_hyperparameters['n_tasks'] = 10
+        model_hyperparameters['binned_data_dist_length'] = 25
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
@@ -177,6 +168,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             add_amount, remove_amount = 4, 2
             filter_min_threshold = 12
         model_hyperparameters['n_tasks'] = 4
+        model_hyperparameters['binned_data_dist_length'] = 10
+
     model_hyperparameters['cnn_string'] = cnn_string
 
     if adapt_structure or use_pooling:
@@ -203,7 +196,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 25
 
     elif dataset_name == 'cifar-100':
 
@@ -213,7 +206,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 15
 
     elif dataset_name == 'imagenet-250':
         image_size = 128
@@ -222,7 +215,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 300000
         test_size = 12500
         n_slices = 10
-        fluctuation = 5
+        fluctuation = 10
         resize_to = 64
 
     elif dataset_name == 'svhn-10':
@@ -233,7 +226,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 73257
         test_size = 26032
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 25
 
     else:
         raise NotImplementedError
