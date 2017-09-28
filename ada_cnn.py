@@ -457,14 +457,22 @@ def setup_loggers(adapt_structure):
     pool_dist_logger = logging.getLogger('pool_distribution_logger')
     pool_dist_logger.propagate = False
     pool_dist_logger.setLevel(logging.INFO)
-    pool_handler = logging.FileHandler(output_dir + os.sep + 'pool_distribution.log', mode='w')
+    pool_handler = logging.FileHandler(output_dir + os.sep + 'pool_valid_distribution.log', mode='w')
     pool_handler.setFormatter(logging.Formatter('%(message)s'))
     pool_dist_logger.addHandler(pool_handler)
     pool_dist_logger.info('#Class distribution')
 
+    pool_ft_dist_logger = logging.getLogger('pool_distribution_logger')
+    pool_ft_dist_logger.propagate = False
+    pool_ft_dist_logger.setLevel(logging.INFO)
+    pool_ft_handler = logging.FileHandler(output_dir + os.sep + 'pool_ft_distribution.log', mode='w')
+    pool_ft_handler.setFormatter(logging.Formatter('%(message)s'))
+    pool_ft_dist_logger.addHandler(pool_ft_handler)
+    pool_ft_dist_logger.info('#Class distribution')
+
     return main_logger, perf_logger, \
            cnn_structure_logger, q_logger, class_dist_logger, \
-           pool_dist_logger, hyp_logger, error_logger
+           pool_dist_logger, pool_ft_dist_logger, hyp_logger, error_logger
 
 
 def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
@@ -1288,8 +1296,14 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                     )
                 adapting_now=True
             else:
-                logger.info('Not adapting period of epoch')
-                state, action, invalid_actions = q_learner.get_finetune_action(data)
+                logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
+                if np.random.random()<0.3:
+                    state, action, invalid_actions = q_learner.get_donothing_action()
+                elif np.random.random()<0.6:
+                    state, action, invalid_actions = q_learner.get_naivetrain_action()
+                else:
+                    state, action, invalid_actions = q_learner.get_finetune_action(data)
+
                 adapting_now = False
 
         elif adaptation_period =='both':
@@ -1394,7 +1408,7 @@ if __name__ == '__main__':
 
     # Setting up loggers
     logger, perf_logger, cnn_structure_logger, \
-    q_logger, class_dist_logger, pool_dist_logger, \
+    q_logger, class_dist_logger, pool_dist_logger, pool_dist_ft_logger, \
     hyp_logger, error_logger = setup_loggers(adapt_structure)
 
     logger.info('Created loggers')
@@ -1501,9 +1515,9 @@ if __name__ == '__main__':
     if research_parameters['adapt_structure']:
         # Adapting Policy Learner
         current_adaptive_dropout = get_adaptive_dropout()
-        state_history_length = 4
+        state_history_length = 2
         growth_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            qlearner_type='growth', discount_rate=0.8, fit_interval=1,
+            qlearner_type='growth', discount_rate=0.5, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, net_depth=layer_count,
@@ -1519,7 +1533,7 @@ if __name__ == '__main__':
         )
 
         prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            qlearner_type='prune', discount_rate=0.8, fit_interval=1,
+            qlearner_type='prune', discount_rate=0.5, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, net_depth=layer_count,
@@ -2113,6 +2127,12 @@ if __name__ == '__main__':
                             pool_dist_string += str(val) + ','
 
                         pool_dist_logger.info('%s%d', pool_dist_string, hard_pool_valid.get_size())
+
+                        pool_dist_string = ''
+                        for val in hard_pool_ft.get_class_distribution():
+                            pool_dist_string += str(val) + ','
+
+                        pool_dist_ft_logger.info('%s%d', pool_dist_string, hard_pool_ft.get_size())
 
                     t1 = time.clock()
                     op_count = len(tf.get_default_graph().get_operations())

@@ -173,6 +173,14 @@ class AdaCNNAdaptingQLearner(object):
         state = data['filter_counts_list'] + data['binned_data_dist']
         return state, [self.actions[1] if li in self.conv_ids else None for li in range(self.net_depth)],[]
 
+    def get_donothing_action(self,data):
+        state = data['filter_counts_list'] + data['binned_data_dist']
+        return state, [self.actions[0] if li in self.conv_ids else None for li in range(self.net_depth)],[]
+
+    def get_naivetrain_action(self,data):
+        state = data['filter_counts_list'] + data['binned_data_dist']
+        return state, [self.actions[2] if li in self.conv_ids else None for li in range(self.net_depth)],[]
+
     def setup_loggers(self):
         '''
         Setting up loggers
@@ -1235,16 +1243,6 @@ class AdaCNNAdaptingQLearner(object):
         # update experience
         if len(history_t) >= self.state_history_length:
             self.experience.append([history_t, action_idx, reward, history_t_plus_1, self.global_time_stamp])
-
-            if add_future_reward and len(self.experience) > 2:
-                prev_action_string = self.get_action_string(self.action_list_with_index(self.experience[-2][1]))
-                curr_action_string = self.get_action_string(ai_list)
-                # this is because the reward can be delayed
-                # if 'finetune' in curr_action_string and ('add' in prev_action_string or 'remove' in prev_action_string):
-                #    self.verbose_logger.info('Updating reward for %s', prev_action_string)
-                #    self.verbose_logger.info('\tFrom: %.3f',self.experience[-2][2])
-                #    self.experience[-2][2] += 0.5*max(0,(data['pool_accuracy'] - self.prev_prev_pool_accuracy)/100.0)
-                #    self.verbose_logger.info('\tTo: %.3f\n', self.experience[-2][2])
 
             for invalid_a in data['invalid_actions']:
                 self.verbose_logger.debug('Adding the invalid action %s to experience', invalid_a)
