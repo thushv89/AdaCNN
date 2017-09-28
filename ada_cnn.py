@@ -58,6 +58,7 @@ TF_GLOBAL_SCOPE = constants.TF_GLOBAL_SCOPE
 TOWER_NAME = constants.TOWER_NAME
 TF_ADAPTATION_NAME_SCOPE = constants.TF_ADAPTATION_NAME_SCOPE
 TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
+TF_CONV_WEIGHT_SHAPE_STR = constants.TF_CONV_WEIGHT_SHAPE_STR
 
 start_eps = None
 eps_decay = None
@@ -137,7 +138,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 1000
+n_iterations = 5000
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -415,7 +416,7 @@ def setup_loggers(adapt_structure):
     errHandler = logging.FileHandler(output_dir + os.sep + 'Error.log', mode='w')
     errHandler.setFormatter(logging.Formatter('%(message)s'))
     error_logger.addHandler(errHandler)
-    error_logger.info('#Batch_ID,Loss(Train),Valid(Unseen),Test Accuracy')
+    error_logger.info('#Batch_ID,Loss(Train),Train Accuracy, Valid(Unseen),Test Accuracy')
 
     perf_logger = logging.getLogger('time_logger')
     perf_logger.propagate = False
@@ -487,7 +488,7 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
 
 def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global optimizer
-    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn
+    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_prune_cnn_hyperparameters
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions
@@ -655,7 +656,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='input_size')
 
-                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(init_cnn_hyperparameters,cnn_ops)
+                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(tf_prune_cnn_hyperparameters,cnn_ops)
 
                 for tmp_op in cnn_ops:
                     if 'conv' in tmp_op:
@@ -1378,10 +1379,66 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
     del data_prior
     return new_data_prior
 
-#def init_tf_prune_cnn_hyperparameters():
+def init_tf_prune_cnn_hyperparameters():
+    global tf_prune_cnn_hyperparameters
 
-#def update_tf_prune_cnn_hyperparameters():
+    for op in cnn_ops:
+        if 'conv' in op:
+            tf_prune_cnn_hyperparameters[op] = {TF_CONV_WEIGHT_SHAPE_STR:
+                                   tf.placeholder(shape=None,dtype=tf.int32)
+                               }
 
+        if 'fulcon' in op:
+
+            tf_prune_cnn_hyperparameters[op] = {TF_FC_WEIGHT_IN_STR: tf.placeholder(shape=None, dtype=tf.int32),
+                               TF_FC_WEIGHT_OUT_STR: tf.placeholder(shape=None, dtype=tf.int32)
+                                   }
+
+def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
+    global cnn_ops,first_fc,final_2d_width
+    pruned_cnn_hyps = {}
+    prev_op = None
+    for op in cnn_ops:
+        if 'conv' in op:
+            if op=='conv_0':
+                pruned_cnn_hyps[op] = list(current_cnn_hyperparams[op][TF_CONV_WEIGHT_SHAPE_STR])
+                pruned_cnn_hyps[op][3] = int(pruned_cnn_hyps[op][3]*prune_factor)
+                prev_op = op
+            else:
+                pruned_cnn_hyps[op] = list(current_cnn_hyperparams[op][TF_CONV_WEIGHT_SHAPE_STR])
+                pruned_cnn_hyps[op][2] = pruned_cnn_hyps[prev_op][TF_CONV_WEIGHT_SHAPE_STR][3]
+                pruned_cnn_hyps[op][3] = int(pruned_cnn_hyps[op][3] * prune_factor)
+                prev_op = op
+        if 'fulcon' in op:
+            if op==first_fc:
+                pruned_cnn_hyps[op] = {TF_FC_WEIGHT_IN_STR:current_cnn_hyperparams[op][TF_FC_WEIGHT_IN_STR],
+                                       TF_FC_WEIGHT_OUT_STR: current_cnn_hyperparams[op][TF_FC_WEIGHT_OUT_STR]}
+                pruned_cnn_hyps[op][TF_FC_WEIGHT_IN_STR]=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op][3]
+            else:
+                pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
+
+    return pruned_cnn_hyps
+
+def get_pruned_cnn_hyp_feed_dict(prune_hyps):
+    global tf_prune_cnn_hyperparameters,cnn_ops
+    feed_dict = {}
+    for op in cnn_ops:
+        if 'conv' in op:
+            feed_dict.update(
+                {tf_prune_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR]:
+                     prune_hyps[op][TF_CONV_WEIGHT_SHAPE_STR]}
+            )
+        if 'fulcon' in op:
+            feed_dict.update(
+                {tf_prune_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]:
+                 prune_hyps[op][TF_FC_WEIGHT_IN_STR]}
+            )
+            feed_dict.update(
+                {tf_prune_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR]:
+                     prune_hyps[op][TF_FC_WEIGHT_OUT_STR]}
+            )
+
+    return feed_dict
 if __name__ == '__main__':
 
     # Various run-time arguments specified
@@ -1531,6 +1588,10 @@ if __name__ == '__main__':
 
 
     if research_parameters['adapt_structure']:
+
+        # Pruning hyperparameter initialization
+        init_tf_prune_cnn_hyperparameters()
+
         # Adapting Policy Learner
         current_adaptive_dropout = get_adaptive_dropout()
         state_history_length = 2
@@ -1754,6 +1815,8 @@ if __name__ == '__main__':
                      tf_mean_activation, tower_predictions], feed_dict=train_feed_dict
                 )
 
+                train_accuracy = np.mean(
+                    [accuracy(train_predictions[gid], batch_labels[gid]) for gid in range(num_gpus)]) / 100.0
                 # =========================================================
 
                 # ==========================================================
@@ -1775,8 +1838,6 @@ if __name__ == '__main__':
                                 single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                           batch_labels[gpu_id], axis=0)
 
-                        train_accuracy = np.mean(
-                            [accuracy(train_predictions[gid], batch_labels[gid]) for gid in range(num_gpus)]) / 100.0
                         hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                           super_loss_vec,
                                                           min(research_parameters['hard_pool_max_threshold'],
@@ -1801,6 +1862,7 @@ if __name__ == '__main__':
                                                                     axis=0)
                             single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                       batch_labels[gpu_id], axis=0)
+
 
                     # Higer rates of accumulating data causes the pool to lose uniformity
                     if np.random.random()<0.05:
@@ -1898,6 +1960,7 @@ if __name__ == '__main__':
                         logger.info('\tLearning rate: %.5f' % start_lr)
 
                     logger.info('\tMinibatch Mean Loss: %.3f' % mean_train_loss)
+                    logger.info('\tTrain Accuracy: %.3f'%(train_accuracy*100))
                     logger.info('\tValidation Accuracy (Unseen): %.3f' % unseen_valid_accuracy)
                     logger.info('\tValidation accumulation rate %.3f', 0.5*(valid_acc_decay**epoch))
                     logger.info('\tCurrent adaptive Dropout: %.3f', current_adaptive_dropout)
@@ -1931,8 +1994,8 @@ if __name__ == '__main__':
 
                     # Logging error
                     prev_test_accuracy = current_test_accuracy
-                    error_logger.info('%d,%.3f,%.3f,%.3f',
-                                      global_batch_id, mean_train_loss,
+                    error_logger.info('%d,%.3f,%.3f,%.3f,%.3f',
+                                      global_batch_id, mean_train_loss, train_accuracy*100.0,
                                       unseen_valid_accuracy, np.mean(test_accuracies)
                                       )
                 # ====================================================================
@@ -2160,18 +2223,28 @@ if __name__ == '__main__':
 
 
         if adapt_structure:
-            session.run(tf_reset_cnn)
+
+            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.6)
+            logger.info('Obtained prune hyperparameters')
+            logger.info(pruned_hyps)
+            logger.info('='*80)
+
+            pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
+            session.run(tf_reset_cnn,feed_dict=pruned_feed_dict)
 
             for tmp_op in cnn_ops:
                 if 'conv' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
                         tf_weight_shape: init_cnn_hyperparameters[tmp_op]['weights']
                     })
+                    rolling_ativation_means[tmp_op] = np.zeros([init_cnn_hyperparameters[tmp_op]['weights'][3]])
                 elif 'fulcon' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
                         tf_in_size: init_cnn_hyperparameters[tmp_op]['in']
                     })
             cnn_hyperparameters = init_cnn_hyperparameters
+
+
             print(session.run(tf_cnn_hyperparameters))
             _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
 
