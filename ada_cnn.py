@@ -143,6 +143,8 @@ cnn_ops, cnn_hyperparameters = None, None
 state_action_history = []
 
 cnn_ops, cnn_hyperparameters = None, None
+tf_prune_cnn_hyperparameters = {}
+
 num_gpus = -1
 
 # Tensorflow Op / Variable related Python variables
@@ -1376,6 +1378,9 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
     del data_prior
     return new_data_prior
 
+#def init_tf_prune_cnn_hyperparameters():
+
+#def update_tf_prune_cnn_hyperparameters():
 
 if __name__ == '__main__':
 
@@ -2158,15 +2163,17 @@ if __name__ == '__main__':
             session.run(tf_reset_cnn)
 
             for tmp_op in cnn_ops:
-                if 'conv' in op:
+                if 'conv' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_weight_shape: init_cnn_hyperparameters[current_op]['weights']
+                        tf_weight_shape: init_cnn_hyperparameters[tmp_op]['weights']
                     })
-                elif 'fulcon' in op:
+                elif 'fulcon' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_in_size: init_cnn_hyperparameters[current_op]['in']
+                        tf_in_size: init_cnn_hyperparameters[tmp_op]['in']
                     })
             cnn_hyperparameters = init_cnn_hyperparameters
+            print(session.run(tf_cnn_hyperparameters))
+            _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
 
         # =======================================================
         # Decay learning rate (if set)

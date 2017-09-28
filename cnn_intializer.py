@@ -171,23 +171,39 @@ def reset_cnn_preserve_weights(cnn_hyps, cnn_ops):
         if 'conv' in op:
             with tf.variable_scope(op):
                 weights = tf.get_variable(name=TF_WEIGHTS)
+                # Out channel pruning
                 tr_weights = tf.transpose(weights,[3,0,1,2])
                 gathered_weights = tf.gather(tr_weights,[gi for gi in range(cnn_hyps[op]['weights'][3])])
                 gathered_weights = tf.transpose(gathered_weights,[1,2,3,0])
+
+                # in channel pruning
+                gathered_weights = tf.transpose(gathered_weights,[2,0,1,3])
+                gathered_weights = tf.gather(gathered_weights, [gi for gi in range(cnn_hyps[op]['weights'][2])])
+                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])
+
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
                 with tf.variable_scope(TF_WEIGHTS):
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
+                    # out channel pruning
                     tr_w_vel = tf.transpose(w_vel,[3,0,1,2])
                     gathered_w_vel = tf.gather(tr_w_vel,[gi for gi in range(cnn_hyps[op]['weights'][3])])
                     gathered_w_vel = tf.transpose(gathered_w_vel, [1,2,3,0])
+
+                    gathered_w_vel = tf.transpose(gathered_w_vel, [2,0,1,3])
+                    gathered_w_vel = tf.gather(gathered_w_vel, [gi for gi in range(cnn_hyps[op]['weights'][2])])
+                    gathered_w_vel = tf.transpose(gathered_w_vel, [1, 2, 0, 3])
 
                     pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
                     tr_pool_w_vel = tf.transpose(pool_w_vel, [3, 0, 1, 2])
                     gathered_pool_w_vel = tf.gather(tr_pool_w_vel, [gi for gi in range(cnn_hyps[op]['weights'][3])])
                     gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [1, 2, 3, 0])
+
+                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [2, 0, 1, 3])
+                    gathered_pool_w_vel = tf.gather(gathered_pool_w_vel, [gi for gi in range(cnn_hyps[op]['weights'][2])])
+                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [1, 2, 0, 3])
 
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
