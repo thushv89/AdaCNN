@@ -59,6 +59,7 @@ TOWER_NAME = constants.TOWER_NAME
 TF_ADAPTATION_NAME_SCOPE = constants.TF_ADAPTATION_NAME_SCOPE
 TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
 
+
 start_eps = None
 eps_decay = None
 valid_acc_decay = None
@@ -137,12 +138,14 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 10000
+n_iterations = 5000
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
 
 cnn_ops, cnn_hyperparameters = None, None
+tf_prune_cnn_hyperparameters = {}
+
 num_gpus = -1
 
 # Tensorflow Op / Variable related Python variables
@@ -192,6 +195,7 @@ adapt_period = None
 logger = None
 perf_logger = None
 
+tf_reset_cnn = None
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -412,7 +416,7 @@ def setup_loggers(adapt_structure):
     errHandler = logging.FileHandler(output_dir + os.sep + 'Error.log', mode='w')
     errHandler.setFormatter(logging.Formatter('%(message)s'))
     error_logger.addHandler(errHandler)
-    error_logger.info('#Batch_ID,Loss(Train),Valid(Unseen),Test Accuracy')
+    error_logger.info('#Batch_ID,Loss(Train),Train Accuracy, Valid(Unseen),Test Accuracy')
 
     perf_logger = logging.getLogger('time_logger')
     perf_logger.propagate = False
@@ -457,14 +461,22 @@ def setup_loggers(adapt_structure):
     pool_dist_logger = logging.getLogger('pool_distribution_logger')
     pool_dist_logger.propagate = False
     pool_dist_logger.setLevel(logging.INFO)
-    pool_handler = logging.FileHandler(output_dir + os.sep + 'pool_distribution.log', mode='w')
+    pool_handler = logging.FileHandler(output_dir + os.sep + 'pool_valid_distribution.log', mode='w')
     pool_handler.setFormatter(logging.Formatter('%(message)s'))
     pool_dist_logger.addHandler(pool_handler)
     pool_dist_logger.info('#Class distribution')
 
+    pool_ft_dist_logger = logging.getLogger('pool_distribution_logger')
+    pool_ft_dist_logger.propagate = False
+    pool_ft_dist_logger.setLevel(logging.INFO)
+    pool_ft_handler = logging.FileHandler(output_dir + os.sep + 'pool_ft_distribution.log', mode='w')
+    pool_ft_handler.setFormatter(logging.Formatter('%(message)s'))
+    pool_ft_dist_logger.addHandler(pool_ft_handler)
+    pool_ft_dist_logger.info('#Class distribution')
+
     return main_logger, perf_logger, \
            cnn_structure_logger, q_logger, class_dist_logger, \
-           pool_dist_logger, hyp_logger, error_logger
+           pool_dist_logger, pool_ft_dist_logger, hyp_logger, error_logger
 
 
 def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
@@ -476,7 +488,7 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
 
 def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global optimizer
-    global tf_train_data_batch, tf_train_label_batch, tf_data_weights
+    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_prune_cnn_hyperparameters
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions
@@ -644,8 +656,9 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='input_size')
 
+                init_tf_prune_cnn_hyperparameters()
 
-                #tf_reset_cnn = cnn_intializer.reset_cnn(init_cnn_hyperparameters)
+                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(tf_prune_cnn_hyperparameters,cnn_ops)
 
                 for tmp_op in cnn_ops:
                     if 'conv' in tmp_op:
@@ -1183,22 +1196,18 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
     '''
     if epoch == 0 and trial_phase<0.4:
         logger.info('Finetune phase')
-        trial_action_probs = [0.0 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
-        trial_action_probs.extend([0.3 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, .6])
+        trial_action_probs = [0.2 / (1.0 * n_conv) for _ in range(n_conv)]  # add
+        trial_action_probs.extend([0.26, .26, 0.28])
 
-    elif epoch == 0 and trial_phase>=0.4 and trial_phase < 1.0:
+    elif epoch == 0 and trial_phase >= 0.4 and trial_phase < 1.0:
         logger.info('Growth phase')
         # There is 0.1 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
-        remove_action_prob = 0.1*(10.0/11.0)
-        trial_action_probs_without_last = [remove_action_prob/(1.0*(n_conv-1)) for _ in range(n_conv-1)]
-        trial_action_probs = list(trial_action_probs_without_last) + [0.1-remove_action_prob]
-
+        trial_action_probs = []
         trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.25])
+        trial_action_probs.extend([0.13, 0.13, 0.14])
 
-    elif epoch==1 and trial_phase>=1.0 and trial_phase<1.7:
+    elif epoch == 2 and trial_phase >= 2.0 and trial_phase < 2.7:
         logger.info('Shrink phase')
         # There is 0.6 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
@@ -1206,14 +1215,13 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         trial_action_probs_without_last = [remove_action_prob / (1.0 * (n_conv - 1)) for _ in range(n_conv - 1)]
         trial_action_probs = list(trial_action_probs_without_last) + [0.6 - remove_action_prob]
 
-        trial_action_probs.extend([0.1 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.05, 0.25])
+        trial_action_probs.extend([0.13, 0.13, 0.14])
 
-    elif epoch==1 and trial_phase>=1.7 and trial_phase<2.0:
+    elif epoch == 2 and trial_phase >= 2.7 and trial_phase < 3.0:
         logger.info('Finetune phase')
-        trial_action_probs = [0.3 / (1.0 * n_conv) for _ in range(n_conv)]  # remove
-        trial_action_probs.extend([0.0 / (1.0 * n_conv) for _ in range(n_conv)])  # add
-        trial_action_probs.extend([0.1, 0.6])
+        trial_action_probs = []
+        trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.26, 0.26, 0.28])
 
     return trial_action_probs
 
@@ -1232,19 +1240,18 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
     '''
 
     adapting_now = None
-    if epoch == 0 or epoch == 1:
-        # Grow the network mostly (Until half) then fix
-        logger.info('Explore Stage')
+    if epoch == 0:
+        # Grow the network mostly (Exploration)
+        logger.info('Explorative Growth Stage')
         state, action, invalid_actions = q_learner.output_action_with_type(
             data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv)
         )
         adapting_now = True
-
     else:
         logger.info('Epsilon: %.3f',eps)
         if adaptation_period=='first':
             if local_trial_phase<=0.5:
-                logger.info('Greedy Adapting period of epoch')
+                logger.info('Greedy Pruning period of epoch (first)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Greedy')
@@ -1262,7 +1269,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
 
         elif adaptation_period == 'last':
             if local_trial_phase > 0.5:
-                logger.info('Greedy Adapting period of epoch')
+                logger.info('Greedy Pruning period of epoch (last)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Greedy')
@@ -1273,8 +1280,14 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                     )
                 adapting_now=True
             else:
-                logger.info('Not adapting period of epoch')
-                state, action, invalid_actions = q_learner.get_finetune_action(data)
+                logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
+                if np.random.random()<0.3:
+                    state, action, invalid_actions = q_learner.get_donothing_action()
+                elif np.random.random()<0.6:
+                    state, action, invalid_actions = q_learner.get_naivetrain_action()
+                else:
+                    state, action, invalid_actions = q_learner.get_finetune_action(data)
+
                 adapting_now = False
 
         elif adaptation_period =='both':
@@ -1289,6 +1302,19 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                     data, 'Stochastic'
                 )
             adapting_now = True
+
+        elif adaptation_period =='none':
+
+            logger.info('Greedy Adapting period of epoch (both)')
+            logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
+            if np.random.random() < 0.3:
+                state, action, invalid_actions = q_learner.get_donothing_action()
+            elif np.random.random() < 0.6:
+                state, action, invalid_actions = q_learner.get_naivetrain_action()
+            else:
+                state, action, invalid_actions = q_learner.get_finetune_action(data)
+
+            adapting_now = False
 
         else:
             raise NotImplementedError
@@ -1335,6 +1361,93 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
     return new_data_prior
 
 
+def init_tf_prune_cnn_hyperparameters():
+    '''
+    Initialize prune CNN hyperparameters with placeholders for each weight shape
+    :return:
+    '''
+    global tf_prune_cnn_hyperparameters
+
+    for op in cnn_ops:
+        if 'conv' in op:
+            tf_prune_cnn_hyperparameters[op] = {'weights':
+                                   tf.placeholder(shape=[4],dtype=tf.int32)
+                               }
+
+        if 'fulcon' in op:
+
+            tf_prune_cnn_hyperparameters[op] = {'in': tf.placeholder(shape=None, dtype=tf.int32),
+                               'out': tf.placeholder(shape=None, dtype=tf.int32)
+                                   }
+
+
+def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
+    '''
+    Get pruned hyperparameters by pruning the current architecture with a factor
+    Should look like below
+    pruned_cnn_hyps = {conv_0:{'weights':[x,y,z,w]},'fulcon_out':{'in':x,'out':y}}
+    :param current_cnn_hyperparams: Current CNN weight shapes
+    :param prune_factor: How much of the network is to prune
+    :return:
+    '''
+    global cnn_ops,first_fc,final_2d_width,model_hyperparameters
+    pruned_cnn_hyps = {}
+    prev_op = None
+    for op in cnn_ops:
+
+        if 'conv' in op:
+
+            if op=='conv_0':
+                pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
+                                       'stride': list(current_cnn_hyperparams[op]['stride']),
+                                       'padding': 'SAME'}
+                pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
+                                              int(pruned_cnn_hyps[op]['weights'][3]*prune_factor)])
+
+            else:
+                pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
+                                       'stride': list(current_cnn_hyperparams[op]['stride']),
+                                       'padding': 'SAME'}
+                pruned_cnn_hyps[op]['weights'][2] = pruned_cnn_hyps[prev_op]['weights'][3]
+                pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
+                                                         int(pruned_cnn_hyps[op]['weights'][3] * prune_factor)])
+            prev_op = op
+        if 'fulcon' in op:
+            if op==first_fc:
+                pruned_cnn_hyps[op] = {'in':current_cnn_hyperparams[op]['in'],
+                                       'out': current_cnn_hyperparams[op]['out']}
+                pruned_cnn_hyps[op]['in']=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op]['weights'][3]
+            else:
+                pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
+
+    return pruned_cnn_hyps
+
+
+def get_pruned_cnn_hyp_feed_dict(prune_hyps):
+    '''
+    Prepare the feed dict to be fed when running the pruning op
+    :param prune_hyps:
+    :return:
+    '''
+    global tf_prune_cnn_hyperparameters,cnn_ops
+    feed_dict = {}
+    for op in cnn_ops:
+        if 'conv' in op:
+            feed_dict.update(
+                {tf_prune_cnn_hyperparameters[op]['weights']:
+                     prune_hyps[op]['weights']}
+            )
+        if 'fulcon' in op:
+            feed_dict.update(
+                {tf_prune_cnn_hyperparameters[op]['in']:
+                 prune_hyps[op]['in']}
+            )
+            feed_dict.update(
+                {tf_prune_cnn_hyperparameters[op]['out']:
+                     prune_hyps[op]['out']}
+            )
+
+    return feed_dict
 if __name__ == '__main__':
 
     # Various run-time arguments specified
@@ -1379,7 +1492,7 @@ if __name__ == '__main__':
 
     # Setting up loggers
     logger, perf_logger, cnn_structure_logger, \
-    q_logger, class_dist_logger, pool_dist_logger, \
+    q_logger, class_dist_logger, pool_dist_logger, pool_dist_ft_logger, \
     hyp_logger, error_logger = setup_loggers(adapt_structure)
 
     logger.info('Created loggers')
@@ -1484,11 +1597,16 @@ if __name__ == '__main__':
 
 
     if research_parameters['adapt_structure']:
+
+        # Pruning hyperparameter initialization
+
+        print(tf_prune_cnn_hyperparameters)
+
         # Adapting Policy Learner
         current_adaptive_dropout = get_adaptive_dropout()
-        state_history_length = 4
-        adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            discount_rate=0.9, fit_interval=1,
+        state_history_length = 2
+        growth_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
+            qlearner_type='growth', discount_rate=0.5, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, net_depth=layer_count,
@@ -1500,7 +1618,24 @@ if __name__ == '__main__':
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'], remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
-            trial_phase_threshold=1.0
+            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
+        )
+
+        prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
+            qlearner_type='prune', discount_rate=0.5, fit_interval=1,
+            exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
+            filter_vector=filter_vector,
+            conv_ids=convolution_op_ids, net_depth=layer_count,
+            n_conv=len([op for op in cnn_ops if 'conv' in op]),
+            epsilon=0.5, target_update_rate=20,
+            batch_size=32, persist_dir=output_dir,
+            session=session, random_mode=False,
+            state_history_length=state_history_length,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
+            rand_state_length=32, add_amount=model_hyperparameters['add_amount'],
+            remove_amount=model_hyperparameters['remove_amount'],
+            num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
+            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
         )
 
     # Running initialization opeartion
@@ -1580,10 +1715,22 @@ if __name__ == '__main__':
 
     n_iter_per_task = n_iterations//n_tasks
 
+    running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
+    binned_data_dist_decay = 0.5
+
+    current_action_type = growth_adapter.get_naivetrain_action_type() if adapt_structure else None
+
     for epoch in range(n_epochs):
+
+        if adapt_structure:
+            adapter = growth_adapter
+
 
         for task in range(n_tasks):
 
+            # We set the max pool accuracy to zero at the begining of each task.
+            # Because in my opinion, pool accuracy treats each task differently
+            # max_pool_accuracy = 0.0
             if np.random.random()<0.6:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
@@ -1639,6 +1786,13 @@ if __name__ == '__main__':
                         class_dist_logger.info('%d,%s', batch_id, dist_str)
 
                     cnt = Counter(np.argmax(batch_labels[-1], axis=1))
+                    label_count_sorted = np.asarray([cnt[ci] if ci in cnt.keys() else 0.0 for ci in range(num_labels)])*1.0/batch_size
+                    if model_hyperparameters['binned_data_dist_length'] != num_labels:
+                        split_label_count_sorted = np.split(label_count_sorted,model_hyperparameters['binned_data_dist_length'])
+                        label_count_sorted = np.asarray([np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted])
+
+                    running_binned_data_dist_vector = binned_data_dist_decay * np.asarray(label_count_sorted) + (1.0-binned_data_dist_decay) * running_binned_data_dist_vector
+
                     if behavior == 'non-stationary':
                         batch_w = np.zeros((batch_size,))
                         batch_labels_int = np.argmax(batch_labels[-1], axis=1)
@@ -1669,12 +1823,14 @@ if __name__ == '__main__':
                      tf_mean_activation, tower_predictions], feed_dict=train_feed_dict
                 )
 
+                train_accuracy = np.mean(
+                    [accuracy(train_predictions[gid], batch_labels[gid]) for gid in range(num_gpus)]) / 100.0
                 # =========================================================
 
                 # ==========================================================
                 # Updating Pools of data
 
-                if np.random.random()<0.1*(valid_acc_decay**(epoch)):
+                if np.random.random()<0.05*(valid_acc_decay**(epoch)):
                     if adapt_structure or rigid_pooling:
 
                         # Concatenate current 'num_gpus' batches to a single matrix
@@ -1690,12 +1846,10 @@ if __name__ == '__main__':
                                 single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                           batch_labels[gpu_id], axis=0)
 
-                        train_accuracy = np.mean(
-                            [accuracy(train_predictions[gid], batch_labels[gid]) for gid in range(num_gpus)]) / 100.0
                         hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                           super_loss_vec,
                                                           min(research_parameters['hard_pool_max_threshold'],
-                                                              max(0.1, (1.0 - train_accuracy))))
+                                                              max(0.01, (1.0 - train_accuracy))))
 
                         logger.debug('Pooling data summary')
                         logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
@@ -1717,19 +1871,21 @@ if __name__ == '__main__':
                             single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                       batch_labels[gpu_id], axis=0)
 
+
                     # Higer rates of accumulating data causes the pool to lose uniformity
-                    if np.random.random()<0.1:
+                    if np.random.random()<0.05:
                         hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                        super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
-                                                                  max(0.1, (1.0 - train_accuracy))))
+                                                                  max(0.01, (1.0 - train_accuracy))))
                         logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
                     # =========================================================
                     # # Training Phase (Optimization)
-                    for _ in range(iterations_per_batch):
-                        _, _ = session.run(
-                            [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                        )
+                    if (not adapt_structure) or current_action_type != adapter.get_donothing_action_type():
+                        for _ in range(iterations_per_batch):
+                            _, _ = session.run(
+                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                            )
 
                 t1_train = time.clock()
 
@@ -1812,6 +1968,7 @@ if __name__ == '__main__':
                         logger.info('\tLearning rate: %.5f' % start_lr)
 
                     logger.info('\tMinibatch Mean Loss: %.3f' % mean_train_loss)
+                    logger.info('\tTrain Accuracy: %.3f'%(train_accuracy*100))
                     logger.info('\tValidation Accuracy (Unseen): %.3f' % unseen_valid_accuracy)
                     logger.info('\tValidation accumulation rate %.3f', 0.5*(valid_acc_decay**epoch))
                     logger.info('\tCurrent adaptive Dropout: %.3f', current_adaptive_dropout)
@@ -1845,8 +2002,8 @@ if __name__ == '__main__':
 
                     # Logging error
                     prev_test_accuracy = current_test_accuracy
-                    error_logger.info('%d,%.3f,%.3f,%.3f',
-                                      global_batch_id, mean_train_loss,
+                    error_logger.info('%d,%.3f,%.3f,%.3f,%.3f',
+                                      global_batch_id, mean_train_loss, train_accuracy*100.0,
                                       unseen_valid_accuracy, np.mean(test_accuracies)
                                       )
                 # ====================================================================
@@ -1904,7 +2061,7 @@ if __name__ == '__main__':
                     # ==================================================================
                     # Actual Adaptations
                     if (start_adapting and not stop_adapting) and batch_id > 0 and \
-                                            batch_id % interval_parameters['policy_interval'] == 0:
+                                            batch_id % interval_parameters['policy_interval'] == 4:
 
                         # ==================================================================
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
@@ -1930,7 +2087,7 @@ if __name__ == '__main__':
 
                             p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
                             pool_acc_queue.append(p_accuracy)
-                            if len(pool_acc_queue) > state_history_length + 1:
+                            if len(pool_acc_queue) > 20:
                                 del pool_acc_queue[0]
                             # ===============================================================================
 
@@ -1986,11 +2143,12 @@ if __name__ == '__main__':
                                 utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
                             )
 
-                            q_logger.info('%d,%.5f', global_batch_id, adapter.get_average_Q())
+                            # The growth adapter has the random states for Q_eval^rand
+                            q_logger.info('%d,%.5f', global_batch_id, growth_adapter.get_average_Q())
 
                             logger.debug('Resetting both data distribution means')
 
-                            max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
+                            max_pool_accuracy = max(max(pool_acc_queue), p_accuracy)
                             prev_pool_accuracy = p_accuracy
 
                         # ===================================================================================
@@ -2005,21 +2163,24 @@ if __name__ == '__main__':
                                 filter_dict[op_i] = 0
                                 filter_list.append(0)
 
-                        # current_state, current_action, curr_invalid_actions = adapter.output_action(
-                        #    {'filter_counts': filter_dict, 'filter_counts_list': filter_list})
+                        # For epoch 0 and 1
+                        # Epoch 0: Randomly grow the network
+                        # Epoch 1: Deterministically grow the network
                         current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
-                            adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list}, epoch=epoch,
+                            adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list, 'binned_data_dist':running_binned_data_dist_vector.tolist()}, epoch=epoch,
                             global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids),
                             eps=start_eps, adaptation_period=adapt_period)
 
-                        adapter.update_trial_phase(global_trial_phase)
+                        current_action_type = adapter.get_action_type_with_action_list(current_action)
+                        # reset the binned data distribution
+                        running_binned_data_dist_vector = np.zeros(
+                            (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
+
 
                         for li, la in enumerate(current_action):
                             # pooling and fulcon layers
                             if la is None or la[0] == 'do_nothing':
                                 continue
-
-                            logger.info('Got state: %s, action: %s', str(current_state), str(la))
 
                             # where all magic happens (adding and removing filters)
                             si, ai = current_state, la
@@ -2042,6 +2203,7 @@ if __name__ == '__main__':
                                 # pooling takes place here
                                 run_actual_finetune_operation(hard_pool_ft)
                                 break
+
                         # =============================================================
 
                     if batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0:
@@ -2055,11 +2217,42 @@ if __name__ == '__main__':
 
                         pool_dist_logger.info('%s%d', pool_dist_string, hard_pool_valid.get_size())
 
+                        pool_dist_string = ''
+                        for val in hard_pool_ft.get_class_distribution():
+                            pool_dist_string += str(val) + ','
+
+                        pool_dist_ft_logger.info('%s%d', pool_dist_string, hard_pool_ft.get_size())
+
                     t1 = time.clock()
                     op_count = len(tf.get_default_graph().get_operations())
                     var_count = len(tf.global_variables()) + len(tf.local_variables()) + len(tf.model_variables())
                     perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
                                      (t1_train - t0_train) / num_gpus, op_count, var_count)
+
+        if adapt_structure:
+
+            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.5)
+            logger.info('Obtained prune hyperparameters')
+            logger.info(pruned_hyps)
+            logger.info('='*80)
+
+            pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
+            session.run(tf_reset_cnn,feed_dict=pruned_feed_dict)
+
+            for tmp_op in cnn_ops:
+                if 'conv' in tmp_op:
+                    session.run(tf_update_hyp_ops[tmp_op], feed_dict={
+                        tf_weight_shape: pruned_hyps[tmp_op]['weights']
+                    })
+                    rolling_ativation_means[tmp_op] = np.zeros([pruned_hyps[tmp_op]['weights'][3]])
+                elif 'fulcon' in tmp_op:
+                    session.run(tf_update_hyp_ops[tmp_op], feed_dict={
+                        tf_in_size: pruned_hyps[tmp_op]['in']
+                    })
+            cnn_hyperparameters = pruned_hyps
+
+            print(session.run(tf_cnn_hyperparameters))
+            _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
 
         # =======================================================
         # Decay learning rate (if set)
@@ -2071,7 +2264,7 @@ if __name__ == '__main__':
         if research_parameters['adapt_structure']:
             if epoch > 1:
                 start_eps = max([start_eps*eps_decay,0.1])
-                adapt_period = np.random.choice(['first','last','both'])
+                adapt_period = np.random.choice(['first','last','both','none'])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
         else:

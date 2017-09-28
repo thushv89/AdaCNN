@@ -143,7 +143,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
         model_hyperparameters['n_tasks'] = 2
-
+        model_hyperparameters['binned_data_dist_length'] = 10
     elif dataset_name== 'imagenet-250':
 
         pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
@@ -164,6 +164,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_min_threshold = 24
             add_amount, remove_amount = 8, 4
         model_hyperparameters['n_tasks'] = 10
+        model_hyperparameters['binned_data_dist_length'] = 25
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
@@ -177,6 +178,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             add_amount, remove_amount = 4, 2
             filter_min_threshold = 12
         model_hyperparameters['n_tasks'] = 4
+        model_hyperparameters['binned_data_dist_length'] = 10
+
     model_hyperparameters['cnn_string'] = cnn_string
 
     if adapt_structure or use_pooling:
