@@ -34,6 +34,8 @@ datatype,behavior = None,None
 dataset_dir,output_dir = None,None
 adapt_structure = False
 rigid_pooling = False
+rigid_pool_type = None
+rigid_naive = False
 
 interval_parameters, research_parameters, model_hyperparameters, dataset_info = None, None, None, None
 image_size, num_channels = None,None
@@ -1402,6 +1404,7 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
     for op in cnn_ops:
         if 'pool' in op:
             pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
+
         if 'conv' in op:
 
             if op=='conv_0':
@@ -1491,11 +1494,16 @@ if __name__ == '__main__':
                 adapt_structure = bool(int(arg))
             if opt == '--rigid_pooling':
                 rigid_pooling = bool(int(arg))
+            if opt == '--rigid_pool_type':
+                rigid_pool_type = str(arg)
             if opt == '--use_multiproc':
                 use_multiproc = bool(arg)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
+
+    if not (adapt_structure or rigid_pooling):
+        rigid_naive = True
 
     # Setting up loggers
     logger, perf_logger, cnn_structure_logger, \
@@ -1507,13 +1515,15 @@ if __name__ == '__main__':
     logger.info('Created Output directory: %s', output_dir)
     logger.info('Received all the required user arguments at Runtime')
     logger.debug('Output DIR: %s', output_dir)
-    logger.debug('Number of GPUs: %d', num_gpus)
-    logger.debug('Memory fraction per GPU: %.3f', mem_frac)
-    logger.debug('Number of pool workers for MultiProcessing: %d', pool_workers)
-    logger.debug('Dataset Name: %s', datatype)
-    logger.debug('Data Behavior: %s', behavior)
-    logger.debug('Use AdaCNN: %d', adapt_structure)
-    logger.debug('Use rigid pooling: %d', rigid_pooling)
+    logger.info('Number of GPUs: %d', num_gpus)
+    logger.info('Memory fraction per GPU: %.3f', mem_frac)
+    logger.info('Number of pool workers for MultiProcessing: %d', pool_workers)
+    logger.info('Dataset Name: %s', datatype)
+    logger.info('Data Behavior: %s', behavior)
+    logger.info('Use AdaCNN: %d', adapt_structure)
+    logger.info('Use rigid pooling: %d', rigid_pooling)
+    logger.info('Use rigid naive: %d',rigid_naive)
+
     # =====================================================================
     # VARIOS SETTING UPS
     # SET FROM MAIN FUNCTIONS OF OTHER CLASSES
@@ -1837,8 +1847,10 @@ if __name__ == '__main__':
                 # ==========================================================
                 # Updating Pools of data
 
-                if np.random.random()<0.05*(valid_acc_decay**(epoch)):
-                    if adapt_structure or rigid_pooling:
+                # This if condition get triggered stochastically for AdaCNN
+                # Always for rigid_pooling
+                if (adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch))) or\
+                        (not adapt_structure):
 
                         # Concatenate current 'num_gpus' batches to a single matrix
                         single_iteration_batch_data, single_iteration_batch_labels = None, None
@@ -1853,10 +1865,15 @@ if __name__ == '__main__':
                                 single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                           batch_labels[gpu_id], axis=0)
 
-                        hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                          super_loss_vec,
-                                                          min(research_parameters['hard_pool_max_threshold'],
-                                                              max(0.01, (1.0 - train_accuracy))))
+                        if adapt_structure or rigid_pool_type=='smart':
+                            hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
+                                                              super_loss_vec,
+                                                              min(research_parameters['hard_pool_max_threshold'],
+                                                                  max(0.01, (1.0 - train_accuracy))))
+
+                        elif rigid_pooling and rigid_pool_type=='naive':
+                            hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
+                                                              super_loss_vec,1.0)
 
                         logger.debug('Pooling data summary')
                         logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
@@ -1948,15 +1965,18 @@ if __name__ == '__main__':
 
                     logger.info('Pooling for non-adaptive CNN')
 
-                    if research_parameters['adapt_structure']:
+                    if adapt_structure:
                         logger.info('Adaptations stopped. Finetune is at its maximum utility (Batch: %d)' % (
                         global_batch_id))
 
                         logger.info('Using dropout rate of: %.3f', dropout_rate)
 
-                    # ===============================================================
-                    # Finetune with data in hard_pool_ft
-                    fintune_with_pool_ft(hard_pool_ft)
+                        # ===============================================================
+                        # Finetune with data in hard_pool_ft (AdaCNN)
+                        fintune_with_pool_ft(hard_pool_ft)
+                    elif rigid_pooling:
+                        fintune_with_pool_ft(hard_pool_valid)
+
                     # =================================================================
                     # Calculate pool accuracy (hard_pool_valid)
                     mean_pool_accuracy = get_pool_valid_accuracy(hard_pool_valid)
@@ -2046,23 +2066,7 @@ if __name__ == '__main__':
                         # without if can give problems in exploratory stage because of no data in the pool
                         if hard_pool_ft.get_size() > batch_size:
                             # Train with latter half of the data
-                            for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-                                if np.random.random() < research_parameters['finetune_rate']:
-                                    pool_feed_dict = {}
-                                    pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-                                    for gpu_id in range(num_gpus):
-                                        pbatch_data = pool_dataset[
-                                                      (pool_id + gpu_id) * batch_size:
-                                                      (pool_id + gpu_id + 1) * batch_size, :, :, :]
-                                        pbatch_labels = pool_labels[
-                                                        (pool_id + gpu_id) * batch_size:
-                                                        (pool_id + gpu_id + 1) * batch_size,:]
-
-                                        pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                                               tf_pool_label_batch[gpu_id]: pbatch_labels})
-
-                                    _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                                       feed_dict=pool_feed_dict)
+                            fintune_with_pool_ft(hard_pool_ft)
                     # ==================================================================
 
                     # ==================================================================
