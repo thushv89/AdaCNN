@@ -37,7 +37,7 @@ rigid_pooling = False
 
 interval_parameters, research_parameters, model_hyperparameters, dataset_info = None, None, None, None
 image_size, num_channels = None,None
-n_epochs, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation = None,None,None,None,None,None,None
+n_epochs, n_iterations, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation = None,None,None,None,None,None,None,None
 cnn_string, filter_vector = None,None
 
 batch_size = None
@@ -68,7 +68,7 @@ n_tasks = None
 def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling):
     global interval_parameters, model_hyperparameters, research_parameters, dataset_info, cnn_string, filter_vector
     global image_size, num_channels
-    global n_epochs, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation
+    global n_epochs, n_iterations, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation
     global start_lr, decay_learning_rate, decay_rate, decay_steps
     global batch_size, beta, include_l2_loss
     global use_dropout, in_dropout_rate, dropout_rate, current_adaptive_dropout
@@ -93,6 +93,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters = cnn_hyperparameters_getter.get_model_specific_hyperparameters(datatype, dataset_behavior, adapt_structure, rigid_pooling, dataset_info['n_labels'])
 
     n_epochs = model_hyperparameters['epochs']
+    n_iterations = model_hyperparameters['n_iterations']
 
     iterations_per_batch = model_hyperparameters['iterations_per_batch']
 
@@ -138,7 +139,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 5000
+
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -1264,7 +1265,12 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
 
             else:
                 logger.info('Greedy Not adapting period of epoch')
-                state, action, invalid_actions = q_learner.get_finetune_action(data)
+                if np.random.random() < 0.3:
+                    state, action, invalid_actions = q_learner.get_donothing_action(data)
+                elif np.random.random() < 0.6:
+                    state, action, invalid_actions = q_learner.get_naivetrain_action(data)
+                else:
+                    state, action, invalid_actions = q_learner.get_finetune_action(data)
                 adapting_now = False
 
         elif adaptation_period == 'last':
@@ -1282,9 +1288,9 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
             else:
                 logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
                 if np.random.random()<0.3:
-                    state, action, invalid_actions = q_learner.get_donothing_action()
+                    state, action, invalid_actions = q_learner.get_donothing_action(data)
                 elif np.random.random()<0.6:
-                    state, action, invalid_actions = q_learner.get_naivetrain_action()
+                    state, action, invalid_actions = q_learner.get_naivetrain_action(data)
                 else:
                     state, action, invalid_actions = q_learner.get_finetune_action(data)
 
@@ -1308,9 +1314,9 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
             logger.info('Greedy Adapting period of epoch (both)')
             logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
             if np.random.random() < 0.3:
-                state, action, invalid_actions = q_learner.get_donothing_action()
+                state, action, invalid_actions = q_learner.get_donothing_action(data)
             elif np.random.random() < 0.6:
-                state, action, invalid_actions = q_learner.get_naivetrain_action()
+                state, action, invalid_actions = q_learner.get_naivetrain_action(data)
             else:
                 state, action, invalid_actions = q_learner.get_finetune_action(data)
 
@@ -1394,7 +1400,8 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
     pruned_cnn_hyps = {}
     prev_op = None
     for op in cnn_ops:
-
+        if 'pool' in op:
+            pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
         if 'conv' in op:
 
             if op=='conv_0':
