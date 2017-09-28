@@ -1503,7 +1503,7 @@ if __name__ == '__main__':
         current_adaptive_dropout = get_adaptive_dropout()
         state_history_length = 4
         growth_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            qlearner_type='growth', discount_rate=0.9, fit_interval=1,
+            qlearner_type='growth', discount_rate=0.8, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, net_depth=layer_count,
@@ -1519,7 +1519,7 @@ if __name__ == '__main__':
         )
 
         prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            qlearner_type='prune', discount_rate=0.9, fit_interval=1,
+            qlearner_type='prune', discount_rate=0.8, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, net_depth=layer_count,
@@ -1629,7 +1629,7 @@ if __name__ == '__main__':
 
             # We set the max pool accuracy to zero at the begining of each task.
             # Because in my opinion, pool accuracy treats each task differently
-            max_pool_accuracy = 0.0
+            # max_pool_accuracy = 0.0
             if np.random.random()<0.6:
                 research_parameters['momentum']=0.9
                 research_parameters['pool_momentum']=0.0
@@ -1984,7 +1984,7 @@ if __name__ == '__main__':
 
                             p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
                             pool_acc_queue.append(p_accuracy)
-                            if len(pool_acc_queue) > state_history_length + 1:
+                            if len(pool_acc_queue) > 20:
                                 del pool_acc_queue[0]
                             # ===============================================================================
 
@@ -2045,7 +2045,7 @@ if __name__ == '__main__':
 
                             logger.debug('Resetting both data distribution means')
 
-                            max_pool_accuracy = max(max_pool_accuracy, p_accuracy)
+                            max_pool_accuracy = max(max(pool_acc_queue), p_accuracy)
                             prev_pool_accuracy = p_accuracy
 
                         # ===================================================================================

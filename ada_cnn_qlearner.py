@@ -1148,14 +1148,16 @@ class AdaCNNAdaptingQLearner(object):
         # Turned off 28/09/2017
         #mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
         #                ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
-        accuracy_push_reward = 1.0/self.num_classes if (data['prev_pool_accuracy'] - data['pool_accuracy'])<= 1.0/self.num_classes \
-            else (data['prev_pool_accuracy'] - data['pool_accuracy'])
+        accuracy_push_reward = 1.0/self.num_classes if (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0<= 1.0/self.num_classes \
+            else (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0
 
         mean_accuracy = accuracy_push_reward if data['pool_accuracy'] > data['max_pool_accuracy'] else -accuracy_push_reward
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
         self.verbose_logger.info('Complexity penalty: %.5f', comp_gain)
+        self.verbose_logger.info('Pool Accuracy: %.5f ', mean_accuracy)
+        self.verbose_logger.info('Max Pool Accuracy: %.5f ', data['max_pool_accuracy'])
 
         aux_penalty, prev_aux_penalty = 0, 0
         for li, la in enumerate(ai_list):
