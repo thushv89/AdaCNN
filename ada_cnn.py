@@ -137,7 +137,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 10000
+n_iterations = 1000
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -192,6 +192,7 @@ adapt_period = None
 logger = None
 perf_logger = None
 
+tf_reset_cnn = None
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -484,7 +485,7 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
 
 def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global optimizer
-    global tf_train_data_batch, tf_train_label_batch, tf_data_weights
+    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions
@@ -652,8 +653,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='input_size')
 
-
-                #tf_reset_cnn = cnn_intializer.reset_cnn(init_cnn_hyperparameters)
+                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(init_cnn_hyperparameters,cnn_ops)
 
                 for tmp_op in cnn_ops:
                     if 'conv' in tmp_op:
@@ -1319,6 +1319,19 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                 )
             adapting_now = True
 
+        elif adaptation_period =='none':
+
+            logger.info('Greedy Adapting period of epoch (both)')
+            logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
+            if np.random.random() < 0.3:
+                state, action, invalid_actions = q_learner.get_donothing_action()
+            elif np.random.random() < 0.6:
+                state, action, invalid_actions = q_learner.get_naivetrain_action()
+            else:
+                state, action, invalid_actions = q_learner.get_finetune_action(data)
+
+            adapting_now = False
+
         else:
             raise NotImplementedError
 
@@ -1741,7 +1754,7 @@ if __name__ == '__main__':
                 # ==========================================================
                 # Updating Pools of data
 
-                if np.random.random()<0.1*(valid_acc_decay**(epoch)):
+                if np.random.random()<0.05*(valid_acc_decay**(epoch)):
                     if adapt_structure or rigid_pooling:
 
                         # Concatenate current 'num_gpus' batches to a single matrix
@@ -1762,7 +1775,7 @@ if __name__ == '__main__':
                         hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                           super_loss_vec,
                                                           min(research_parameters['hard_pool_max_threshold'],
-                                                              max(0.1, (1.0 - train_accuracy))))
+                                                              max(0.01, (1.0 - train_accuracy))))
 
                         logger.debug('Pooling data summary')
                         logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
@@ -1785,10 +1798,10 @@ if __name__ == '__main__':
                                                                       batch_labels[gpu_id], axis=0)
 
                     # Higer rates of accumulating data causes the pool to lose uniformity
-                    if np.random.random()<0.1:
+                    if np.random.random()<0.05:
                         hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                        super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
-                                                                  max(0.1, (1.0 - train_accuracy))))
+                                                                  max(0.01, (1.0 - train_accuracy))))
                         logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
                     # =========================================================
@@ -2140,6 +2153,21 @@ if __name__ == '__main__':
                     perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
                                      (t1_train - t0_train) / num_gpus, op_count, var_count)
 
+
+        if adapt_structure:
+            session.run(tf_reset_cnn)
+
+            for tmp_op in cnn_ops:
+                if 'conv' in op:
+                    session.run(tf_update_hyp_ops[tmp_op], feed_dict={
+                        tf_weight_shape: init_cnn_hyperparameters[current_op]['weights']
+                    })
+                elif 'fulcon' in op:
+                    session.run(tf_update_hyp_ops[tmp_op], feed_dict={
+                        tf_in_size: init_cnn_hyperparameters[current_op]['in']
+                    })
+            cnn_hyperparameters = init_cnn_hyperparameters
+
         # =======================================================
         # Decay learning rate (if set)
         if (research_parameters['adapt_structure'] or research_parameters['pooling_for_nonadapt']) and decay_learning_rate and epoch > 1:
@@ -2150,7 +2178,7 @@ if __name__ == '__main__':
         if research_parameters['adapt_structure']:
             if epoch > 1:
                 start_eps = max([start_eps*eps_decay,0.1])
-                adapt_period = np.random.choice(['first','last','both'])
+                adapt_period = np.random.choice(['first','last','both','none'])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
         else:

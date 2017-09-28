@@ -141,7 +141,7 @@ def add_with_action(
 def get_rm_indices_with_distance(op, tf_action_info, tf_cnn_hyperparameters):
     amount_to_rmv = tf_action_info[2]
     with tf.variable_scope(op) as scope:
-        w = tf.get_variable(TF_WEIGHTS)  # hxwxinxout
+        w = tf.get_variable(TF_WEIGHTS)  # h x w x in x out
         reshaped_weight = tf.transpose(w, [3, 0, 1, 2])
         reshaped_weight = tf.reshape(w, [tf_cnn_hyperparameters[op]['weights'][3],
                                          tf_cnn_hyperparameters[op]['weights'][0] *
