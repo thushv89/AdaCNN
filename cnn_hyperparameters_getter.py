@@ -98,7 +98,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
-    model_hyperparameters['epochs'] = 20
+    model_hyperparameters['epochs'] = 10
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
@@ -135,7 +135,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 10
     elif dataset_name== 'imagenet-250':
-
+        model_hyperparameters['epochs'] = 8
         pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
 
         if not adapt_structure:
@@ -196,7 +196,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 25
 
     elif dataset_name == 'cifar-100':
 
@@ -206,7 +206,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 15
 
     elif dataset_name == 'imagenet-250':
         image_size = 128
@@ -215,7 +215,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 300000
         test_size = 12500
         n_slices = 10
-        fluctuation = 5
+        fluctuation = 10
         resize_to = 64
 
     elif dataset_name == 'svhn-10':
@@ -226,7 +226,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 73257
         test_size = 26032
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 25
 
     else:
         raise NotImplementedError
