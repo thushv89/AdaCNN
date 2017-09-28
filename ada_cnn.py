@@ -58,7 +58,7 @@ TF_GLOBAL_SCOPE = constants.TF_GLOBAL_SCOPE
 TOWER_NAME = constants.TOWER_NAME
 TF_ADAPTATION_NAME_SCOPE = constants.TF_ADAPTATION_NAME_SCOPE
 TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
-TF_CONV_WEIGHT_SHAPE_STR = constants.TF_CONV_WEIGHT_SHAPE_STR
+
 
 start_eps = None
 eps_decay = None
@@ -138,7 +138,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-n_iterations = 5000
+n_iterations = 600
 cnn_ops, cnn_hyperparameters = None, None
 
 state_action_history = []
@@ -655,6 +655,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='input_size')
+
+                init_tf_prune_cnn_hyperparameters()
 
                 tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(tf_prune_cnn_hyperparameters,cnn_ops)
 
@@ -1245,28 +1247,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
             data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv)
         )
         adapting_now = True
-    elif epoch == 1:
-        # Grow the network mostly (Exploration)
-        logger.info('Deterministic Growth Stage')
-
-        if np.random.random() >= eps:
-            state, action, invalid_actions = q_learner.output_action_with_type(
-                data, 'Greedy')
-
-        else:
-            state, action, invalid_actions = q_learner.output_action_with_type(
-                data, 'Stochastic'
-            )
-        adapting_now = True
-    elif epoch == 2:
-        # Grow the network mostly (Exploration)
-        logger.info('Explorative Pruning Stage')
-        state, action, invalid_actions = q_learner.output_action_with_type(
-            data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv)
-        )
-        adapting_now = True
     else:
-
         logger.info('Epsilon: %.3f',eps)
         if adaptation_period=='first':
             if local_trial_phase<=0.5:
@@ -1379,63 +1360,92 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
     del data_prior
     return new_data_prior
 
+
 def init_tf_prune_cnn_hyperparameters():
+    '''
+    Initialize prune CNN hyperparameters with placeholders for each weight shape
+    :return:
+    '''
     global tf_prune_cnn_hyperparameters
 
     for op in cnn_ops:
         if 'conv' in op:
-            tf_prune_cnn_hyperparameters[op] = {TF_CONV_WEIGHT_SHAPE_STR:
-                                   tf.placeholder(shape=None,dtype=tf.int32)
+            tf_prune_cnn_hyperparameters[op] = {'weights':
+                                   tf.placeholder(shape=[4],dtype=tf.int32)
                                }
 
         if 'fulcon' in op:
 
-            tf_prune_cnn_hyperparameters[op] = {TF_FC_WEIGHT_IN_STR: tf.placeholder(shape=None, dtype=tf.int32),
-                               TF_FC_WEIGHT_OUT_STR: tf.placeholder(shape=None, dtype=tf.int32)
+            tf_prune_cnn_hyperparameters[op] = {'in': tf.placeholder(shape=None, dtype=tf.int32),
+                               'out': tf.placeholder(shape=None, dtype=tf.int32)
                                    }
 
+
 def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
-    global cnn_ops,first_fc,final_2d_width
+    '''
+    Get pruned hyperparameters by pruning the current architecture with a factor
+    Should look like below
+    pruned_cnn_hyps = {conv_0:{'weights':[x,y,z,w]},'fulcon_out':{'in':x,'out':y}}
+    :param current_cnn_hyperparams: Current CNN weight shapes
+    :param prune_factor: How much of the network is to prune
+    :return:
+    '''
+    global cnn_ops,first_fc,final_2d_width,model_hyperparameters
     pruned_cnn_hyps = {}
     prev_op = None
     for op in cnn_ops:
+        print(current_cnn_hyperparams)
+        print(pruned_cnn_hyps)
         if 'conv' in op:
+            print(prev_op)
             if op=='conv_0':
-                pruned_cnn_hyps[op] = list(current_cnn_hyperparams[op][TF_CONV_WEIGHT_SHAPE_STR])
-                pruned_cnn_hyps[op][3] = int(pruned_cnn_hyps[op][3]*prune_factor)
-                prev_op = op
+                pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
+                                       'stride': list(current_cnn_hyperparams[op]['stride']),
+                                       'padding': 'SAME'}
+                pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
+                                              int(pruned_cnn_hyps[op]['weights'][3]*prune_factor)])
+
             else:
-                pruned_cnn_hyps[op] = list(current_cnn_hyperparams[op][TF_CONV_WEIGHT_SHAPE_STR])
-                pruned_cnn_hyps[op][2] = pruned_cnn_hyps[prev_op][TF_CONV_WEIGHT_SHAPE_STR][3]
-                pruned_cnn_hyps[op][3] = int(pruned_cnn_hyps[op][3] * prune_factor)
-                prev_op = op
+                pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
+                                       'stride': list(current_cnn_hyperparams[op]['stride']),
+                                       'padding': 'SAME'}
+                pruned_cnn_hyps[op]['weights'][2] = pruned_cnn_hyps[prev_op]['weights'][3]
+                pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
+                                                         int(pruned_cnn_hyps[op]['weights'][3] * prune_factor)])
+            prev_op = op
         if 'fulcon' in op:
             if op==first_fc:
-                pruned_cnn_hyps[op] = {TF_FC_WEIGHT_IN_STR:current_cnn_hyperparams[op][TF_FC_WEIGHT_IN_STR],
-                                       TF_FC_WEIGHT_OUT_STR: current_cnn_hyperparams[op][TF_FC_WEIGHT_OUT_STR]}
-                pruned_cnn_hyps[op][TF_FC_WEIGHT_IN_STR]=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op][3]
+                pruned_cnn_hyps[op] = {'in':current_cnn_hyperparams[op]['in'],
+                                       'out': current_cnn_hyperparams[op]['out']}
+                pruned_cnn_hyps[op]['in']=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op]['weights'][3]
             else:
                 pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
 
     return pruned_cnn_hyps
 
+
 def get_pruned_cnn_hyp_feed_dict(prune_hyps):
+    '''
+    Prepare the feed dict to be fed when running the pruning op
+    :param prune_hyps:
+    :return:
+    '''
     global tf_prune_cnn_hyperparameters,cnn_ops
     feed_dict = {}
     for op in cnn_ops:
         if 'conv' in op:
             feed_dict.update(
-                {tf_prune_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR]:
-                     prune_hyps[op][TF_CONV_WEIGHT_SHAPE_STR]}
+                {tf_prune_cnn_hyperparameters[op]['weights']:
+                     prune_hyps[op]['weights']}
             )
         if 'fulcon' in op:
             feed_dict.update(
-                {tf_prune_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]:
-                 prune_hyps[op][TF_FC_WEIGHT_IN_STR]}
+                {tf_prune_cnn_hyperparameters[op]['in']:
+                 prune_hyps[op]['in']}
             )
             feed_dict.update(
-                {tf_prune_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR]:
-                     prune_hyps[op][TF_FC_WEIGHT_OUT_STR]}
+                {tf_prune_cnn_hyperparameters[op]['out']:
+                     prune_hyps[op]['out']}
             )
 
     return feed_dict
@@ -1590,7 +1600,8 @@ if __name__ == '__main__':
     if research_parameters['adapt_structure']:
 
         # Pruning hyperparameter initialization
-        init_tf_prune_cnn_hyperparameters()
+
+        print(tf_prune_cnn_hyperparameters)
 
         # Adapting Policy Learner
         current_adaptive_dropout = get_adaptive_dropout()
@@ -1713,10 +1724,8 @@ if __name__ == '__main__':
     for epoch in range(n_epochs):
 
         if adapt_structure:
-            if epoch < 2:
-                adapter = growth_adapter
-            else:
-                adapter = prune_adapter
+            adapter = growth_adapter
+
 
         for task in range(n_tasks):
 
@@ -2224,7 +2233,7 @@ if __name__ == '__main__':
 
         if adapt_structure:
 
-            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.6)
+            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.5)
             logger.info('Obtained prune hyperparameters')
             logger.info(pruned_hyps)
             logger.info('='*80)
@@ -2235,15 +2244,14 @@ if __name__ == '__main__':
             for tmp_op in cnn_ops:
                 if 'conv' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_weight_shape: init_cnn_hyperparameters[tmp_op]['weights']
+                        tf_weight_shape: pruned_hyps[tmp_op]['weights']
                     })
-                    rolling_ativation_means[tmp_op] = np.zeros([init_cnn_hyperparameters[tmp_op]['weights'][3]])
+                    rolling_ativation_means[tmp_op] = np.zeros([pruned_hyps[tmp_op]['weights'][3]])
                 elif 'fulcon' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_in_size: init_cnn_hyperparameters[tmp_op]['in']
+                        tf_in_size: pruned_hyps[tmp_op]['in']
                     })
-            cnn_hyperparameters = init_cnn_hyperparameters
-
+            cnn_hyperparameters = pruned_hyps
 
             print(session.run(tf_cnn_hyperparameters))
             _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
