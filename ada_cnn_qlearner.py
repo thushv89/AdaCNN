@@ -133,6 +133,8 @@ class AdaCNNAdaptingQLearner(object):
 
         self.prev_action, self.prev_state = None, None
 
+        self.top_k_accuracy = params['top_k_accuracy']
+
     def setup_tf_network_and_ops(self,params):
         '''
         Setup Tensorflow based Multi-Layer Perceptron and TF Operations
@@ -1024,8 +1026,6 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_complexity_penalty(self, curr_comp, prev_comp, filter_bound_vec,act_string):
 
-        if self.num_classes>101:
-            return 0.0
 
         # total gain should be negative for taking add action before half way througl a layer
         # total gain should be positve for taking add action after half way througl a layer
@@ -1036,9 +1036,9 @@ class AdaCNNAdaptingQLearner(object):
                 total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
 
         if 'add' in act_string:
-            return - total * (1/self.num_classes)
+            return - total * (self.top_k_accuracy/self.num_classes)
         elif 'remove' in act_string:
-            return total * (1/self.num_classes)
+            return total * (self.top_k_accuracy/self.num_classes)
         else:
             return 0.0
 
@@ -1123,7 +1123,7 @@ class AdaCNNAdaptingQLearner(object):
         # Turned off 28/09/2017
         #mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
         #                ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
-        accuracy_push_reward = 1.0/self.num_classes if (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0<= 1.0/self.num_classes \
+        accuracy_push_reward = self.top_k_accuracy/self.num_classes if (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0<= self.top_k_accuracy/self.num_classes \
             else (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0
 
         mean_accuracy = accuracy_push_reward if data['pool_accuracy'] > data['max_pool_accuracy'] else -accuracy_push_reward
@@ -1216,9 +1216,9 @@ class AdaCNNAdaptingQLearner(object):
                 if 'remove' in self.get_action_string(self.action_list_with_index(invalid_a)):
                     for _ in range(3):
                         self.experience.append(
-                            [history_t, invalid_a, -1.0 / (self.num_classes), history_t_plus_1, self.global_time_stamp])
+                            [history_t, invalid_a, -self.top_k_accuracy / (self.num_classes), history_t_plus_1, self.global_time_stamp])
                     self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
-                                            self.action_list_with_index(invalid_a), -1, -1, -1.0 / (self.num_classes))
+                                            self.action_list_with_index(invalid_a), -1, -1, -self.top_k_accuracy / (self.num_classes))
 
                     opp_action = []
                     for la in self.action_list_with_index(invalid_a):
@@ -1228,18 +1228,18 @@ class AdaCNNAdaptingQLearner(object):
                             opp_action.append(('add', self.add_amount))
                     for _ in range(3):
                         self.experience.append(
-                            [history_t, self.index_from_action_list(opp_action), 1.0 / (self.num_classes * 10.0),
+                            [history_t, self.index_from_action_list(opp_action), self.top_k_accuracy / (self.num_classes * 10.0),
                              history_t_plus_1, self.global_time_stamp])
                     self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
-                                            opp_action, -1, -1, 1.0 / (self.num_classes * 10.0))
+                                            opp_action, -1, -1, self.top_k_accuracy / (self.num_classes * 10.0))
 
                 else:
                     for _ in range(3):
                         self.experience.append(
-                            [history_t, invalid_a, -1.0 / (self.num_classes * 10.0), history_t_plus_1,
+                            [history_t, invalid_a, -self.top_k_accuracy / (self.num_classes * 10.0), history_t_plus_1,
                              self.global_time_stamp])
                     self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
-                                            self.action_list_with_index(invalid_a), -1, -1, -1.0 / (self.num_classes))
+                                            self.action_list_with_index(invalid_a), -1, -1, -self.top_k_accuracy / (self.num_classes))
 
             if self.global_time_stamp < 3:
                 self.verbose_logger.debug('Latest Experience: ')

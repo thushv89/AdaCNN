@@ -216,11 +216,11 @@ def inference(dataset, tf_cnn_hyperparameters, training):
     activation_ops = []
 
     x = dataset
-    if research_parameters['whiten_images']:
+    '''if research_parameters['whiten_images']:
         mu, var = tf.nn.moments(x, axes=[1, 2, 3])
         tr_x = tf.transpose(x, [1, 2, 3, 0])
         tr_x = (tr_x - mu) / tf.maximum(tf.sqrt(var), 1.0 / (image_size * image_size * num_channels))
-        x = tf.transpose(tr_x, [3, 0, 1, 2])
+        x = tf.transpose(tr_x, [3, 0, 1, 2])'''
 
     if training and use_dropout:
         x = tf.nn.dropout(x, keep_prob=1.0 - in_dropout_rate, name='input_dropped')
@@ -258,7 +258,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 x = tf.nn.avg_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
                                    strides=cnn_hyperparameters[op]['stride'],
                                    padding=cnn_hyperparameters[op]['padding'])
-            if training and use_dropout:
+            if datatype!='imagenet-250' and training and use_dropout:
                 x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
             if use_loc_res_norm and 'pool_global' != op:
@@ -1815,10 +1815,16 @@ if __name__ == '__main__':
     # Defining pool
     logger.info('Defining pools of data (validation and finetuning)')
     hardness = 0.5
-    hard_pool_valid = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
-                           num_channels=num_channels, num_labels=num_labels, assert_test=False)
-    hard_pool_ft = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
-                           num_channels=num_channels, num_labels=num_labels, assert_test=False)
+    if datatype != 'imagenet-250':
+        hard_pool_valid = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
+                               num_channels=num_channels, num_labels=num_labels, assert_test=False)
+        hard_pool_ft = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
+                               num_channels=num_channels, num_labels=num_labels, assert_test=False)
+    else:
+        hard_pool_valid = Pool(size=pool_size // 2, batch_size=batch_size, image_size=resize_to,
+                               num_channels=num_channels, num_labels=num_labels, assert_test=False)
+        hard_pool_ft = Pool(size=pool_size // 2, batch_size=batch_size, image_size=resize_to,
+                            num_channels=num_channels, num_labels=num_labels, assert_test=False)
     logger.info('Defined pools of data successfully\n')
 
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
@@ -1883,7 +1889,8 @@ if __name__ == '__main__':
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'], remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
             fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
-            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
+            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length'],
+            top_k_accuracy=model_hyperparameters['top_k_accuracy']
         )
 
         prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
@@ -1901,7 +1908,8 @@ if __name__ == '__main__':
             remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
             fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
-            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
+            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length'],
+            top_k_accuracy=model_hyperparameters['top_k_accuracy']
         )
 
     # Running initialization opeartion
@@ -2247,6 +2255,7 @@ if __name__ == '__main__':
                     logger.info('\tTrial phase: %.3f (Local) %.3f (Global)', local_trial_phase, global_trial_phase)
 
                     test_accuracies = []
+                    test_accuracies_top_5 = []
                     for test_batch_id in range(test_size // batch_size):
                         batch_test_data = test_dataset[test_batch_id * batch_size:(test_batch_id + 1) * batch_size, :, :, :]
                         batch_test_labels = test_labels[test_batch_id * batch_size:(test_batch_id + 1) * batch_size, :]
@@ -2262,6 +2271,8 @@ if __name__ == '__main__':
                         feed_test_dict = {tf_test_dataset: batch_test_data, tf_test_labels: batch_ohe_test_labels}
                         test_predictions = session.run(test_predicitons_op, feed_dict=feed_test_dict)
                         test_accuracies.append(accuracy(test_predictions, batch_ohe_test_labels))
+                        if datatype=='imagenet-250':
+                            test_accuracies_top_5.append(top_n_accuracy(test_predictions,batch_ohe_test_labels,5))
 
                         if test_batch_id < 10:
 
@@ -2274,7 +2285,12 @@ if __name__ == '__main__':
                             logger.debug('=' * 80)
 
                     current_test_accuracy = np.mean(test_accuracies)
-                    logger.info('\tTest Accuracy: %.3f' % current_test_accuracy)
+                    current_test_accuracy_top_5 = np.mean(test_accuracies_top_5)
+                    if datatype!='imagenet-250':
+                        logger.info('\tTest Accuracy: %.3f' % current_test_accuracy)
+                    else:
+                        logger.info('\tTest Accuracy: %.3f (Top-1) %.3f (Top-5)' %(current_test_accuracy,current_test_accuracy_top_5))
+
                     logger.info('=' * 60)
                     logger.info('')
 
