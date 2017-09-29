@@ -189,7 +189,7 @@ tf_update_hyp_ops = {}
 tf_action_info, tf_running_activations = None, None
 tf_weights_this,tf_bias_this = None, None
 tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
-tf_weight_shape,tf_in_size = None, None
+tf_weight_shape,tf_in_size, tf_out_size = None, None, None
 increment_global_step_op = None
 
 adapt_period = None
@@ -505,7 +505,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global pool_pred
     global tf_update_hyp_ops, tf_action_info, tf_running_activations
     global tf_weights_this,tf_bias_this, tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next
-    global tf_weight_shape,tf_in_size
+    global tf_weight_shape,tf_in_size, tf_out_size
     global increment_global_step_op,tf_learning_rate
     global logger
 
@@ -622,6 +622,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
         # GLOBAL: Tensorflow operations for test data
         # Valid data (Next train batch) Unseen
+        logger.info('Validation dat placeholders, losses and predictions')
         tf_valid_data_batch = tf.placeholder(tf.float32,
                                              shape=(batch_size, image_size, image_size, num_channels),
                                              name='ValidDataset')
@@ -643,6 +644,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                                 name='tf_action')  # [op_id,action_id,amount] (action_id 0 - add, 1 -remove)
                 tf_running_activations = tf.placeholder(shape=(None,), dtype=tf.float32, name='running_activations')
 
+                logger.info('Defining placeholders for newly added parameters')
+                # Adaptation placeholders for convolution layers
                 tf_weights_this = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
                                                  name='new_weights_current')
                 tf_bias_this = tf.placeholder(shape=(None,), dtype=tf.float32, name='new_bias_current')
@@ -656,16 +659,19 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_wvelocity_next = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
                                                    name='new_weights_velocity_next')
 
+                logger.info('Defining weight shapes for setting shapes after adaptations')
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
-                tf_in_size = tf.placeholder(dtype=tf.int32, name='input_size')
+                tf_in_size = tf.placeholder(dtype=tf.int32, name='fulcon_input_size')
+                tf_out_size = tf.placeholder(dtype=tf.int32, name='fulcon_output_size')
 
                 init_tf_prune_cnn_hyperparameters()
 
                 tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(tf_prune_cnn_hyperparameters,cnn_ops)
 
                 for tmp_op in cnn_ops:
+                    # Convolution related adaptation operations
                     if 'conv' in tmp_op:
-                        tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size)
+                        tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size, tf_out_size)
                         tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
                                                                      tf_bias_this, tf_weights_next,
                                                                      tf_running_activations,
@@ -674,15 +680,28 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_with_action(tmp_op, tf_action_info,
                                                                        tf_running_activations,
                                                                        tf_cnn_hyperparameters)
-                        # tf_replace_ind_ops[tmp_op] = get_rm_indices_with_distance(tmp_op,tf_action_info,tf_cnn_hyperparameters)
+
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
                             tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                             tf.constant(start_lr, dtype=tf.float32), global_step
                         )
 
-                    elif 'fulcon' in tmp_op:
-                        tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size)
+                    # Fully connected realted adaptation operations
+                    elif 'fulcon' in tmp_op and tmp_op!='fulcon_out':
+                        tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size, tf_out_size)
+
+                        tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
+                            tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
+                            tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next
+                        )
+
+                        tf_slice_optimize[tmp_op], tf_slice_vel_update[
+                            tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
+                            optimizer, tf_indices,
+                            tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
+                            tf.constant(start_lr, dtype=tf.float32), global_step
+                        )
 
 
 def check_several_conditions_with_assert(num_gpus):
@@ -863,7 +882,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             logger.debug('\t\tNew Weights: %s', str(tf.shape(first_fc_weights).eval()))
 
         session.run(tf_update_hyp_ops[first_fc], feed_dict={
-            tf_in_size: cnn_hyperparameters[first_fc]['in']
+            tf_in_size: cnn_hyperparameters[first_fc]['in'],
+            tf_out_size: cnn_hyperparameters[first_fc]['out']
         })
 
     else:
@@ -991,6 +1011,170 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
                                    feed_dict=pool_feed_dict)
 
+
+def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft):
+    '''
+    Run the add operation using the given Session
+    :param session:
+    :param current_op:
+    :param li:
+    :param last_conv_id:
+    :param hard_pool_ft:
+    :return:
+    '''
+    global current_adaptive_dropout
+    amount_to_add = ai[1]
+
+    if current_op != last_conv_id:
+        next_fulcon_op = \
+            [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:]][0]
+
+    _ = session.run(tf_add_filters_ops[current_op],
+                    feed_dict={
+                        tf_action_info: np.asarray([li, 1, ai[1]]),
+                        tf_weights_this: np.random.normal(scale=0.001, size=(
+                            cnn_hyperparameters[current_op]['weights'][0],
+                            amount_to_add,1,1)),
+                        tf_bias_this: np.random.normal(scale=0.001, size=(amount_to_add)),
+
+                        tf_weights_next: np.random.normal(scale=0.001, size=(
+                            amount_to_add, cnn_hyperparameters[next_fulcon_op]['weights'][1], 1, 1)
+                                                          ),
+                        tf_wvelocity_this: np.zeros(shape=(
+                            cnn_hyperparameters[current_op]['weights'][0],
+                            amount_to_add,1,1),
+                            dtype=np.float32),
+                        tf_bvelocity_this: np.zeros(shape=(amount_to_add), dtype=np.float32),
+                        tf_wvelocity_next: np.zeros(shape=(
+                            amount_to_add,
+                            cnn_hyperparameters[next_fulcon_op]['weights'][1]),
+                            dtype=np.float32)
+                    })
+
+    # change both weights and biase in the current op
+    logger.debug('\tAdding %d new weights', amount_to_add)
+
+    with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op,
+                           reuse=True) as scope:
+        current_op_weights = tf.get_variable(TF_WEIGHTS)
+
+    if research_parameters['debugging']:
+        logger.debug('\tSummary of changes to weights of %s ...', current_op)
+        logger.debug('\t\tNew Weights: %s', str(tf.shape(current_op_weights).eval()))
+
+    # change out hyperparameter of op
+    cnn_hyperparameters[current_op]['in'] += amount_to_add
+    if research_parameters['debugging']:
+        assert cnn_hyperparameters[current_op]['in'][1] == \
+               tf.shape(current_op_weights).eval()[1]
+
+    session.run(tf_update_hyp_ops[current_op], feed_dict={
+        tf_in_size: cnn_hyperparameters[current_op]['in'],
+        tf_out_size: cnn_hyperparameters[current_op]['out']
+    })
+
+
+    next_fulcon_op = cnn_ops[cnn_ops.index(current_op) + 1:]
+    assert current_op != next_fulcon_op
+
+    with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + next_fulcon_op, reuse=True):
+        next_fulcon_op_weights = tf.get_variable(TF_WEIGHTS)
+
+    if research_parameters['debugging']:
+        logger.debug('\tSummary of changes to weights of %s', next_fulcon_op)
+        logger.debug('\t\tCurrent Weights: %s', str(tf.shape(next_fulcon_op_weights).eval()))
+
+    cnn_hyperparameters[next_fulcon_op]['in'] += amount_to_add
+
+    if research_parameters['debugging']:
+        assert cnn_hyperparameters[next_fulcon_op]['in'] == \
+               tf.shape(next_fulcon_op_weights).eval()[0]
+
+    session.run(tf_update_hyp_ops[next_fulcon_op], feed_dict={
+        tf_weight_shape: cnn_hyperparameters[next_fulcon_op]['weights']
+    })
+
+    # optimize the newly added fiterls only
+    pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
+    if research_parameters['pool_randomize'] and np.random.random() < research_parameters[
+        'pool_randomize_rate']:
+        try:
+            pool = MPPool(processes=10)
+            distorted_imgs = pool.map(distort_img, pool_dataset)
+            pool_dataset = np.asarray(distorted_imgs)
+            pool.close()
+            pool.join()
+        except Exception:
+            raise AssertionError
+
+    current_adaptive_dropout = get_adaptive_dropout()
+    # This is a pretty important step
+    # Unless you run this onces, the sizes of weights do not change
+    train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+    _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
+    pbatch_train_count = 0
+
+    # Train only newly added parameters
+    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+        if np.random.random() < research_parameters['finetune_rate']:
+            pbatch_data, pbatch_labels = [], []
+
+            pool_feed_dict = {
+                tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
+                                      cnn_hyperparameters[current_op]['weights'][3])}
+            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+
+            for gpu_id in range(num_gpus):
+                pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
+                                                                                    pool_id + gpu_id + 1) * batch_size,
+                                   :, :, :])
+                pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
+                                                                                     pool_id + gpu_id + 1) * batch_size,
+                                     :])
+                pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
+                                       tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
+
+            pbatch_train_count += 1
+
+            current_activations_list, _, _ = session.run(
+                [tf_mean_pool_activations, tf_slice_optimize[current_op],
+                 tf_slice_vel_update[current_op]],
+                feed_dict=pool_feed_dict
+            )
+
+    # Optimize full network
+    if hard_pool_ft.get_size() > batch_size:
+        pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
+        if research_parameters['pool_randomize'] and np.random.random() < \
+                research_parameters['pool_randomize_rate']:
+            try:
+                pool = MPPool(processes=10)
+                distorted_imgs = pool.map(distort_img, pool_dataset)
+                pool_dataset = np.asarray(distorted_imgs)
+                pool.close()
+                pool.join()
+            except Exception:
+                raise AssertionError
+        # Train with latter half of the data
+        for pool_id in range(0,
+                             (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+            if np.random.random() < research_parameters['finetune_rate']:
+                pool_feed_dict = {}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+                for gpu_id in range(num_gpus):
+                    pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
+                                                                                   pool_id + gpu_id + 1) * batch_size,
+                                  :, :, :]
+                    pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
+                                                                                    pool_id + gpu_id + 1) * batch_size,
+                                    :]
+                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
+                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
+
+                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                   feed_dict=pool_feed_dict)
+
+
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
     global current_adaptive_dropout
     _, rm_indices = session.run(tf_rm_filters_ops[current_op],
@@ -1043,7 +1227,8 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
                          first_fc, str(tf.shape(first_fc_weights).eval()))
 
         session.run(tf_update_hyp_ops[first_fc], feed_dict={
-            tf_in_size: cnn_hyperparameters[first_fc]['in']
+            tf_in_size: cnn_hyperparameters[first_fc]['in'],
+            tf_out_size: cnn_hyperparameters[first_fc]['out']
         })
 
     else:
@@ -1188,7 +1373,7 @@ def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparam
     hyp_logger.info(model_hyperparameters)
 
 
-def get_explore_action_probs(epoch, trial_phase, n_conv):
+def get_explore_action_probs(epoch, trial_phase, n_conv, n_fulcon):
     '''
     Explration action probabilities. We manually specify a probabilities of a stochastic policy
     used to explore the state space adequately
@@ -1197,9 +1382,12 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
     :param n_conv:
     :return:
     '''
+
+    n_all = n_conv + n_fulcon
+
     if epoch == 0 and trial_phase<0.4:
         logger.info('Finetune phase')
-        trial_action_probs = [0.2 / (1.0 * n_conv) for _ in range(n_conv)]  # add
+        trial_action_probs = [0.2 / (1.0 * n_all) for _ in range(n_all)]  # add
         trial_action_probs.extend([0.26, .26, 0.28])
 
     elif epoch == 0 and trial_phase >= 0.4 and trial_phase < 1.0:
@@ -1207,29 +1395,25 @@ def get_explore_action_probs(epoch, trial_phase, n_conv):
         # There is 0.1 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
         trial_action_probs = []
-        trial_action_probs.extend([0.6 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.6 / (1.0 * (n_all)) for _ in range(n_all)])  # add
         trial_action_probs.extend([0.13, 0.13, 0.14])
 
     elif epoch == 2 and trial_phase >= 2.0 and trial_phase < 2.7:
         logger.info('Shrink phase')
         # There is 0.6 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
-        remove_action_prob = 0.6 * (10.0 / 11.0)
-        trial_action_probs_without_last = [remove_action_prob / (1.0 * (n_conv - 1)) for _ in range(n_conv - 1)]
-        trial_action_probs = list(trial_action_probs_without_last) + [0.6 - remove_action_prob]
-
-        trial_action_probs.extend([0.13, 0.13, 0.14])
+        raise NotImplementedError
 
     elif epoch == 2 and trial_phase >= 2.7 and trial_phase < 3.0:
         logger.info('Finetune phase')
         trial_action_probs = []
-        trial_action_probs.extend([0.2 / (1.0 * n_conv) for _ in range(n_conv)])  # add
+        trial_action_probs.extend([0.2 / (1.0 * n_all) for _ in range(n_all)])  # add
         trial_action_probs.extend([0.26, 0.26, 0.28])
 
     return trial_action_probs
 
 # Continuous adaptation
-def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch, global_trial_phase, local_trial_phase, n_conv, eps, adaptation_period):
+def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch, global_trial_phase, local_trial_phase, n_conv, n_fulcon, eps, adaptation_period):
     '''
     Continuously adapting the structure
     :param q_learner:
@@ -1247,7 +1431,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
         # Grow the network mostly (Exploration)
         logger.info('Explorative Growth Stage')
         state, action, invalid_actions = q_learner.output_action_with_type(
-            data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv)
+            data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv,n_fulcon)
         )
         adapting_now = True
     else:
@@ -1468,10 +1652,10 @@ if __name__ == '__main__':
         opts, args = getopt.getopt(
             sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'pool_workers=', 'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
-                               'adapt_structure=', 'rigid_pooling=',
+                               'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
                                'use_multiproc='])
     except getopt.GetoptError as err:
-        print(err)
+        print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory= --pool_workers=')
 
     if len(opts) != 0:
@@ -1586,15 +1770,20 @@ if __name__ == '__main__':
     logger.info('Defined pools of data successfully\n')
 
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
-    # -1 is because we don't want to count pool_global
-
-    layer_count = len([op for op in cnn_ops if 'conv' in op or 'pool' in op]) - 1
+    # -1 is because we don't want to count fulcon_out
+    layer_count = len(cnn_ops) - 1
 
     # ids of the convolution ops
     convolution_op_ids = []
+    fulcon_op_ids = []
     for op_i, op in enumerate(cnn_ops):
         if 'conv' in op:
             convolution_op_ids.append(op_i)
+        # Do not put the fulcon_out in the fulcon_ids we do not adapt the output layer
+        # it already has the total number  of classes
+        if 'fulcon' in op and op!='fulcon_out':
+            fulcon_op_ids.append(op_i)
+
     logger.info('Found all convolution opeartion ids')
 
     # Defining initial hyperparameters as TF variables (so we can change them later during adaptation)
@@ -1626,8 +1815,8 @@ if __name__ == '__main__':
             qlearner_type='growth', discount_rate=0.5, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
-            conv_ids=convolution_op_ids, net_depth=layer_count,
-            n_conv=len([op for op in cnn_ops if 'conv' in op]),
+            conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
+            n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
             epsilon=0.5, target_update_rate=20,
             batch_size=32, persist_dir=output_dir,
             session=session, random_mode=False,
@@ -1635,6 +1824,7 @@ if __name__ == '__main__':
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'], remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
+            fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
             trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
         )
 
@@ -1642,8 +1832,8 @@ if __name__ == '__main__':
             qlearner_type='prune', discount_rate=0.5, fit_interval=1,
             exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
             filter_vector=filter_vector,
-            conv_ids=convolution_op_ids, net_depth=layer_count,
-            n_conv=len([op for op in cnn_ops if 'conv' in op]),
+            conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
+            n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
             epsilon=0.5, target_update_rate=20,
             batch_size=32, persist_dir=output_dir,
             session=session, random_mode=False,
@@ -1652,6 +1842,7 @@ if __name__ == '__main__':
             rand_state_length=32, add_amount=model_hyperparameters['add_amount'],
             remove_amount=model_hyperparameters['remove_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
+            fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
             trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length']
         )
 
@@ -1742,7 +1933,6 @@ if __name__ == '__main__':
         if adapt_structure:
             adapter = growth_adapter
 
-
         for task in range(n_tasks):
 
             # We set the max pool accuracy to zero at the begining of each task.
@@ -1766,12 +1956,6 @@ if __name__ == '__main__':
                 local_trial_phase = batch_id * 1.0/n_iter_per_task
 
                 t0 = time.clock()  # starting time for a batch
-
-                logger.debug('=' * 80)
-                #logger.debug('tf op count: %d', len(graph.get_operations()))
-                logger.debug('=' * 80)
-
-                #logger.info('\tTraining with batch %d', batch_id)
 
                 # We load 1 extra batch (chunk_size+1) because we always make the valid batch the batch_id+1
 
@@ -2170,23 +2354,25 @@ if __name__ == '__main__':
                             if 'conv' in op:
                                 filter_dict[op_i] = cnn_hyperparameters[op]['weights'][3]
                                 filter_list.append(cnn_hyperparameters[op]['weights'][3])
-                            elif 'pool' in op and op != 'pool_global':
+                            elif 'pool' in op:
                                 filter_dict[op_i] = 0
                                 filter_list.append(0)
+                            elif 'fulcon' in op and op!='fulcon_out':
+                                filter_dict[op_i] = cnn_hyperparameters[op]['out']
+                                filter_list.append(cnn_hyperparameters[op]['out'])
 
                         # For epoch 0 and 1
                         # Epoch 0: Randomly grow the network
                         # Epoch 1: Deterministically grow the network
                         current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
                             adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list, 'binned_data_dist':running_binned_data_dist_vector.tolist()}, epoch=epoch,
-                            global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids),
+                            global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
                             eps=start_eps, adaptation_period=adapt_period)
 
                         current_action_type = adapter.get_action_type_with_action_list(current_action)
                         # reset the binned data distribution
                         running_binned_data_dist_vector = np.zeros(
                             (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
-
 
                         for li, la in enumerate(current_action):
                             # pooling and fulcon layers
@@ -2202,13 +2388,17 @@ if __name__ == '__main__':
                                     last_conv_id = tmp_op
                                     break
 
-                            if 'conv' in current_op and ai[0] == 'add':
-
-                                run_actual_add_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                            if ai[0] == 'add':
+                                if 'conv' in current_op:
+                                    run_actual_add_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                                elif 'fulcon' in current_op:
+                                    run_actual_add_operation_for_fulcon(session,current_op,li, last_conv_id, hard_pool_ft)
 
                             elif 'conv' in current_op and ai[0] == 'remove':
-
-                                run_actual_remove_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                                if 'conv' in current_op:
+                                    run_actual_remove_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                                elif 'fulcon' in current_op:
+                                    raise NotImplementedError
 
                             elif 'conv' in current_op and ai[0] == 'finetune':
                                 # pooling takes place here

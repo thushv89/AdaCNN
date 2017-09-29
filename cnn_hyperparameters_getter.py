@@ -123,35 +123,39 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         if not adapt_structure:
             cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
                          "#C,3,1,288#C,3,1,288#C,3,1,288" \
-                         "#PG,3,2,0#Terminate,0,0,0"
+                         "#PG,3,2,0#FC,512,0,0#FC,512,0,0#Terminate,0,0,0"
         else:
             cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#P,3,2,0" \
                          "#C,3,1,32#C,3,1,32#C,3,1,32" \
-                         "#PG,3,2,0#Terminate,0,0,0"
+                         "#PG,3,2,0#FC,128,0,0#FC,128,0,0#Terminate,0,0,0"
 
-            filter_vector = [144, 144, 144, 0, 288, 288, 288]
+            filter_vector = [144, 144, 144, 0, 288, 288, 288,0,512,512]
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
+            fulcon_min_threshold = 128
+
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 10
+
     elif dataset_name== 'imagenet-250':
         model_hyperparameters['epochs'] = 8
         pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
 
         if not adapt_structure:
-            cnn_string = "C,3,1,64#P,2,2,0#C,3,1,128#P,2,2,0" \
+            cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128#C,3,1,128#P,2,2,0" \
                          "#C,3,1,256#C,3,1,256#P,2,2,0#C,3,1,512" \
                          "#C,3,1,512#P,2,2,0#C,3,1,512#C,3,1,512" \
-                         "#PG,2,2,0#FC,4096,0,0#Terminate,0,0,0"
+                         "#PG,2,2,0#FC,4096,0,0#FC,4096,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#P,2,2,0#C,3,1,32" \
+            cnn_string = "C,3,1,32#C,3,1,32#P,2,2,0#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#PG,2,2,0#FC,4096,0,0#Terminate,0,0,0"
+                         "#PG,2,2,0#FC,4096,0,0#FC,4096,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 0, 128, 0, 256, 256, 0, 512, 512, 0, 512, 512]
+            filter_vector = [64, 64, 0, 128, 128, 0, 256, 256, 0, 512, 512, 0, 512, 512, 0, 4096, 4096]
             filter_min_threshold = 24
+            fulcon_min_threshold = 256
             add_amount, remove_amount = 8, 4
         model_hyperparameters['n_tasks'] = 10
         model_hyperparameters['binned_data_dist_length'] = 25
@@ -180,6 +184,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['add_amount'] = add_amount
         model_hyperparameters['remove_amount'] = remove_amount
         model_hyperparameters['filter_min_threshold'] = filter_min_threshold
+        model_hyperparameters['fulcon_min_threshold'] = fulcon_min_threshold
 
     return model_hyperparameters
 

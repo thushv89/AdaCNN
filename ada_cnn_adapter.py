@@ -138,6 +138,82 @@ def add_with_action(
     return update_ops
 
 
+def add_to_fulcon_with_action(
+        op, tf_action_info, tf_fulcon_weights_this, tf_fulcon_bias_this,
+        tf_fulcon_weights_next, tf_fulcon_wvelocity_this,
+        tf_fulcon_bvelocity_this, tf_fulcon_wvelocity_next
+):
+    global cnn_hyperparameters, cnn_ops
+    global logger
+
+    first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
+    update_ops = []
+
+    # find the id of the last conv operation of the net
+    next_fulcon_id = None
+    for tmp_op in reversed(cnn_ops):
+        if 'fulcon' in tmp_op:
+            if op==tmp_op:
+                break
+            next_fulcon_id = tmp_op
+
+    logger.debug('Running action add for op %s', op)
+
+    amount_to_add = tf_action_info[2]  # amount of filters to add
+    assert 'fulcon' in op
+
+    # updating velocity vectors
+    with tf.variable_scope(op) as scope:
+        w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        with tf.variable_scope(TF_WEIGHTS) as child_scope:
+            w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+            pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+        with tf.variable_scope(TF_BIAS) as child_scope:
+            b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+            pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+        # calculating new weights
+        tf_new_weights = tf.concat(axis=1, values=[w, tf.squeeze(tf_fulcon_weights_this)])
+        tf_new_biases = tf.concat(axis=0, values=[b, tf_fulcon_bias_this])
+
+        if research_parameters['optimizer'] == 'Momentum':
+            new_weight_vel = tf.concat(axis=1, values=[w_vel, tf.squeeze(tf_fulcon_wvelocity_this)])
+            new_bias_vel = tf.concat(axis=0, values=[b_vel, tf_fulcon_bvelocity_this])
+            new_pool_w_vel = tf.concat(axis=1, values=[pool_w_vel, tf.squeeze(tf_fulcon_wvelocity_this)])
+            new_pool_b_vel = tf.concat(axis=0, values=[pool_b_vel, tf_fulcon_bvelocity_this])
+
+            update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
+            update_ops.append(tf.assign(b_vel, new_bias_vel, validate_shape=False))
+            update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
+            update_ops.append(tf.assign(pool_b_vel, new_pool_b_vel, validate_shape=False))
+
+        update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
+        update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+
+    # ================ Changes to next_op ===============
+    # change FC layer
+    # the reshaping is required because our placeholder for weights_next is Rank 4
+    with tf.variable_scope(next_fulcon_id) as scope:
+        w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        with tf.variable_scope(TF_WEIGHTS) as child_scope:
+            w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+            pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+        tf_weights_next = tf.squeeze(tf_fulcon_weights_next)
+        tf_new_weights = tf.concat(axis=0, values=[w, tf_weights_next])
+
+        # updating velocity vectors
+        if research_parameters['optimizer'] == 'Momentum':
+            tf_wvelocity_next = tf.squeeze(tf_fulcon_wvelocity_next)
+            new_weight_vel = tf.concat(axis=0, values=[w_vel, tf.squeeze(tf_wvelocity_next)])
+            new_pool_w_vel = tf.concat(axis=0, values=[pool_w_vel, tf.squeeze(tf_wvelocity_next)])
+            update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
+            update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
+
+        update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
+
+    return update_ops
+
 def get_rm_indices_with_distance(op, tf_action_info, tf_cnn_hyperparameters):
     amount_to_rmv = tf_action_info[2]
     with tf.variable_scope(op) as scope:
@@ -333,7 +409,7 @@ def remove_with_action(op, tf_action_info, tf_activations, tf_cnn_hyperparameter
     return update_ops, tf_indices_to_rm
 
 
-def update_tf_hyperparameters(op,tf_weight_shape,tf_in_size):
+def update_tf_hyperparameters(op,tf_weight_shape,tf_in_size, tf_out_size):
     global cnn_ops, cnn_hyperparameters
     update_ops = []
     if 'conv' in op:
@@ -342,6 +418,6 @@ def update_tf_hyperparameters(op,tf_weight_shape,tf_in_size):
     if 'fulcon' in op:
         with tf.variable_scope(op,reuse=True):
             update_ops.append(tf.assign(tf.get_variable(TF_FC_WEIGHT_IN_STR,dtype=tf.int32),tf_in_size))
-
+            update_ops.append(tf.assign(tf.get_variable(TF_FC_WEIGHT_OUT_STR, dtype=tf.int32), tf_out_size))
     return update_ops
 

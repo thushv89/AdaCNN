@@ -19,7 +19,7 @@ import tensorflow as tf
 
 from collections import OrderedDict
 
-logging_level = logging.INFO
+logging_level = logging.DEBUG
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 
@@ -55,11 +55,15 @@ class AdaCNNAdaptingQLearner(object):
         self.persit_dir = params['persist_dir']
 
         # CNN specific Hyperparametrs
-        self.net_depth = params['net_depth'] # the depth of the network (counting pooling + convolution layers)
+        self.net_depth = params['net_depth'] # the depth of the network (counting pooling + convolution + fulcon layers)
         self.n_conv = params['n_conv']  # number of convolutional layers
+        self.n_fulcon = params['n_fulcon'] # number of fully connected layers
         self.conv_ids = params['conv_ids'] # ids of the convolution layers
+        self.fulcon_ids = params['fulcon_ids'] # ids of the fulcon layers
         self.filter_bound_vec = params['filter_vector'] # a vector that gives the upper bound for each convolution and pooling layer ( use 0 for pooling)
+        assert len(self.filter_bound_vec) == self.net_depth, 'net_depth (%d) parameter does not match the size of the filter bound vec (%d)'%(self.net_depth,len(self.filter_bound_vec))
         self.min_filter_threshold = params['filter_min_threshold'] # The minimum bound for each convolution layer
+        self.min_fulcon_threshold = params['fulcon_min_threshold'] # The minimum neurons in a fulcon layer
 
         # Things used for peanalizing reward
         # e.g. Taking too many add actions without a significant reward
@@ -128,8 +132,6 @@ class AdaCNNAdaptingQLearner(object):
         self.setup_tf_network_and_ops(params)
 
         self.prev_action, self.prev_state = None, None
-
-
 
     def setup_tf_network_and_ops(self,params):
         '''
@@ -234,6 +236,8 @@ class AdaCNNAdaptingQLearner(object):
         total = 0
         for _ in range(self.local_actions):  # add and remove actions
             total += self.n_conv
+        for _ in range(self.local_actions):
+            total += self.n_fulcon
 
         total += self.global_actions  # finetune and donothing
         self.verbose_logger.info('Calculated output action space size: %d',total)
@@ -388,23 +392,23 @@ class AdaCNNAdaptingQLearner(object):
         layer_actions = [None for _ in range(self.net_depth)]
 
         if action_idx < self.output_size - self.global_actions:
-            primary_action = action_idx // self.n_conv  # action
-            secondary_action = action_idx % self.n_conv  # the layer the action will be executed
+            primary_action = action_idx // (self.n_conv + self.n_fulcon)  # action
+            secondary_action = action_idx % (self.n_conv + self.n_fulcon)  # the layer the action will be executed
             if primary_action == 0:
                 tmp_a = self.actions[3]
 
-            for ci, c_id in enumerate(self.conv_ids):
+            for ci, c_id in enumerate(self.conv_ids + self.fulcon_ids):
                 if ci == secondary_action:
                     layer_actions[c_id] = tmp_a
                 else:
                     layer_actions[c_id] = self.actions[0]
 
         elif action_idx == self.output_size - 3:
-            layer_actions = [self.actions[0] if li in self.conv_ids else None for li in range(self.net_depth)]
+            layer_actions = [self.actions[0] if (li in self.conv_ids or li in self.fulcon_ids) else None for li in range(self.net_depth)]
         elif action_idx == self.output_size - 2:
-            layer_actions = [self.actions[1] if li in self.conv_ids else None for li in range(self.net_depth)]
+            layer_actions = [self.actions[1] if (li in self.conv_ids or li in self.fulcon_ids) else None for li in range(self.net_depth)]
         elif action_idx == self.output_size - 1:
-            layer_actions = [self.actions[2] if li in self.conv_ids else None for li in range(self.net_depth)]
+            layer_actions = [self.actions[2] if (li in self.conv_ids or li in self.fulcon_ids) else None for li in range(self.net_depth)]
 
         assert len(layer_actions) == self.net_depth
         self.verbose_logger.debug('Return (action_list): %s\n', layer_actions)
@@ -448,17 +452,17 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger.debug('Got: %s\n', action_list)
         if self.get_action_string(action_list) == \
                 self.get_action_string(
-                    [self.actions[0] if li in self.conv_ids else None for li in range(self.net_depth)]):
+                    [self.actions[0] if li in (self.conv_ids + self.fulcon_ids) else None for li in range(self.net_depth)]):
             self.verbose_logger.debug('Return: %d\n', self.output_size - 2)
             return self.output_size - 3
         elif self.get_action_string(action_list) == \
                 self.get_action_string(
-                    [self.actions[1] if li in self.conv_ids else None for li in range(self.net_depth)]):
+                    [self.actions[1] if li in (self.conv_ids + self.fulcon_ids) else None for li in range(self.net_depth)]):
             self.verbose_logger.debug('Return (index): %d\n', self.output_size - 1)
             return self.output_size - 2
         elif self.get_action_string(action_list) == \
                 self.get_action_string(
-                    [self.actions[2] if li in self.conv_ids else None for li in range(self.net_depth)]):
+                    [self.actions[2] if li in (self.conv_ids + self.fulcon_ids) else None for li in range(self.net_depth)]):
             self.verbose_logger.debug('Return (index): %d\n', self.output_size - 1)
             return self.output_size - 1
 
@@ -474,7 +478,7 @@ class AdaCNNAdaptingQLearner(object):
 
                 conv_id += 1
 
-            action_idx = primary_idx * self.n_conv + secondary_idx
+            action_idx = primary_idx * (self.n_conv+self.n_fulcon) + secondary_idx
             self.verbose_logger.debug('Primary %d Secondary %d', primary_idx, secondary_idx)
             self.verbose_logger.debug('Return (index): %d\n', action_idx)
             return action_idx
@@ -863,9 +867,6 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger.debug('Epsilons: %.3f\n', self.epsilon)
         self.verbose_logger.info('Trial phase: %.3f\n', self.trial_phase)
 
-        n_conv_first_half = int(ceil(self.n_conv * 1.0 / 2.0))
-        n_conv_last_half = int(self.n_conv - n_conv_first_half)
-        assert n_conv_first_half + n_conv_last_half == self.n_conv
         if self.trial_phase < self.trial_phase_threshold:
             action_type = 'Explore'
             layer_actions_list,invalid_actions = self.get_explore_type_action(data,history_t_plus_1)
@@ -912,40 +913,6 @@ class AdaCNNAdaptingQLearner(object):
 
         return state, layer_actions_list, invalid_actions
 
-    def get_trial_phase_action_probs(self):
-        '''
-        We output action executing probabilities during the exploration stage
-        :return:
-        '''
-        if self.trial_phase <= self.trial_phase_threshold / 5.0:
-            # more add actions
-            # actions are indexed as [{remove actions},{add actions},{do_nothing,finetune}]
-            trial_action_probs = [0.2 / (1.0 * self.n_conv) for _ in range(self.n_conv)]  # remove
-            trial_action_probs.extend([0.6 / (1.0 * self.n_conv) for _ in range(self.n_conv)])  # add
-            trial_action_probs.extend([0.05, 0.15])
-        elif self.trial_phase <= self.trial_phase_threshold / 2.5:
-            trial_action_probs = [0 / (1.0 * self.n_conv) for _ in range(self.n_conv)]  # remove
-            trial_action_probs.extend([0 / (1.0 * self.n_conv) for _ in range(self.n_conv)])  # add
-            trial_action_probs.extend([0.0, 1.0])
-        elif self.trial_phase <= self.trial_phase_threshold / 2.0:
-            trial_action_probs = [0.2 / (1.0 * self.n_conv) for _ in range(self.n_conv)]  # remove
-            trial_action_probs.extend([0.6 / (1.0 * self.n_conv) for _ in range(self.n_conv)])  # add
-            trial_action_probs.extend([0.05, 0.15])
-
-        elif self.trial_phase <= self.trial_phase_threshold / 1.43:
-            trial_action_probs = [0.7 / (1.0 * self.n_conv) for _ in range(self.n_conv)]  # remove
-            trial_action_probs.extend([0.1 / (1.0 * self.n_conv) for _ in range(self.n_conv)])  # add
-            trial_action_probs.extend([0.05, 0.15])
-        elif self.trial_phase <= self.trial_phase_threshold / 1.11:
-            trial_action_probs = [0 / (1.0 * self.n_conv) for _ in range(self.n_conv)]  # remove
-            trial_action_probs.extend([0 / (1.0 * self.n_conv) for _ in range(self.n_conv)])  # add
-            trial_action_probs.extend([0.0, 1.0])
-        else:
-            trial_action_probs = [0.7 / (1.0 * self.n_conv) for _ in range(self.n_conv)]  # remove
-            trial_action_probs.extend([0.1 / (1.0 * self.n_conv) for _ in range(self.n_conv)])  # add
-            trial_action_probs.extend([0.05, 0.15])
-
-        return trial_action_probs
 
     def get_action_string(self, layer_action_list):
         act_string = ''
@@ -1139,7 +1106,7 @@ class AdaCNNAdaptingQLearner(object):
                     self.tf_state_input: x, self.tf_q_targets: ohe_targets, self.tf_q_mask: y
                 })
 
-                if self.global_time_stamp % self.target_update_rate == 0 and self.local_time_stamp % self.n_conv == 0:
+                if self.global_time_stamp % self.target_update_rate == 0 and self.local_time_stamp % (self.n_conv+self.n_fulcon) == 0:
                     self.verbose_logger.info('Coppying the Q approximator as the Target Network')
                     # self.target_network = self.regressor.partial_fit(x, y)
                     _ = self.session.run([self.tf_target_update_ops])
