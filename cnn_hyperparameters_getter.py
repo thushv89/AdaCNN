@@ -99,7 +99,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
     model_hyperparameters['epochs'] = 10
-    model_hyperparameters['n_iterations'] = 5000
+    model_hyperparameters['n_iterations'] = 1000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
@@ -132,7 +132,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [144, 144, 144, 0, 288, 288, 288,0,512,512]
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
-            fulcon_min_threshold = 128
+            fulcon_min_threshold = 64
 
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 10

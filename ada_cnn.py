@@ -622,7 +622,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
         # GLOBAL: Tensorflow operations for test data
         # Valid data (Next train batch) Unseen
-        logger.info('Validation dat placeholders, losses and predictions')
+        logger.info('Validation data placeholders, losses and predictions')
         tf_valid_data_batch = tf.placeholder(tf.float32,
                                              shape=(batch_size, image_size, image_size, num_channels),
                                              name='ValidDataset')
@@ -688,20 +688,22 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         )
 
                     # Fully connected realted adaptation operations
-                    elif 'fulcon' in tmp_op and tmp_op!='fulcon_out':
+                    elif 'fulcon' in tmp_op:
+                        # Update hyp operation is required for fulcon_out
                         tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size, tf_out_size)
 
-                        tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
-                            tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
-                            tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next
-                        )
+                        if tmp_op!='fulcon_out':
+                            tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
+                                tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
+                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next
+                            )
 
-                        tf_slice_optimize[tmp_op], tf_slice_vel_update[
-                            tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
-                            optimizer, tf_indices,
-                            tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
-                            tf.constant(start_lr, dtype=tf.float32), global_step
-                        )
+                            tf_slice_optimize[tmp_op], tf_slice_vel_update[
+                                tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
+                                optimizer, tf_indices,
+                                tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
+                                tf.constant(start_lr, dtype=tf.float32), global_step
+                            )
 
 
 def check_several_conditions_with_assert(num_gpus):
@@ -1033,21 +1035,21 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
                         tf_weights_this: np.random.normal(scale=0.001, size=(
-                            cnn_hyperparameters[current_op]['weights'][0],
+                            cnn_hyperparameters[current_op]['in'],
                             amount_to_add,1,1)),
                         tf_bias_this: np.random.normal(scale=0.001, size=(amount_to_add)),
 
                         tf_weights_next: np.random.normal(scale=0.001, size=(
-                            amount_to_add, cnn_hyperparameters[next_fulcon_op]['weights'][1], 1, 1)
+                            amount_to_add, cnn_hyperparameters[next_fulcon_op]['out'], 1, 1)
                                                           ),
                         tf_wvelocity_this: np.zeros(shape=(
-                            cnn_hyperparameters[current_op]['weights'][0],
+                            cnn_hyperparameters[current_op]['in'],
                             amount_to_add,1,1),
                             dtype=np.float32),
                         tf_bvelocity_this: np.zeros(shape=(amount_to_add), dtype=np.float32),
                         tf_wvelocity_next: np.zeros(shape=(
                             amount_to_add,
-                            cnn_hyperparameters[next_fulcon_op]['weights'][1]),
+                            cnn_hyperparameters[next_fulcon_op]['out'],1,1),
                             dtype=np.float32)
                     })
 
@@ -1063,7 +1065,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         logger.debug('\t\tNew Weights: %s', str(tf.shape(current_op_weights).eval()))
 
     # change out hyperparameter of op
-    cnn_hyperparameters[current_op]['in'] += amount_to_add
+    cnn_hyperparameters[current_op]['out'] += amount_to_add
     if research_parameters['debugging']:
         assert cnn_hyperparameters[current_op]['in'][1] == \
                tf.shape(current_op_weights).eval()[1]
@@ -1073,8 +1075,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         tf_out_size: cnn_hyperparameters[current_op]['out']
     })
 
-
-    next_fulcon_op = cnn_ops[cnn_ops.index(current_op) + 1:]
+    next_fulcon_op = cnn_ops[cnn_ops.index(current_op) + 1]
     assert current_op != next_fulcon_op
 
     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + next_fulcon_op, reuse=True):
@@ -1091,7 +1092,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                tf.shape(next_fulcon_op_weights).eval()[0]
 
     session.run(tf_update_hyp_ops[next_fulcon_op], feed_dict={
-        tf_weight_shape: cnn_hyperparameters[next_fulcon_op]['weights']
+        tf_in_size: cnn_hyperparameters[next_fulcon_op]['in'],
+        tf_out_size: cnn_hyperparameters[next_fulcon_op]['out']
     })
 
     # optimize the newly added fiterls only
@@ -1120,8 +1122,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             pbatch_data, pbatch_labels = [], []
 
             pool_feed_dict = {
-                tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
-                                      cnn_hyperparameters[current_op]['weights'][3])}
+                tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
+                                      cnn_hyperparameters[current_op]['out'])}
             pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
 
             for gpu_id in range(num_gpus):
@@ -1585,6 +1587,7 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
     global cnn_ops,first_fc,final_2d_width,model_hyperparameters
     pruned_cnn_hyps = {}
     prev_op = None
+    prev_fulcon_op = None
     for op in cnn_ops:
         if 'pool' in op:
             pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
@@ -1609,10 +1612,17 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
         if 'fulcon' in op:
             if op==first_fc:
                 pruned_cnn_hyps[op] = {'in':current_cnn_hyperparams[op]['in'],
-                                       'out': current_cnn_hyperparams[op]['out']}
+                                       'out': max([model_hyperparameters['fulcon_min_threshold'],
+                                                   int(current_cnn_hyperparams[op]['out']*prune_factor)])}
                 pruned_cnn_hyps[op]['in']=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op]['weights'][3]
+            elif op!='fulcon_out':
+                pruned_cnn_hyps[op] = {'in': current_cnn_hyperparams[prev_fulcon_op]['in'],
+                                       'out': max([model_hyperparameters['fulcon_min_threshold'],
+                                                   int(current_cnn_hyperparams[op]['out'] * prune_factor)])}
             else:
-                pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
+                pruned_cnn_hyps[op] = {'in': current_cnn_hyperparams[prev_fulcon_op]['in'],
+                                       'out': current_cnn_hyperparams[op]['out']}
+            prev_fulcon_op = op
 
     return pruned_cnn_hyps
 

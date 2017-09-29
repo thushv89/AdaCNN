@@ -19,7 +19,7 @@ import tensorflow as tf
 
 from collections import OrderedDict
 
-logging_level = logging.DEBUG
+logging_level = logging.INFO
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 

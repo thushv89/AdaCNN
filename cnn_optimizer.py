@@ -367,8 +367,8 @@ def optimize_masked_momentum_gradient_for_fulcon(optimizer, filter_indices_to_re
                 if v.name == b.name:
                     grads_b = g
 
-            transposed_shape = [tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR],
-                                tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR],
+            transposed_shape = [tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR],
+                                tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR],
                                 ]
 
             logger.debug('Applying gradients for %s', op)
