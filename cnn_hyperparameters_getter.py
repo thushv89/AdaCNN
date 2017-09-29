@@ -103,7 +103,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
     model_hyperparameters['epochs'] = 10
-    model_hyperparameters['n_iterations'] = 600
+    model_hyperparameters['n_iterations'] = 1000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
@@ -225,7 +225,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         test_size = 12500
         n_slices = 10
         fluctuation = 10
-        resize_to = 64
+        resize_to = 96
 
     elif dataset_name == 'svhn-10':
 

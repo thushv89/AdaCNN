@@ -79,7 +79,10 @@ def get_ops_hyps_from_string(dataset_info,net_string):
     # Init,0,0,0#C,1,1,64#C,5,1,64#C,5,1,128#P,5,2,0#C,1,1,64#P,2,2,0#Terminate,0,0,0
 
     num_channels = dataset_info['n_channels']
-    image_size = dataset_info['image_size']
+    if dataset_info['dataset_name'] != 'imagenet-250':
+        image_size = dataset_info['image_size']
+    else:
+        image_size = dataset_info['resize_to']
     num_labels = dataset_info['n_labels']
 
     cnn_ops = []

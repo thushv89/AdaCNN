@@ -38,7 +38,7 @@ rigid_pool_type = None
 rigid_naive = False
 
 interval_parameters, research_parameters, model_hyperparameters, dataset_info = None, None, None, None
-image_size, num_channels = None,None
+image_size, num_channels,resize_to = None,None,None
 n_epochs, n_iterations, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation = None,None,None,None,None,None,None,None
 cnn_string, filter_vector = None,None
 
@@ -69,7 +69,7 @@ valid_acc_decay = None
 n_tasks = None
 def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling):
     global interval_parameters, model_hyperparameters, research_parameters, dataset_info, cnn_string, filter_vector
-    global image_size, num_channels
+    global image_size, num_channels, resize_to
     global n_epochs, n_iterations, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation
     global start_lr, decay_learning_rate, decay_rate, decay_steps
     global batch_size, beta, include_l2_loss
@@ -83,6 +83,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     dataset_info = cnn_hyperparameters_getter.get_data_specific_hyperparameters(dataset_name, dataset_behavior,
                                                                                 dataset_dir)
     image_size = dataset_info['image_size']
+    resize_to = dataset_info['resize_to']
     num_channels = dataset_info['n_channels']
 
     # interval parameters
@@ -519,8 +520,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     tf_dropout_rate = tf.Variable(dropout_rate,trainable=False,dtype=tf.float32,name='tf_dropout_rate')
     # Test data (Global)
     logger.info('Defining Test data placeholders')
-    tf_test_dataset = tf.placeholder(tf.float32, shape=(batch_size, image_size, image_size, num_channels),
-                                     name='TestDataset')
+    if datatype != 'imagenet-250':
+        tf_test_dataset = tf.placeholder(tf.float32, shape=(batch_size, image_size, image_size, num_channels),
+                                         name='TestDataset')
+    else:
+        tf_test_dataset = tf.placeholder(tf.float32, shape=(batch_size, resize_to, resize_to, num_channels),
+                                         name='TestDataset')
     tf_test_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TestLabels')
 
     # Tower-Like Calculations
@@ -536,12 +541,21 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf.get_variable_scope().reuse_variables()
                 # Input train data
                 logger.info('\tDefning Training Data placeholders and weights')
-                tf_train_data_batch.append(tf.placeholder(tf.float32,
-                                                          shape=(
-                                                              batch_size, image_size, image_size, num_channels),
-                                                          name='TrainDataset'))
+                if datatype != 'imagenet-250':
+                    tf_train_data_batch.append(tf.placeholder(tf.float32,
+                                                              shape=(
+                                                                  batch_size, image_size, image_size, num_channels),
+                                                              name='TrainDataset'))
+                else:
+                    tf_train_data_batch.append(tf.placeholder(tf.float32,
+                                                              shape=(
+                                                                  batch_size, resize_to, resize_to, num_channels),
+                                                              name='TrainDataset'))
+
                 tf_train_label_batch.append(
                     tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TrainLabels'))
+
+
                 tf_data_weights.append(tf.placeholder(tf.float32, shape=(batch_size), name='TrainWeights'))
 
                 # Training data opearations
@@ -623,9 +637,15 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # GLOBAL: Tensorflow operations for test data
         # Valid data (Next train batch) Unseen
         logger.info('Validation data placeholders, losses and predictions')
-        tf_valid_data_batch = tf.placeholder(tf.float32,
-                                             shape=(batch_size, image_size, image_size, num_channels),
-                                             name='ValidDataset')
+        if datatype != 'imagenet-250':
+            tf_valid_data_batch = tf.placeholder(tf.float32,
+                                                 shape=(batch_size, image_size, image_size, num_channels),
+                                                 name='ValidDataset')
+        else:
+            tf_valid_data_batch = tf.placeholder(tf.float32,
+                                                 shape=(batch_size, resize_to, resize_to, num_channels),
+                                                 name='ValidDataset')
+
         tf_valid_label_batch = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='ValidLabels')
         # Tensorflow operations for validation data
         valid_loss_op = tower_loss(tf_valid_data_batch, tf_valid_label_batch, False, None, tf_cnn_hyperparameters)
@@ -1994,10 +2014,6 @@ if __name__ == '__main__':
 
                 # We load 1 extra batch (chunk_size+1) because we always make the valid batch the batch_id+1
 
-                if batch_id==0:
-                    logger.info('\tDataset shape: %s', train_dataset.shape)
-                    logger.info('\tLabels shape: %s', train_labels.shape)
-
                 # Feed dicitonary with placeholders for each tower
                 batch_data, batch_labels, batch_weights = [], [], []
                 train_feed_dict = {}
@@ -2013,6 +2029,10 @@ if __name__ == '__main__':
                     b_d, b_l = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
                     batch_data.append(b_d)
                     batch_labels.append(b_l)
+
+                    if batch_id == 0:
+                        logger.info('\tDataset shape: %s', b_d.shape)
+                        logger.info('\tLabels shape: %s', b_l.shape)
 
                     if (batch_id + gpu_id) % research_parameters['log_distribution_every'] == 0:
                         cnt = Counter(label_seq)
