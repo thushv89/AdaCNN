@@ -585,10 +585,16 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 # Pooling data operations
                 logger.info('\tPool related operations')
-                tf_pool_data_batch.append(tf.placeholder(tf.float32,
-                                                         shape=(
-                                                             batch_size, image_size, image_size, num_channels),
-                                                         name='PoolDataset'))
+                if datatype!='imagenet-250':
+                    tf_pool_data_batch.append(tf.placeholder(tf.float32,
+                                                             shape=(
+                                                                 batch_size, image_size, image_size, num_channels),
+                                                             name='PoolDataset'))
+                else:
+                    tf_pool_data_batch.append(tf.placeholder(tf.float32,
+                                                             shape=(
+                                                                 batch_size, resize_to, resize_to, num_channels),
+                                                             name='PoolDataset'))
                 tf_pool_label_batch.append(
                     tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='PoolLabels'))
 
@@ -2244,6 +2250,12 @@ if __name__ == '__main__':
                     for test_batch_id in range(test_size // batch_size):
                         batch_test_data = test_dataset[test_batch_id * batch_size:(test_batch_id + 1) * batch_size, :, :, :]
                         batch_test_labels = test_labels[test_batch_id * batch_size:(test_batch_id + 1) * batch_size, :]
+
+                        if datatype=='imagenet-250':
+                            batch_test_data = batch_test_data[:,
+                                              (image_size-resize_to)//2:((image_size-resize_to)//2)+resize_to,
+                                              (image_size - resize_to) // 2:((image_size - resize_to) // 2) + resize_to,
+                                              :]
 
                         batch_ohe_test_labels = np.zeros((batch_size,num_labels),dtype=np.float32)
                         batch_ohe_test_labels[np.arange(batch_size),batch_test_labels[:,0]] = 1.0
