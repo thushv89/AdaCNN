@@ -87,68 +87,67 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
 def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
     # if using momentum
     vel_var_list = []
+    print(cnn_ops)
     if research_parameters['optimizer'] == 'Momentum':
         for tmp_op in cnn_ops:
             op_scope = tmp_op
             if 'conv' in tmp_op:
-                for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
-                                           scope=main_scope.name + TF_SCOPE_DIVIDER + op_scope):
-                    if TF_WEIGHTS in v.name:
-                        with tf.variable_scope(op_scope + TF_SCOPE_DIVIDER + TF_WEIGHTS) as scope:
-                            vel_var_list.append(
-                                tf.get_variable(name=TF_TRAIN_MOMENTUM,
-                                                initializer=tf.zeros(shape=cnn_hyperparameters[tmp_op]['weights'],
-                                                                     dtype=tf.float32),
-                                                dtype=tf.float32, trainable=False))
-                            vel_var_list.append(
-                                tf.get_variable(name=TF_POOL_MOMENTUM,
-                                                initializer=tf.zeros(shape=cnn_hyperparameters[tmp_op]['weights'],
-                                                                     dtype=tf.float32),
-                                                dtype=tf.float32, trainable=False))
-                    elif TF_BIAS in v.name:
-                        with tf.variable_scope(op_scope + TF_SCOPE_DIVIDER + TF_BIAS) as scope:
-                            vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
-                                                                initializer=tf.zeros(
-                                                                    shape=cnn_hyperparameters[tmp_op]['weights'][3],
-                                                                    dtype=tf.float32),
-                                                                dtype=tf.float32, trainable=False))
+                with tf.variable_scope(tmp_op):
 
-                            vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
-                                                                initializer=tf.zeros(
-                                                                    shape=[cnn_hyperparameters[tmp_op]['weights'][3]],
-                                                                    dtype=tf.float32),
-                                                                dtype=tf.float32, trainable=False))
+                    with tf.variable_scope(TF_WEIGHTS) as scope:
+                        vel_var_list.append(
+                            tf.get_variable(name=TF_TRAIN_MOMENTUM,
+                                            initializer=tf.zeros(shape=cnn_hyperparameters[tmp_op]['weights'],
+                                                                 dtype=tf.float32),
+                                            dtype=tf.float32, trainable=False))
+                        vel_var_list.append(
+                            tf.get_variable(name=TF_POOL_MOMENTUM,
+                                            initializer=tf.zeros(shape=cnn_hyperparameters[tmp_op]['weights'],
+                                                                 dtype=tf.float32),
+                                            dtype=tf.float32, trainable=False))
+
+                    with tf.variable_scope(TF_BIAS) as scope:
+                        vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
+                                                            initializer=tf.zeros(
+                                                                shape=cnn_hyperparameters[tmp_op]['weights'][3],
+                                                                dtype=tf.float32),
+                                                            dtype=tf.float32, trainable=False))
+
+                        vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
+                                                            initializer=tf.zeros(
+                                                                shape=[cnn_hyperparameters[tmp_op]['weights'][3]],
+                                                                dtype=tf.float32),
+                                                            dtype=tf.float32, trainable=False))
 
             elif 'fulcon' in tmp_op:
-                for v in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
-                                           scope=main_scope.name + TF_SCOPE_DIVIDER + op_scope):
-                    if TF_WEIGHTS in v.name:
-                        with tf.variable_scope(op_scope + TF_SCOPE_DIVIDER + TF_WEIGHTS) as scope:
-                            vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
-                                                                initializer=tf.zeros(
-                                                                    shape=[cnn_hyperparameters[tmp_op]['in'],
-                                                                           cnn_hyperparameters[tmp_op]['out']],
-                                                                    dtype=tf.float32),
-                                                                dtype=tf.float32, trainable=False))
-                            vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
-                                                                initializer=tf.zeros(
-                                                                    shape=[cnn_hyperparameters[tmp_op]['in'],
-                                                                           cnn_hyperparameters[tmp_op]['out']],
-                                                                    dtype=tf.float32),
-                                                                dtype=tf.float32, trainable=False))
-                    elif TF_BIAS in v.name:
-                        with tf.variable_scope(op_scope + TF_SCOPE_DIVIDER + TF_BIAS) as scope:
-                            vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
-                                                                initializer=tf.zeros(
-                                                                    shape=[cnn_hyperparameters[tmp_op]['out']],
-                                                                    dtype=tf.float32),
-                                                                dtype=tf.float32, trainable=False))
+                with tf.variable_scope(tmp_op):
 
-                            vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
-                                                                initializer=tf.zeros(
-                                                                    shape=[cnn_hyperparameters[tmp_op]['out']],
-                                                                    dtype=tf.float32),
-                                                                dtype=tf.float32, trainable=False))
+                    with tf.variable_scope(TF_WEIGHTS) as scope:
+                        vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
+                                                            initializer=tf.zeros(
+                                                                shape=[cnn_hyperparameters[tmp_op]['in'],
+                                                                       cnn_hyperparameters[tmp_op]['out']],
+                                                                dtype=tf.float32),
+                                                            dtype=tf.float32, trainable=False))
+                        vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
+                                                            initializer=tf.zeros(
+                                                                shape=[cnn_hyperparameters[tmp_op]['in'],
+                                                                       cnn_hyperparameters[tmp_op]['out']],
+                                                                dtype=tf.float32),
+                                                            dtype=tf.float32, trainable=False))
+
+                    with tf.variable_scope(TF_BIAS) as scope:
+                        vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
+                                                            initializer=tf.zeros(
+                                                                shape=[cnn_hyperparameters[tmp_op]['out']],
+                                                                dtype=tf.float32),
+                                                            dtype=tf.float32, trainable=False))
+
+                        vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
+                                                            initializer=tf.zeros(
+                                                                shape=[cnn_hyperparameters[tmp_op]['out']],
+                                                                dtype=tf.float32),
+                                                            dtype=tf.float32, trainable=False))
 
     return vel_var_list
 
@@ -232,18 +231,40 @@ def reset_cnn_preserve_weights(cnn_hyps, cnn_ops):
                 reset_ops.append(tf.assign(act_var, new_act_var, validate_shape=False))
 
         if 'fulcon' in op:
+
             with tf.variable_scope(op):
                 weights = tf.get_variable(name=TF_WEIGHTS)
 
-                gathered_weights = tf.gather(weights, tf.range(cnn_hyps[op]['in']))
+                # Out pruning
+                tr_weights = tf.transpose(weights)
+                gathered_weights = tf.gather(tr_weights, tf.range(cnn_hyps[op]['out']))
+                gathered_weights = tf.transpose(gathered_weights)
+
+                # In pruning
+                gathered_weights = tf.gather(gathered_weights, tf.range(cnn_hyps[op]['in']))
+
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
                 with tf.variable_scope(TF_WEIGHTS):
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_w_vel = tf.gather(w_vel, tf.range(cnn_hyps[op]['in']))
+
+                    # Out pruning
+                    tr_w_vel = tf.transpose(w_vel)
+                    gathered_w_vel = tf.gather(tr_w_vel, tf.range(cnn_hyps[op]['out']))
+                    gathered_w_vel = tf.transpose(gathered_w_vel)
+
+                    # In pruning
+                    gathered_w_vel = tf.gather(gathered_w_vel, tf.range(cnn_hyps[op]['in']))
 
                     pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_w_vel = tf.gather(pool_w_vel, tf.range(cnn_hyps[op]['in']))
+
+                    # Out pruning
+                    tr_pool_w_vel = tf.transpose(pool_w_vel)
+                    gathered_pool_w_vel = tf.gather(tr_pool_w_vel, tf.range(cnn_hyps[op]['out']))
+                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel)
+
+                    # In pruning
+                    gathered_pool_w_vel = tf.gather(gathered_pool_w_vel, tf.range(cnn_hyps[op]['in']))
 
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))

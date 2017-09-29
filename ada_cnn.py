@@ -1609,18 +1609,28 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
                 pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
                                                          int(pruned_cnn_hyps[op]['weights'][3] * prune_factor)])
             prev_op = op
+
         if 'fulcon' in op:
-            if op==first_fc:
+
+            # if first fc is fulcon_out
+            if op==first_fc and op=='fulcon_out':
                 pruned_cnn_hyps[op] = {'in':current_cnn_hyperparams[op]['in'],
-                                       'out': max([model_hyperparameters['fulcon_min_threshold'],
-                                                   int(current_cnn_hyperparams[op]['out']*prune_factor)])}
+                                       'out': current_cnn_hyperparams[op]['out']}
                 pruned_cnn_hyps[op]['in']=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op]['weights'][3]
-            elif op!='fulcon_out':
-                pruned_cnn_hyps[op] = {'in': current_cnn_hyperparams[prev_fulcon_op]['in'],
+            # if first_fc is not fulcon_out
+            elif op==first_fc:
+                pruned_cnn_hyps[op] = {'in': current_cnn_hyperparams[op]['in'],
                                        'out': max([model_hyperparameters['fulcon_min_threshold'],
                                                    int(current_cnn_hyperparams[op]['out'] * prune_factor)])}
+                pruned_cnn_hyps[op]['in'] = final_2d_width * final_2d_width * pruned_cnn_hyps[prev_op]['weights'][3]
+            # for all layers not first_fc and fulcon_out
+            elif op != 'fulcon_out':
+                pruned_cnn_hyps[op] = {'in': pruned_cnn_hyps[prev_fulcon_op]['out'],
+                                       'out': max([model_hyperparameters['fulcon_min_threshold'],
+                                                   int(current_cnn_hyperparams[op]['out'] * prune_factor)])}
+            # for fulcon_out if fulcon_out is not first_fc
             else:
-                pruned_cnn_hyps[op] = {'in': current_cnn_hyperparams[prev_fulcon_op]['in'],
+                pruned_cnn_hyps[op] = {'in': pruned_cnn_hyps[prev_fulcon_op]['out'],
                                        'out': current_cnn_hyperparams[op]['out']}
             prev_fulcon_op = op
 
@@ -1750,12 +1760,18 @@ if __name__ == '__main__':
     # Datasets
     if datatype=='cifar-10':
         dataset_file= h5py.File("data"+os.sep+"cifar_10_dataset.hdf5", "r")
+        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
 
     elif datatype=='cifar-100':
         dataset_file = h5py.File("data" + os.sep + "cifar_100_dataset.hdf5", "r")
+        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
 
-    train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
-    test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
+    elif datatype=='imagenet-250':
+        dataset_file = h5py.File(".."+os.sep+"PreprocessingBenchmarkImageDatasets"+ os.sep + "imagenet_small_test" + os.sep + 'imagenet_250_dataset.hdf5', 'r')
+        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        test_dataset, test_labels = dataset_file['/valid/images'], dataset_file['/valid/labels']
 
     logging.info('Reading data from HDF5 File sucessful.\n')
 
@@ -1807,8 +1823,14 @@ if __name__ == '__main__':
         tf_cnn_hyperparameters = cnn_intializer.init_tf_hyperparameters(cnn_ops, cnn_hyperparameters)
         logger.info('Defining Weights and Bias for CNN operations')
         _ = cnn_intializer.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
+        logger.info('Following parameters defined')
+        logger.info([v.name for v in tf.trainable_variables()])
+        logger.info('='*80)
         logger.info('Defining Velocities for Weights and Bias for CNN operations')
         _ = cnn_intializer.define_velocity_vectors(scope, cnn_ops, cnn_hyperparameters)
+        logger.info('Following parameters defined')
+        logger.info([v.name for v in tf.global_variables()])
+        logger.info('=' * 80)
     logger.info(('=' * 80) + '\n')
 
 
@@ -1876,9 +1898,12 @@ if __name__ == '__main__':
     if datatype=='cifar-10':
         labels_per_task = 5
         labels_of_each_task = [[0,1,2,3,4],[5,6,7,8,9]]
-
     elif datatype=='cifar-100':
         labels_per_task = 25
+        labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
+    elif datatype=='imagenet-250':
+        labels_per_task = 25
+        labels_of_each_task = [list(range(i * labels_per_task, (i + 1) * labels_per_task)) for i in range(n_tasks)]
 
     if behavior=='non-stationary':
         data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
@@ -2441,8 +2466,10 @@ if __name__ == '__main__':
                                      (t1_train - t0_train) / num_gpus, op_count, var_count)
 
         if adapt_structure:
+            logger.info('Current CNN Hyperparameters')
+            logger.info(cnn_hyperparameters)
 
-            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.5)
+            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.6)
             logger.info('Obtained prune hyperparameters')
             logger.info(pruned_hyps)
             logger.info('='*80)
@@ -2458,11 +2485,26 @@ if __name__ == '__main__':
                     rolling_ativation_means[tmp_op] = np.zeros([pruned_hyps[tmp_op]['weights'][3]])
                 elif 'fulcon' in tmp_op:
                     session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_in_size: pruned_hyps[tmp_op]['in']
+                        tf_in_size: pruned_hyps[tmp_op]['in'],
+                        tf_out_size: pruned_hyps[tmp_op]['out']
                     })
+
             cnn_hyperparameters = pruned_hyps
 
+            logger.info('Evaluating the weight and bias parameter shapes')
+            for tmp_op in cnn_ops:
+                if 'pool' in tmp_op:
+                    continue
+                with tf.variable_scope(TF_GLOBAL_SCOPE,reuse=True):
+                    with tf.variable_scope(tmp_op,reuse=True):
+                        logger.info(tmp_op)
+                        logger.info('Weight Shape')
+                        logger.info(tf.get_variable(TF_WEIGHTS).eval().shape)
+                        logger.info('Bias Shape')
+                        logger.info(tf.get_variable(TF_BIAS).eval().shape)
+            logger.info('='*80)
             print(session.run(tf_cnn_hyperparameters))
+
             _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
 
         # =======================================================
