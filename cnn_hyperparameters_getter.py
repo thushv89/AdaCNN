@@ -95,10 +95,6 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['dropout_rate'] = 0.5
     model_hyperparameters['in_dropout_rate'] = 0.2
     model_hyperparameters['use_dropout'] = True
-    model_hyperparameters['use_loc_res_norm'] = False
-    # keep beta small (0.2 is too much >0.002 seems to be fine)
-    model_hyperparameters['include_l2_loss'] = True
-    model_hyperparameters['beta'] = 5e-4
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
@@ -145,7 +141,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     elif dataset_name== 'imagenet-250':
         model_hyperparameters['top_k_accuracy'] = 5.0
 
-        model_hyperparameters['epochs'] = 8
+        model_hyperparameters['epochs'] = 10
         pool_size = int(model_hyperparameters['batch_size'] * 0.5 * num_labels)
 
         if not adapt_structure:

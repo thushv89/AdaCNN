@@ -290,6 +290,10 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     if training and use_dropout:
                         x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
+                #activation_ops.append(
+                #    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(tf.abs(w), [1]),
+                #              validate_shape=False))
+
     return x, activation_ops
 
 
@@ -2517,6 +2521,8 @@ if __name__ == '__main__':
             logger.info('Current CNN Hyperparameters')
             logger.info(cnn_hyperparameters)
 
+            prune_factor = np.random.random() + 0.25
+            prune_factor = prune_factor if prune_factor < 0.75 else 0.75
             pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.6)
             logger.info('Obtained prune hyperparameters')
             logger.info(pruned_hyps)
