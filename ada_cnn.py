@@ -26,6 +26,7 @@ import ada_cnn_adapter
 import data_generator
 import label_sequence_generator
 import h5py
+import prune_reward_regressor
 
 logging_level = logging.INFO
 logging_format = '[%(funcName)s] %(message)s'
@@ -203,6 +204,7 @@ perf_logger = None
 
 # Reset CNN
 tf_reset_cnn, tf_reset_cnn_custom = None, None
+prune_reward_experience = []
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -474,6 +476,15 @@ def setup_loggers(adapt_structure):
         q_logger.addHandler(q_handler)
         q_logger.info('#batch_id,q_metric')
 
+        prune_logger = logging.getLogger('prune_reward_logger')
+        prune_logger.propagate = False
+        prune_logger.setLevel(logging.INFO)
+        prune_handler = logging.FileHandler(output_dir + os.sep + 'PruneReward.log', mode='w')
+        prune_handler.setFormatter(logging.Formatter('%(message)s'))
+        prune_logger.addHandler(q_handler)
+        prune_logger.info('#task_id,prune_factor,acc_gain,reward')
+
+
     class_dist_logger = logging.getLogger('class_dist_logger')
     class_dist_logger.propagate = False
     class_dist_logger.setLevel(logging.INFO)
@@ -499,7 +510,7 @@ def setup_loggers(adapt_structure):
 
     return main_logger, perf_logger, \
            cnn_structure_logger, q_logger, class_dist_logger, \
-           pool_dist_logger, pool_ft_dist_logger, hyp_logger, error_logger
+           pool_dist_logger, pool_ft_dist_logger, hyp_logger, error_logger, prune_logger
 
 
 def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
@@ -1483,8 +1494,6 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
             else:
                 logger.info('Greedy Not adapting period of epoch')
                 if np.random.random() < 0.3:
-                    state, action, invalid_actions = q_learner.get_donothing_action(data)
-                elif np.random.random() < 0.6:
                     state, action, invalid_actions = q_learner.get_naivetrain_action(data)
                 else:
                     state, action, invalid_actions = q_learner.get_finetune_action(data)
@@ -1505,8 +1514,6 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
             else:
                 logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
                 if np.random.random()<0.3:
-                    state, action, invalid_actions = q_learner.get_donothing_action(data)
-                elif np.random.random()<0.6:
                     state, action, invalid_actions = q_learner.get_naivetrain_action(data)
                 else:
                     state, action, invalid_actions = q_learner.get_finetune_action(data)
@@ -1531,8 +1538,6 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
             logger.info('Greedy Adapting period of epoch (both)')
             logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
             if np.random.random() < 0.3:
-                state, action, invalid_actions = q_learner.get_donothing_action(data)
-            elif np.random.random() < 0.6:
                 state, action, invalid_actions = q_learner.get_naivetrain_action(data)
             else:
                 state, action, invalid_actions = q_learner.get_finetune_action(data)
@@ -1757,6 +1762,114 @@ def get_pruned_cnn_hyp_feed_dict(prune_hyps):
             )
 
     return feed_dict
+
+
+def calculate_pool_accuracy(hard_pool):
+    global pool_accuracy, pool_dataset, pool_labels, p_accuracy
+    pool_accuracy = []
+    pool_dataset, pool_labels = hard_pool.get_pool_data(False)
+    for pool_id in range(hard_pool.get_size() // batch_size):
+        pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
+        pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
+        pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
+                          tf_pool_label_batch[0]: pbatch_labels}
+        p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
+        if num_labels <= 100:
+            pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
+        else:
+            pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
+    p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+
+    return p_accuracy
+
+
+def prune_the_network(rew_reg, task_id, type, prune_logger):
+    global tmp_op, cnn_hyperparameters, prune_reward_experience
+
+    logger.info('Current CNN Hyperparameters')
+    logger.info(cnn_hyperparameters)
+    p_accuracy_before_prune = calculate_pool_accuracy(hard_pool_valid)
+    # prune_factor = 0.5
+    if type=='random':
+        prune_factor = np.random.random() + 0.25
+        prune_factor = prune_factor if prune_factor < 0.75 else 0.75
+    elif type=='regress':
+        prune_factor = rew_reg.predict_best_prune_factor(task_id)
+    else:
+        raise NotImplementedError
+
+    logger.info('Prune factor: %.3f', prune_factor)
+    pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters, prune_factor)
+    logger.info('Obtained prune hyperparameters')
+    logger.info(pruned_hyps)
+    logger.info('=' * 80)
+    # Currently have the amounts after pruning
+    # With that, we find the amount of prune_ids that will make the final structure same as pruned_hyperparameters
+    # weight_mean_ops = session.run(tf_weight_mean_ops)
+    pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
+    # prune_ids_feed_dict = get_pruned_ids_feed_dict(cnn_hyperparameters,pruned_hyps, weight_mean_ops)
+    # full_prune_feed_dict = dict(pruned_feed_dict)
+    # full_prune_feed_dict.update(prune_ids_feed_dict)
+    # session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
+    session.run(tf_reset_cnn, feed_dict=pruned_feed_dict)
+
+    for tmp_op in cnn_ops:
+        if 'conv' in tmp_op:
+            session.run(tf_update_hyp_ops[tmp_op], feed_dict={
+                tf_weight_shape: pruned_hyps[tmp_op]['weights']
+            })
+            rolling_ativation_means[tmp_op] = np.zeros([pruned_hyps[tmp_op]['weights'][3]])
+        elif 'fulcon' in tmp_op:
+            session.run(tf_update_hyp_ops[tmp_op], feed_dict={
+                tf_in_size: pruned_hyps[tmp_op]['in'],
+                tf_out_size: pruned_hyps[tmp_op]['out']
+            })
+    cnn_hyperparameters = pruned_hyps
+    logger.info('Evaluating the weight and bias parameter shapes')
+    for tmp_op in cnn_ops:
+        if 'pool' in tmp_op:
+            continue
+        with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
+            with tf.variable_scope(tmp_op, reuse=True):
+                logger.info(tmp_op)
+                logger.info('Weight Shape')
+                logger.info(tf.get_variable(TF_WEIGHTS).eval().shape)
+                logger.info('Bias Shape')
+                logger.info(tf.get_variable(TF_BIAS).eval().shape)
+    logger.info('=' * 80)
+    print(session.run(tf_cnn_hyperparameters))
+
+    _ = session.run([tower_logits], feed_dict=train_feed_dict)
+
+    p_accuracy_after_prune = calculate_pool_accuracy(hard_pool_valid)
+
+    if p_accuracy_after_prune > p_accuracy_before_prune:
+        prune_reward = np.log(1.0 + prune_factor) * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
+    else:
+        prune_reward = np.log(1.0 + (1.0 - prune_factor)) * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
+    prune_reward_experience.append((task_id, prune_factor, prune_reward))
+    prune_logger.info('%d,%.5f,%.5f,%.5f', task_id, prune_factor,
+                      (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward)
+
+
+
+def get_batch_of_prune_reward_exp(batch_size):
+    global prune_reward_experience,n_tasks
+
+    task_ids, prune_factors, rewards = zip(*prune_reward_experience)
+
+    batch_ind = np.random.randint(0,len(prune_reward_experience),(batch_size))
+
+    sel_task_ids = np.zeros((batch_size,n_tasks),dtype=np.float32)
+    sel_task_ids[:,np.asarray(task_ids[batch_ind]).astype(np.int32)] = 1.0
+    sel_prune_fac = np.asarray(prune_factors[batch_ind]).reshape(-1,1)
+    sel_rewards = np.asarray(rewards[batch_ind]).reshape(-1,1)
+
+    in_data = np.append(sel_task_ids,sel_prune_fac,axis=1)
+
+    return in_data, sel_rewards
+
+
 if __name__ == '__main__':
 
     # Various run-time arguments specified
@@ -1807,7 +1920,7 @@ if __name__ == '__main__':
     # Setting up loggers
     logger, perf_logger, cnn_structure_logger, \
     q_logger, class_dist_logger, pool_dist_logger, pool_dist_ft_logger, \
-    hyp_logger, error_logger = setup_loggers(adapt_structure)
+    hyp_logger, error_logger, prune_logger = setup_loggers(adapt_structure)
 
     logger.info('Created loggers')
 
@@ -1962,24 +2075,7 @@ if __name__ == '__main__':
             top_k_accuracy=model_hyperparameters['top_k_accuracy']
         )
 
-        prune_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            qlearner_type='prune', discount_rate=0.5, fit_interval=1,
-            exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
-            filter_vector=filter_vector,
-            conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
-            n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
-            epsilon=0.5, target_update_rate=20,
-            batch_size=32, persist_dir=output_dir,
-            session=session, random_mode=False,
-            state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
-            rand_state_length=32, add_amount=model_hyperparameters['add_amount'],
-            remove_amount=model_hyperparameters['remove_amount'],
-            num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
-            fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
-            trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length'],
-            top_k_accuracy=model_hyperparameters['top_k_accuracy']
-        )
+        prune_reward_reg = prune_reward_regressor.PruneRewardRegressor(session=session,n_tasks=n_tasks,persist_dir=output_dir)
 
     # Running initialization opeartion
     logger.info('Running global variable initializer')
@@ -2051,6 +2147,7 @@ if __name__ == '__main__':
     # Reward for Q-Learner
     prev_pool_accuracy = 0
     max_pool_accuracy = 0
+
 
     # Stop and start adaptations when necessary
     start_adapting = False
@@ -2403,21 +2500,7 @@ if __name__ == '__main__':
 
                             # ==================================================================
                             # Calculating pool accuracy
-                            pool_accuracy = []
-                            pool_dataset, pool_labels = hard_pool_valid.get_pool_data(False)
-
-                            for pool_id in range(hard_pool_valid.get_size() // batch_size):
-                                pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
-                                pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
-                                pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
-                                                  tf_pool_label_batch[0]: pbatch_labels}
-                                p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
-                                if num_labels <= 100:
-                                    pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
-                                else:
-                                    pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
-
-                            p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+                            p_accuracy = calculate_pool_accuracy(hard_pool_ft)
                             pool_acc_queue.append(p_accuracy)
                             if len(pool_acc_queue) > 20:
                                 del pool_acc_queue[0]
@@ -2567,78 +2650,29 @@ if __name__ == '__main__':
                     perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
                                      (t1_train - t0_train) / num_gpus, op_count, var_count)
 
-        if adapt_structure:
-            logger.info('Current CNN Hyperparameters')
-            logger.info(cnn_hyperparameters)
+            # We prune netowork at the end of each task
+            if adapt_structure:
+                if epoch<1:
+                    prune_the_network(prune_reward_reg, task,'random',prune_logger)
+                else:
+                    if np.random.random()<0.5:
+                        logger.info('Training the Prune Reward Regressor')
+                        in_d, out_d = get_batch_of_prune_reward_exp(10)
+                        prune_reward_reg.train_mlp_with_data(in_d, out_d)
 
-            #prune_factor = np.random.random() + 0.25
-            #prune_factor = prune_factor if prune_factor < 0.75 else 0.75
-            prune_factor = 0.5
-            logger.info('Prune factor: %.3f',prune_factor)
-            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,prune_factor)
-            logger.info('Obtained prune hyperparameters')
-            logger.info(pruned_hyps)
-            logger.info('='*80)
-
-            # Currently have the amounts after pruning
-            # With that, we find the amount of prune_ids that will make the final structure same as pruned_hyperparameters
-            weight_mean_ops = session.run(tf_weight_mean_ops)
-
-            pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
-            #prune_ids_feed_dict = get_pruned_ids_feed_dict(cnn_hyperparameters,pruned_hyps, weight_mean_ops)
-
-            #full_prune_feed_dict = dict(pruned_feed_dict)
-            #full_prune_feed_dict.update(prune_ids_feed_dict)
-            #session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
-            session.run(tf_reset_cnn,feed_dict=pruned_feed_dict)
-
-            for tmp_op in cnn_ops:
-                if 'conv' in tmp_op:
-                    session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_weight_shape: pruned_hyps[tmp_op]['weights']
-                    })
-                    rolling_ativation_means[tmp_op] = np.zeros([pruned_hyps[tmp_op]['weights'][3]])
-                elif 'fulcon' in tmp_op:
-                    session.run(tf_update_hyp_ops[tmp_op], feed_dict={
-                        tf_in_size: pruned_hyps[tmp_op]['in'],
-                        tf_out_size: pruned_hyps[tmp_op]['out']
-                    })
-
-            cnn_hyperparameters = pruned_hyps
-
-            logger.info('Evaluating the weight and bias parameter shapes')
-            for tmp_op in cnn_ops:
-                if 'pool' in tmp_op:
-                    continue
-                with tf.variable_scope(TF_GLOBAL_SCOPE,reuse=True):
-                    with tf.variable_scope(tmp_op,reuse=True):
-                        logger.info(tmp_op)
-                        logger.info('Weight Shape')
-                        logger.info(tf.get_variable(TF_WEIGHTS).eval().shape)
-                        logger.info('Bias Shape')
-                        logger.info(tf.get_variable(TF_BIAS).eval().shape)
-            logger.info('='*80)
-            print(session.run(tf_cnn_hyperparameters))
-
-            _ = session.run([tower_logits], feed_dict=train_feed_dict)
+                    prune_the_network(prune_reward_reg, task, 'regress',prune_logger)
 
         # =======================================================
         # Decay learning rate (if set)
-        if (research_parameters['adapt_structure'] or research_parameters['pooling_for_nonadapt']) and decay_learning_rate and epoch > 1:
+        if (research_parameters['adapt_structure'] or research_parameters['pooling_for_nonadapt']) and decay_learning_rate and epoch > 0:
             session.run(increment_global_step_op)
         # ======================================================
 
         # AdaCNN Algorithm
         if research_parameters['adapt_structure']:
-            if epoch > 1:
+            if epoch > 0:
                 start_eps = max([start_eps*eps_decay,0.1])
                 adapt_period = np.random.choice(['first','last','both','none'])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
-        else:
-            # Noninc pool algorithm
-            if research_parameters['pooling_for_nonadapt']:
-                session.run(increment_global_step_op)
-            # Noninc algorithm
-            else:
-                session.run(increment_global_step_op)
+
