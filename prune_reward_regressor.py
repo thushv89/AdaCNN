@@ -112,6 +112,11 @@ class PruneRewardRegressor(object):
         values_to_try = np.append(values_to_try,prune_factors, axis=1)
 
         predicted_values = self.session.run(self.tf_net_out,feed_dict={self.tf_input:values_to_try})
+
         self.prune_predict_logger.info('Predicting for task %d',task_id)
-        self.prune_predict_logger.info(predicted_values)
+        predict_str = ''
+        for p in predicted_values.ravel().tolist():
+            predict_str += str(p) + ','
+        self.prune_predict_logger.info(predict_str)
         return prune_factors[np.asscalar(np.argmax(predicted_values))]
+

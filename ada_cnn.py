@@ -479,9 +479,9 @@ def setup_loggers(adapt_structure):
         prune_logger = logging.getLogger('prune_reward_logger')
         prune_logger.propagate = False
         prune_logger.setLevel(logging.INFO)
-        prune_handler = logging.FileHandler(output_dir + os.sep + 'PruneReward.log', mode='w')
+        prune_handler = logging.FileHandler(output_dir + os.sep + 'PruneRewardExperience.log', mode='w')
         prune_handler.setFormatter(logging.Formatter('%(message)s'))
-        prune_logger.addHandler(q_handler)
+        prune_logger.addHandler(prune_handler)
         prune_logger.info('#task_id,prune_factor,acc_gain,reward')
 
 
@@ -1765,7 +1765,6 @@ def get_pruned_cnn_hyp_feed_dict(prune_hyps):
 
 
 def calculate_pool_accuracy(hard_pool):
-    global pool_accuracy, pool_dataset, pool_labels, p_accuracy
     pool_accuracy = []
     pool_dataset, pool_labels = hard_pool.get_pool_data(False)
     for pool_id in range(hard_pool.get_size() // batch_size):
@@ -1778,7 +1777,7 @@ def calculate_pool_accuracy(hard_pool):
             pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
         else:
             pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
-    p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 2 else 0
+    p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 0 else 0
 
     return p_accuracy
 
@@ -1791,8 +1790,7 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     p_accuracy_before_prune = calculate_pool_accuracy(hard_pool_valid)
     # prune_factor = 0.5
     if type=='random':
-        prune_factor = np.random.random() + 0.25
-        prune_factor = prune_factor if prune_factor < 0.75 else 0.75
+        prune_factor = np.clip(np.random.random(),0.25,0.75)
     elif type=='regress':
         prune_factor = rew_reg.predict_best_prune_factor(task_id)
     else:
@@ -1848,8 +1846,8 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     else:
         prune_reward = np.log(1.0 + (1.0 - prune_factor)) * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
     prune_reward_experience.append((task_id, prune_factor, prune_reward))
-    prune_logger.info('%d,%.5f,%.5f,%.5f', task_id, prune_factor,
-                      (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward)
+    prune_logger.info('%d,%.5f,%.5f,%.5f,%s', task_id, prune_factor,
+                      (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward,type)
 
 
 
@@ -1857,6 +1855,9 @@ def get_batch_of_prune_reward_exp(batch_size):
     global prune_reward_experience,n_tasks
 
     task_ids, prune_factors, rewards = zip(*prune_reward_experience)
+    task_ids = np.asarray(task_ids)
+    prune_factors = np.asarray(prune_factors)
+    rewards = np.asarray(rewards)
 
     batch_ind = np.random.randint(0,len(prune_reward_experience),(batch_size))
 
@@ -2554,7 +2555,7 @@ if __name__ == '__main__':
 
                             cnn_structure_logger.info(
                                 '%d:%s:%s:%.5f:%s', global_batch_id, current_state,
-                                current_action, np.mean(pool_accuracy),
+                                current_action, p_accuracy,
                                 utils.get_cnn_string_from_ops(cnn_ops, cnn_hyperparameters)
                             )
 
@@ -2657,10 +2658,13 @@ if __name__ == '__main__':
                 else:
                     if np.random.random()<0.5:
                         logger.info('Training the Prune Reward Regressor')
-                        in_d, out_d = get_batch_of_prune_reward_exp(10)
+                        in_d, out_d = get_batch_of_prune_reward_exp(5)
                         prune_reward_reg.train_mlp_with_data(in_d, out_d)
 
-                    prune_the_network(prune_reward_reg, task, 'regress',prune_logger)
+                    if np.random.random()<0.5*(0.75**(epoch)):
+                        prune_the_network(prune_reward_reg, task, 'random',prune_logger)
+                    else:
+                        prune_the_network(prune_reward_reg, task, 'regress', prune_logger)
 
         # =======================================================
         # Decay learning rate (if set)
