@@ -68,6 +68,8 @@ eps_decay = None
 valid_acc_decay = None
 
 n_tasks = None
+prune_min_bound, prune_max_bound = None, None
+
 def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling):
     global interval_parameters, model_hyperparameters, research_parameters, dataset_info, cnn_string, filter_vector
     global image_size, num_channels, resize_to
@@ -78,7 +80,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     global pool_size
     global use_loc_res_norm, lrn_radius, lrn_alpha, lrn_beta
     global start_eps,eps_decay,valid_acc_decay
-    global n_tasks
+    global n_tasks, prune_min_bound, prune_max_bound
 
     # Data specific parameters
     dataset_info = cnn_hyperparameters_getter.get_data_specific_hyperparameters(dataset_name, dataset_behavior,
@@ -143,6 +145,8 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
+    prune_min_bound = model_hyperparameters['prune_min_bound']
+    prune_max_bound = model_hyperparameters['prune_max_bound']
 
 cnn_ops, cnn_hyperparameters = None, None
 
@@ -205,6 +209,7 @@ perf_logger = None
 # Reset CNN
 tf_reset_cnn, tf_reset_cnn_custom = None, None
 prune_reward_experience = []
+
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -482,8 +487,7 @@ def setup_loggers(adapt_structure):
         prune_handler = logging.FileHandler(output_dir + os.sep + 'PruneRewardExperience.log', mode='w')
         prune_handler.setFormatter(logging.Formatter('%(message)s'))
         prune_logger.addHandler(prune_handler)
-        prune_logger.info('#task_id,prune_factor,acc_gain,reward')
-
+        prune_logger.info('#task_id,prune_factor,acc_after, acc_before, acc_gain,reward, infer_type')
 
     class_dist_logger = logging.getLogger('class_dist_logger')
     class_dist_logger.propagate = False
@@ -1765,6 +1769,7 @@ def get_pruned_cnn_hyp_feed_dict(prune_hyps):
 
 
 def calculate_pool_accuracy(hard_pool):
+    global batch_size
     pool_accuracy = []
     pool_dataset, pool_labels = hard_pool.get_pool_data(False)
     for pool_id in range(hard_pool.get_size() // batch_size):
@@ -1784,15 +1789,17 @@ def calculate_pool_accuracy(hard_pool):
 
 def prune_the_network(rew_reg, task_id, type, prune_logger):
     global tmp_op, cnn_hyperparameters, prune_reward_experience
+    global prune_min_bound, prune_max_bound
 
     logger.info('Current CNN Hyperparameters')
     logger.info(cnn_hyperparameters)
     p_accuracy_before_prune = calculate_pool_accuracy(hard_pool_valid)
     # prune_factor = 0.5
     if type=='random':
-        prune_factor = np.clip(np.random.random(),0.25,0.75)
+        prune_factor = np.clip(np.random.random(),prune_min_bound,prune_max_bound)
+
     elif type=='regress':
-        prune_factor = rew_reg.predict_best_prune_factor(task_id)
+        prune_factor = np.clip(rew_reg.predict_best_prune_factor(task_id), prune_min_bound, prune_max_bound)
     else:
         raise NotImplementedError
 
@@ -1846,7 +1853,7 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     else:
         prune_reward = np.log(1.0 + (1.0 - prune_factor)) * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
     prune_reward_experience.append((task_id, prune_factor, prune_reward))
-    prune_logger.info('%d,%.5f,%.5f,%.5f,%s', task_id, prune_factor,
+    prune_logger.info('%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s', task_id, prune_factor, p_accuracy_after_prune, p_accuracy_before_prune,
                       (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward,type)
 
 
@@ -2099,7 +2106,7 @@ if __name__ == '__main__':
         labels_per_task = 5
         labels_of_each_task = [[0,1,2,3,4],[5,6,7,8,9]]
     elif datatype=='cifar-100':
-        labels_per_task = 25
+        labels_per_task = 20
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
         labels_per_task = 25

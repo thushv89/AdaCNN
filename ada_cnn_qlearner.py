@@ -502,7 +502,7 @@ class AdaCNNAdaptingQLearner(object):
         '''
         allowed_actions = [tmp for tmp in range(self.output_size)]
         invalid_actions = []
-
+        self.verbose_logger.debug('Getting new valid action (greedy)')
         layer_actions_list = self.action_list_with_index(action_idx)
         # while loop for checkin the validity of the action and choosing another if not
         while len(q_for_actions) > 0 and not found_valid_action and action_idx < self.output_size - 2:
@@ -525,7 +525,7 @@ class AdaCNNAdaptingQLearner(object):
                     next_filter_count = data['filter_counts_list'][li]
 
                 # if action is invalid, remove that from the allowed actions
-                if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
+                if next_filter_count < self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
                     self.verbose_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
                         str(la), li, next_filter_count))
                     try:
@@ -582,7 +582,7 @@ class AdaCNNAdaptingQLearner(object):
         :param trial_action_probs:
         :return:
         '''
-
+        self.verbose_logger.debug('Getting new valid action (explore)')
         invalid_actions=[]
         layer_actions_list = self.action_list_with_index(action_idx)
         # while loop for checkin the validity of the action and choosing another if not
@@ -606,7 +606,7 @@ class AdaCNNAdaptingQLearner(object):
                     next_filter_count = data['filter_counts_list'][li]
 
                 # if action is invalid, remove that from the allowed actions
-                if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[
+                if next_filter_count < self.min_filter_threshold or next_filter_count > self.filter_bound_vec[
                     li]:
                     self.verbose_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ' % (
                         str(la), li, next_filter_count))
@@ -631,6 +631,7 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data, q_for_actions):
 
+        self.verbose_logger.debug('Getting new valid action (stochastic)')
         layer_actions_list = self.action_list_with_index(action_idx)
         invalid_actions = []
 
@@ -658,7 +659,7 @@ class AdaCNNAdaptingQLearner(object):
                 else:
                     next_filter_count = data['filter_counts_list'][li]
 
-                if next_filter_count <= self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
+                if next_filter_count < self.min_filter_threshold or next_filter_count > self.filter_bound_vec[li]:
                     self.verbose_logger.debug('\tAction %s is not valid li(%d), (Next Filter Count: %d). ', str(la), li,
                                          next_filter_count)
                     allowed_actions.remove(action_idx)
@@ -681,6 +682,7 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_explore_type_action(self,data,history_t_plus_1, explore_action_probs):
 
+        self.verbose_logger.debug('Getting new action (explore)')
         action_idx = np.random.choice(self.output_size, p=explore_action_probs)
 
         found_valid_action = False
@@ -711,6 +713,7 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_greedy_type_action(self,data,history_t_plus_1):
 
+        self.verbose_logger.debug('Getting new action (greedy)')
         curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
         q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
         q_for_actions = q_for_actions.flatten().tolist()
@@ -747,13 +750,14 @@ class AdaCNNAdaptingQLearner(object):
 
     def get_stochastic_type_action(self,data, history_t_plus_1):
 
+        self.verbose_logger.debug('Getting new action (stochastic)')
         curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
         q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
         self.current_q_for_actions = q_for_actions
 
         # not to restrict from the beginning
 
-        rand_indices = np.argsort(q_for_actions).flatten()[1:]  # Only get a random index from the actions except last
+        rand_indices = np.arange(self.output_size)  # Only get a random index from the actions except last
         self.verbose_logger.info('Allowed action indices: %s', rand_indices)
         action_idx = np.random.choice(rand_indices)
 
