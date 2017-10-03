@@ -99,7 +99,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
     model_hyperparameters['epochs'] = 10
-    model_hyperparameters['n_iterations'] = 10000
+    model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
@@ -140,7 +140,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     elif dataset_name== 'imagenet-250':
         model_hyperparameters['top_k_accuracy'] = 5.0
-
+        model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['epochs'] = 10
         pool_size = int(model_hyperparameters['batch_size'] * 0.5 * num_labels)
 
@@ -161,7 +161,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             fulcon_min_threshold = 128
             add_amount, remove_amount = 8, 4
 
-        model_hyperparameters['n_tasks'] = 10
+        model_hyperparameters['n_tasks'] = 5
         model_hyperparameters['binned_data_dist_length'] = 25
 
     elif dataset_name=='svhn-10':

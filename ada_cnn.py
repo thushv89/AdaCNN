@@ -158,10 +158,10 @@ optimizer, custom_lr = None,None
 tf_learning_rate = None
 # Optimizer (Data) Related
 tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, \
-update_train_velocity_op, tf_mean_activation, mean_loss_op = None,None,None,None,None,None
+update_train_velocity_op, mean_loss_op = None,None,None,None,None
 
 # Optimizer (Pool) Related
-tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss = None, None, None, None, None
+tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss = None, None, None, None
 
 # Data related
 tf_train_data_batch, tf_train_label_batch, tf_data_weights = [], [], []
@@ -173,8 +173,8 @@ tf_pool_data_batch, tf_pool_label_batch = [], []
 pool_pred = None
 
 # Logit related
-tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions = [], [], [], [], []
-tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops = [], [], []
+tower_grads, tower_loss_vectors, tower_losses, tower_predictions = [], [], [], []
+tower_pool_grads, tower_pool_losses = [], []
 tower_logits = []
 tf_dropout_rate = None
 
@@ -187,11 +187,13 @@ tf_slice_vel_update = {}
 tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
 tf_indices, tf_indices_size = None,None
 tf_update_hyp_ops = {}
-tf_action_info, tf_running_activations = None, None
+tf_action_info = None
 tf_weights_this,tf_bias_this = None, None
 tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
 tf_weight_shape,tf_in_size, tf_out_size = None, None, None
 increment_global_step_op = None
+tf_weight_mean_ops = None
+tf_retain_id_placeholders = {}
 
 adapt_period = None
 
@@ -199,7 +201,8 @@ adapt_period = None
 logger = None
 perf_logger = None
 
-tf_reset_cnn = None
+# Reset CNN
+tf_reset_cnn, tf_reset_cnn_custom = None, None
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -239,9 +242,6 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 x = tf.nn.conv2d(x, w, cnn_hyperparameters[op]['stride'],
                                  padding=cnn_hyperparameters[op]['padding'])
                 x = utils.lrelu(x + b, name=scope.name + '/top')
-
-                activation_ops.append(
-                    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(tf.abs(w), [0, 1, 2]), validate_shape=False))
 
                 if use_loc_res_norm and op == last_conv_id:
                     x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha,
@@ -290,16 +290,31 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     if training and use_dropout:
                         x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
-                #activation_ops.append(
-                #    tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(tf.abs(w), [1]),
-                #              validate_shape=False))
+    return x
 
-    return x, activation_ops
+
+def get_weights_mean_for_pruning():
+    weight_mean_ops = {}
+
+    for op in cnn_ops:
+        if 'conv' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                weight_mean_ops[op] = tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(w, [0, 1, 2]),
+                              validate_shape=False)
+
+        if 'fulcon' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                weight_mean_ops[op] = tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(w, [1]),
+                              validate_shape=False)
+
+    return weight_mean_ops
 
 
 def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameters):
     global cnn_ops
-    logits, _ = inference(dataset, tf_cnn_hyperparameters, True)
+    logits = inference(dataset, tf_cnn_hyperparameters, True)
     # use weighted loss
     if weighted:
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels) * tf_data_weights)
@@ -324,7 +339,7 @@ def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameter
 
 
 def calc_loss_vector(scope, dataset, labels, tf_cnn_hyperparameters):
-    logits, _ = inference(dataset, tf_cnn_hyperparameters, True)
+    logits = inference(dataset, tf_cnn_hyperparameters, True)
     return tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels, name=TF_LOSS_VEC_STR)
 
 
@@ -381,7 +396,7 @@ def predict_with_logits(logits):
 
 
 def predict_with_dataset(dataset, tf_cnn_hyperparameters):
-    logits, _ = inference(dataset, tf_cnn_hyperparameters, False)
+    logits = inference(dataset, tf_cnn_hyperparameters, False)
     prediction = tf.nn.softmax(logits)
     return prediction
 
@@ -496,19 +511,19 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
 
 def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global optimizer
-    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_prune_cnn_hyperparameters
+    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_reset_cnn_custom, tf_prune_cnn_hyperparameters
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
-    global tower_grads, tower_loss_vectors, tower_losses, tower_activation_update_ops, tower_predictions
-    global tower_pool_grads, tower_pool_losses, tower_pool_activation_update_ops, tower_logits,tf_dropout_rate
+    global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
+    global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
-    global tf_indices, tf_indices_size
-    global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, tf_mean_activation, mean_loss_op
-    global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, tf_mean_pool_activations, mean_pool_loss
+    global tf_indices, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
+    global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
+    global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
     global tf_valid_data_batch,tf_valid_label_batch
     global pool_pred
-    global tf_update_hyp_ops, tf_action_info, tf_running_activations
+    global tf_update_hyp_ops, tf_action_info
     global tf_weights_this,tf_bias_this, tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next
     global tf_weight_shape,tf_in_size, tf_out_size
     global increment_global_step_op,tf_learning_rate
@@ -564,10 +579,10 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 # Training data opearations
                 logger.info('\tDefining logit operations')
-                tower_logit_op, tower_tf_activation_ops = inference(tf_train_data_batch[-1],
+                tower_logit_op = inference(tf_train_data_batch[-1],
                                                                     tf_cnn_hyperparameters, True)
                 tower_logits.append(tower_logit_op)
-                tower_activation_update_ops.append(tower_tf_activation_ops)
+
 
                 logger.info('\tDefine Loss for each tower')
                 tf_tower_loss = tower_loss(tf_train_data_batch[-1], tf_train_label_batch[-1], True,
@@ -603,9 +618,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                     tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='PoolLabels'))
 
                 with tf.name_scope('pool') as scope:
-                    single_pool_logit_op, single_activation_update_op = inference(tf_pool_data_batch[-1],
-                                                                                  tf_cnn_hyperparameters, True)
-                    tower_pool_activation_update_ops.append(single_activation_update_op)
+                    single_pool_logit_op = inference(tf_pool_data_batch[-1],tf_cnn_hyperparameters, True)
 
                     single_pool_loss = tower_loss(tf_pool_data_batch[-1], tf_pool_label_batch[-1], False, None,
                                                   tf_cnn_hyperparameters)
@@ -624,7 +637,6 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         apply_grads_op = cnn_optimizer.apply_gradient_with_momentum(optimizer, start_lr, global_step)
         concat_loss_vec_op = concat_loss_vector_towers(tower_loss_vectors)
         update_train_velocity_op = cnn_optimizer.update_train_momentum_velocity(tf_avg_grad_and_vars)
-        tf_mean_activation = mean_tower_activations(tower_activation_update_ops)
         mean_loss_op = tf.reduce_mean(tower_losses)
 
         logger.info('Tower averaging for Gradients for Pool data')
@@ -632,8 +644,10 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         tf_pool_avg_gradvars = average_gradients(tower_pool_grads)
         apply_pool_grads_op = cnn_optimizer.apply_gradient_with_pool_momentum(optimizer, start_lr, global_step)
         update_pool_velocity_ops = cnn_optimizer.update_pool_momentum_velocity(tf_pool_avg_gradvars)
-        tf_mean_pool_activations = mean_tower_activations(tower_pool_activation_update_ops)
         mean_pool_loss = tf.reduce_mean(tower_pool_losses)
+
+        # Weight mean calculation for pruning
+        tf_weight_mean_ops = get_weights_mean_for_pruning()
 
     with tf.device('/gpu:0'):
 
@@ -672,7 +686,6 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 tf_action_info = tf.placeholder(shape=[3], dtype=tf.int32,
                                                 name='tf_action')  # [op_id,action_id,amount] (action_id 0 - add, 1 -remove)
-                tf_running_activations = tf.placeholder(shape=(None,), dtype=tf.float32, name='running_activations')
 
                 logger.info('Defining placeholders for newly added parameters')
                 # Adaptation placeholders for convolution layers
@@ -696,7 +709,17 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 init_tf_prune_cnn_hyperparameters()
 
-                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights(tf_prune_cnn_hyperparameters,cnn_ops)
+                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(tf_prune_cnn_hyperparameters,cnn_ops)
+
+                for op in cnn_ops:
+                    if 'pool' in op:
+                        continue
+                    else:
+                        tf_retain_id_placeholders[op] = {'in':None, 'out':None}
+                        tf_retain_id_placeholders[op]['in'] = tf.placeholder(dtype=tf.int32,shape=[None],name='weight_mean_placeholder_in_'+op)
+                        tf_retain_id_placeholders[op]['out'] = tf.placeholder(dtype=tf.int32, shape=[None],
+                                                                            name='weight_mean_placeholder_out_' + op)
+                tf_reset_cnn_custom = cnn_intializer.reset_cnn_preserve_weights_custom(tf_prune_cnn_hyperparameters,cnn_ops,tf_retain_id_placeholders)
 
                 for tmp_op in cnn_ops:
                     # Convolution related adaptation operations
@@ -704,12 +727,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size, tf_out_size)
                         tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
                                                                      tf_bias_this, tf_weights_next,
-                                                                     tf_running_activations,
                                                                      tf_wvelocity_this, tf_bvelocity_this,
                                                                      tf_wvelocity_next)
-                        tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_with_action(tmp_op, tf_action_info,
-                                                                       tf_running_activations,
-                                                                       tf_cnn_hyperparameters)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
@@ -863,7 +882,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                         np.random.normal(scale=0.001, size=(
                             amount_to_add * final_2d_width * final_2d_width,
                             cnn_hyperparameters[first_fc]['out'], 1, 1)),
-                        tf_running_activations: rolling_ativation_means[current_op],
 
                         tf_wvelocity_this: np.zeros(shape=(
                             cnn_hyperparameters[current_op]['weights'][0],
@@ -973,7 +991,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-    _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
+    _ = session.run([tower_logits], feed_dict=train_feed_dict)
     pbatch_train_count = 0
 
     # Train only with half of the batch
@@ -997,20 +1015,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
             pbatch_train_count += 1
-
-            current_activations_list, _, _ = session.run(
-                [tf_mean_pool_activations, tf_slice_optimize[current_op],
-                 tf_slice_vel_update[current_op]],
-                feed_dict=pool_feed_dict
-            )
-
-            current_activations = get_activation_dictionary(current_activations_list, cnn_ops,
-                                                            convolution_op_ids)
-            # update rolling activation means
-            for op, op_activations in current_activations.items():
-                assert current_activations[op].size == cnn_hyperparameters[op]['weights'][3]
-                rolling_ativation_means[op] = act_decay * rolling_ativation_means[op] + \
-                                              current_activations[op]
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
@@ -1143,7 +1147,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-    _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
+    _ = session.run([tower_logits], feed_dict=train_feed_dict)
     pbatch_train_count = 0
 
     # Train only newly added parameters
@@ -1168,11 +1172,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             pbatch_train_count += 1
 
-            current_activations_list, _, _ = session.run(
-                [tf_mean_pool_activations, tf_slice_optimize[current_op],
-                 tf_slice_vel_update[current_op]],
-                feed_dict=pool_feed_dict
-            )
 
     # Optimize full network
     if hard_pool_ft.get_size() > batch_size:
@@ -1293,7 +1292,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
     current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
-    _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
+    _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
@@ -1665,6 +1664,72 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
             prev_fulcon_op = op
 
     return pruned_cnn_hyps
+
+
+def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps,weight_means):
+    global tf_retain_id_placeholders, cnn_ops,num_channels,final_2d_width,first_fc
+
+    retain_ids_feed_dict = {}
+    prev_op = None
+    for op in cnn_ops:
+        logger.info('Calculating prune ids for %s (op) %s (prev_op)',op,prev_op)
+        if 'pool' in op:
+            continue
+        elif 'conv' in op:
+
+            # Out pruning
+            amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
+            logger.info('\tAmount of filers to retain for %s: %d (out)',op,amount_to_retain_out_ch)
+            op_weight_means = weight_means[op]
+            op_retain_ids_out = np.argsort(op_weight_means).ravel()[-amount_to_retain_out_ch:]
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: op_retain_ids_out})
+
+            # In pruning
+            if prev_op is not None:
+                assert pruned_cnn_hyps[op]['weights'][2] == pruned_cnn_hyps[prev_op]['weights'][3]
+                amount_to_retain_in_ch = pruned_cnn_hyps[op]['weights'][2]
+                prev_op_weight_means = weight_means[prev_op]
+                op_retain_ids_in = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch:]
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+                logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
+            else:
+                op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+
+            prev_op = op
+
+        elif 'fulcon' in op:
+            # Out pruning
+            amount_to_retain_out_ch = pruned_cnn_hyps[op]['out']
+            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
+            op_weight_means = weight_means[op]
+            op_retain_ids_out = np.argsort(op_weight_means).ravel()[-amount_to_retain_out_ch:]
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:op_retain_ids_out})
+
+            # In Pruning
+            if op==first_fc:
+                amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
+                logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
+                prev_op_weight_means = weight_means[prev_op]
+                op_retain_slice_ids = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch_slices:]
+
+                op_retain_ids_in = []
+                for slice_id in op_retain_slice_ids:
+                    op_retain_ids_in.extend(list(range(slice_id*(final_2d_width*final_2d_width),(slice_id+1)*(final_2d_width*final_2d_width))))
+
+                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, len(op_retain_ids_in))
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: np.asarray(op_retain_ids_in)})
+
+            else:
+                amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
+                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
+                prev_op_weight_means = weight_means[prev_op]
+                op_retain_ids_in = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch:]
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+
+            prev_op = op
+
+    return retain_ids_feed_dict
 
 
 def get_pruned_cnn_hyp_feed_dict(prune_hyps):
@@ -2092,9 +2157,9 @@ if __name__ == '__main__':
                 # =========================================================
                 # Training Phase (Calculate loss and predictions)
 
-                l, super_loss_vec, current_activations_list, train_predictions = session.run(
+                l, super_loss_vec, train_predictions = session.run(
                     [mean_loss_op, concat_loss_vec_op,
-                     tf_mean_activation, tower_predictions], feed_dict=train_feed_dict
+                     tower_predictions], feed_dict=train_feed_dict
                 )
 
                 train_accuracy = np.mean(
@@ -2170,25 +2235,10 @@ if __name__ == '__main__':
 
                 t1_train = time.clock()
 
-                current_activations = get_activation_dictionary(current_activations_list, cnn_ops, convolution_op_ids)
-
                 if np.isnan(l):
                     logger.critical('Diverged (NaN detected) (batchID) %d (last Cost) %.3f', batch_id,
                                     train_losses[-1])
                 assert not np.isnan(l)
-
-                # rolling activation mean update
-                if research_parameters['adapt_structure']:
-                    for op, op_activations in current_activations.items():
-                        logger.debug('checking %s', op)
-                        logger.debug('\tRolling size (%s): %s', op, rolling_ativation_means[op].shape)
-                        logger.debug('\tCurrent size (%s): %s', op, op_activations.shape)
-                    for op, op_activations in current_activations.items():
-                        assert current_activations[op].size == cnn_hyperparameters[op]['weights'][3], \
-                            'did not match (op %s). activation %d cnn_hyp %d' \
-                            % (op, current_activations[op].size, cnn_hyperparameters[op]['weights'][3])
-
-                        rolling_ativation_means[op] = act_decay * rolling_ativation_means[op] + current_activations[op]
 
                 train_losses.append(l)
 
@@ -2521,14 +2571,25 @@ if __name__ == '__main__':
             logger.info('Current CNN Hyperparameters')
             logger.info(cnn_hyperparameters)
 
-            prune_factor = np.random.random() + 0.25
-            prune_factor = prune_factor if prune_factor < 0.75 else 0.75
-            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,0.6)
+            #prune_factor = np.random.random() + 0.25
+            #prune_factor = prune_factor if prune_factor < 0.75 else 0.75
+            prune_factor = 0.5
+            logger.info('Prune factor: %.3f',prune_factor)
+            pruned_hyps = get_pruned_cnn_hyperparameters(cnn_hyperparameters,prune_factor)
             logger.info('Obtained prune hyperparameters')
             logger.info(pruned_hyps)
             logger.info('='*80)
 
+            # Currently have the amounts after pruning
+            # With that, we find the amount of prune_ids that will make the final structure same as pruned_hyperparameters
+            weight_mean_ops = session.run(tf_weight_mean_ops)
+
             pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
+            #prune_ids_feed_dict = get_pruned_ids_feed_dict(cnn_hyperparameters,pruned_hyps, weight_mean_ops)
+
+            #full_prune_feed_dict = dict(pruned_feed_dict)
+            #full_prune_feed_dict.update(prune_ids_feed_dict)
+            #session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
             session.run(tf_reset_cnn,feed_dict=pruned_feed_dict)
 
             for tmp_op in cnn_ops:
@@ -2559,7 +2620,7 @@ if __name__ == '__main__':
             logger.info('='*80)
             print(session.run(tf_cnn_hyperparameters))
 
-            _ = session.run([tower_logits, tower_activation_update_ops], feed_dict=train_feed_dict)
+            _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
         # =======================================================
         # Decay learning rate (if set)

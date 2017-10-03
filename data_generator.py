@@ -43,7 +43,6 @@ class DataGenerator(object):
         if dataset_type == 'imagenet-250':
             #tf_image_batch = tf.image.resize_images(tf_image_batch,[self.resize_to+32,self.resize_to+32])
             tf_image_batch = tf.random_crop(tf_image_batch,[self.batch_size,self.resize_to,self.resize_to,self.n_channels],seed=13423905832)
-            tf_image_batch = tf.clip_by_value(tf_image_batch * 64.0,-128.0,128.0)
 
         if dataset_type != 'svhn-10':
             tf_image_batch = tf.map_fn(lambda img: tf.image.random_flip_left_right(img), tf_image_batch)

@@ -38,7 +38,7 @@ def set_from_main(research_params,final_2d_w,ops,hyps, logging_level, logging_fo
 
 def add_with_action(
         op, tf_action_info, tf_weights_this, tf_bias_this,
-        tf_weights_next, tf_activations, tf_wvelocity_this,
+        tf_weights_next, tf_wvelocity_this,
         tf_bvelocity_this, tf_wvelocity_next
 ):
     global cnn_hyperparameters, cnn_ops
