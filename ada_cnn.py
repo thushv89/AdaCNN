@@ -1848,10 +1848,13 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
 
     p_accuracy_after_prune = calculate_pool_accuracy(hard_pool_valid)
 
+    # if accuracy gain is positive
     if p_accuracy_after_prune > p_accuracy_before_prune:
-        prune_reward = np.log(1.0 + prune_factor) * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
+        prune_reward = (1.0 + (1.0 - prune_factor))**2 * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
+    # if accuracy gain is negative
     else:
-        prune_reward = np.log(1.0 + (1.0 - prune_factor)) * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
+        prune_reward = (1.0 + prune_factor)**2 * (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0
+
     prune_reward_experience.append((task_id, prune_factor, prune_reward))
     prune_logger.info('%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s', task_id, prune_factor, p_accuracy_after_prune, p_accuracy_before_prune,
                       (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward,type)
@@ -2107,7 +2110,7 @@ if __name__ == '__main__':
         labels_per_task = 5
         labels_of_each_task = [[0,1,2,3,4],[5,6,7,8,9]]
     elif datatype=='cifar-100':
-        labels_per_task = 20
+        labels_per_task = 25
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
         labels_per_task = 25

@@ -1040,9 +1040,9 @@ class AdaCNNAdaptingQLearner(object):
                 total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
 
         if 'add' in act_string:
-            return - total * (self.top_k_accuracy/self.num_classes)
+            return - total * (self.top_k_accuracy/(10.0*self.num_classes))
         elif 'remove' in act_string:
-            return total * (self.top_k_accuracy/self.num_classes)
+            return total * (self.top_k_accuracy/(10.0*self.num_classes))
         else:
             return 0.0
 
@@ -1122,13 +1122,16 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger.debug('Si,Ai,Sj: %s,%s,%s', si, ai_list, sj)
 
         curr_action_string = self.get_action_string(ai_list)
-        #comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
-        #                                        curr_action_string)
+        comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
+                                                curr_action_string)
         # Because we prune the network anyway
-        comp_gain = 0
+
         # Turned off 28/09/2017
         #mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
         #                ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)
+
+        # If accuracy is pushed up  or accuracy drop is small return top_k/num_classes
+        # If accuracy drop is very large return that drop
         accuracy_push_reward = self.top_k_accuracy/self.num_classes if (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0<= self.top_k_accuracy/self.num_classes \
             else (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0
 
