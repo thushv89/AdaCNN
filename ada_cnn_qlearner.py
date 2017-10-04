@@ -1122,8 +1122,10 @@ class AdaCNNAdaptingQLearner(object):
         self.verbose_logger.debug('Si,Ai,Sj: %s,%s,%s', si, ai_list, sj)
 
         curr_action_string = self.get_action_string(ai_list)
-        comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
-                                                curr_action_string)
+        #comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec,
+        #                                        curr_action_string)
+        # Because we prune the network anyway
+        comp_gain = 0
         # Turned off 28/09/2017
         #mean_accuracy = (1.0 + ((data['pool_accuracy'] + data['prev_pool_accuracy'])/200.0)) *\
         #                ((data['pool_accuracy'] - data['prev_pool_accuracy']) / 100.0)

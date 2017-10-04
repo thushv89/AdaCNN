@@ -20,6 +20,8 @@ class PruneRewardRegressor(object):
         self.session = params['session']
         self.input_size = params['n_tasks'] + 1
         self.n_tasks = params['n_tasks']
+        self.prune_min_bound = params['prune_min_bound']
+        self.prune_max_bound = params['prune_max_bound']
         self.hidden_layers = [32,16]
         self.hidden_scopes = ['fulcon_1','fulcon_2','fulcon_out']
         self.layer_info = None
@@ -58,7 +60,17 @@ class PruneRewardRegressor(object):
                                             mode='w')
         handler.setFormatter(logging.Formatter('%(message)s'))
         self.prune_predict_logger.addHandler(handler)
+        self.prune_predict_logger.info('#X values')
 
+        # Printing x values
+        step_size = (self.prune_max_bound - self.prune_min_bound) / 10.0
+        x_values = np.arange(self.prune_min_bound, self.prune_max_bound+step_size, step_size)
+        x_str = ''
+        for x in x_values:
+            x_str += '%.3f,'%x
+        self.prune_predict_logger.info(x_str)
+
+        self.prune_predict_logger.info('#Predicted values')
 
     def tf_define_network(self):
         '''
@@ -108,7 +120,9 @@ class PruneRewardRegressor(object):
 
         values_to_try = np.zeros((10,self.n_tasks),dtype=np.float32)
         values_to_try[:,task_id]=1.0
-        prune_factors = np.asarray([0.1 * pi for pi in range(10)], dtype=np.float32).reshape(-1, 1)
+        step_size = (self.prune_max_bound - self.prune_min_bound)/10.0
+        prune_factors = np.arange(self.prune_min_bound,self.prune_max_bound,step_size).reshape(-1, 1)
+        print(prune_factors.shape)
         values_to_try = np.append(values_to_try,prune_factors, axis=1)
 
         predicted_values = self.session.run(self.tf_net_out,feed_dict={self.tf_input:values_to_try})

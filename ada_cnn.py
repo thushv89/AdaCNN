@@ -1769,7 +1769,7 @@ def get_pruned_cnn_hyp_feed_dict(prune_hyps):
 
 
 def calculate_pool_accuracy(hard_pool):
-    global batch_size
+    global batch_size, tf_pool_data_batch, tf_pool_label_batch
     pool_accuracy = []
     pool_dataset, pool_labels = hard_pool.get_pool_data(False)
     for pool_id in range(hard_pool.get_size() // batch_size):
@@ -1782,9 +1782,9 @@ def calculate_pool_accuracy(hard_pool):
             pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
         else:
             pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
-    p_accuracy = np.mean(pool_accuracy) if len(pool_accuracy) > 0 else 0
 
-    return p_accuracy
+    return np.mean(pool_accuracy) if len(pool_accuracy) > 0 else 0
+
 
 
 def prune_the_network(rew_reg, task_id, type, prune_logger):
@@ -1796,10 +1796,10 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     p_accuracy_before_prune = calculate_pool_accuracy(hard_pool_valid)
     # prune_factor = 0.5
     if type=='random':
-        prune_factor = np.clip(np.random.random(),prune_min_bound,prune_max_bound)
+        prune_factor = prune_min_bound + (np.random.random()*(prune_max_bound-prune_min_bound))
 
     elif type=='regress':
-        prune_factor = np.clip(rew_reg.predict_best_prune_factor(task_id), prune_min_bound, prune_max_bound)
+        prune_factor = prune_min_bound + (rew_reg.predict_best_prune_factor(task_id)*(prune_max_bound-prune_min_bound))
     else:
         raise NotImplementedError
 
@@ -2083,7 +2083,8 @@ if __name__ == '__main__':
             top_k_accuracy=model_hyperparameters['top_k_accuracy']
         )
 
-        prune_reward_reg = prune_reward_regressor.PruneRewardRegressor(session=session,n_tasks=n_tasks,persist_dir=output_dir)
+        prune_reward_reg = prune_reward_regressor.PruneRewardRegressor(session=session,n_tasks=n_tasks,persist_dir=output_dir,
+                                                                       prune_min_bound=prune_min_bound, prune_max_bound=prune_max_bound)
 
     # Running initialization opeartion
     logger.info('Running global variable initializer')
@@ -2683,7 +2684,7 @@ if __name__ == '__main__':
         if research_parameters['adapt_structure']:
             if epoch > 0:
                 start_eps = max([start_eps*eps_decay,0.1])
-                adapt_period = np.random.choice(['first','last','both','none'])
+                adapt_period = np.random.choice(['first','last','both'],p=[0.25,0.25,0.5])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
 

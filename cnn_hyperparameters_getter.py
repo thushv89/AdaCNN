@@ -77,8 +77,8 @@ def get_interval_related_hyperparameters(dataset_name):
 
     elif dataset_name == 'svhn-10':
 
-        interval_parameters['policy_interval'] = 50
-        interval_parameters['finetune_interval'] = 50
+        interval_parameters['policy_interval'] = 24
+        interval_parameters['finetune_interval'] = 24
         interval_parameters['orig_finetune_interval'] = 50
 
     return interval_parameters
@@ -176,18 +176,18 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,64#C,3,1,64#P,2,2,0" \
                          "#C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128" \
                          "#C,3,1,128#P,2,2,0#C,3,1,128#C,3,1,128" \
-                         "#PG,2,2,0#FC,1024,0,0#FC,1024,0,0#Terminate,0,0,0"
+                         "#PG,2,2,0#FC,1024,0,0#FC,1024,0,0#FC,250,0,0#Terminate,0,0,0"
         else:
             cnn_string = "C,3,1,32#C,3,1,32#P,2,2,0#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#PG,2,2,0#FC,192,0,0#FC,192,0,0#Terminate,0,0,0"
+                         "#PG,2,2,0#FC,192,0,0#FC,192,0,0#FC,192,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 64, 0, 64, 64, 0, 64, 64, 0, 128, 128, 0, 128, 128, 0, 1024, 1024]
+            filter_vector = [64, 64, 0, 64, 64, 0, 64, 64, 0, 128, 128, 0, 128, 128, 0, 1024, 1024,250]
             filter_min_threshold = 24
             fulcon_min_threshold = 128
-            add_amount, remove_amount = 8, 4
+            add_amount, remove_amount = 12, 6
 
         model_hyperparameters['n_tasks'] = 5
         model_hyperparameters['binned_data_dist_length'] = 25
