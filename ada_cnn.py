@@ -135,7 +135,8 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     lrn_beta = model_hyperparameters['lrn_beta']
 
     # pool parameters
-    pool_size = model_hyperparameters['pool_size']
+    if adapt_structure or use_rigid_pooling:
+        pool_size = model_hyperparameters['pool_size']
 
     if adapt_structure:
         start_eps = model_hyperparameters['start_eps']
@@ -463,7 +464,7 @@ def setup_loggers(adapt_structure):
     hyp_handler.setFormatter(logging.Formatter('%(message)s'))
     hyp_logger.addHandler(hyp_handler)
 
-    cnn_structure_logger, q_logger = None, None
+    cnn_structure_logger, q_logger, prune_logger = None, None, None
     if adapt_structure:
         cnn_structure_logger = logging.getLogger('cnn_structure_logger')
         main_logger.propagate = False
@@ -1484,7 +1485,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
         logger.info('Epsilon: %.3f',eps)
         if adaptation_period=='first':
             if local_trial_phase<=0.5:
-                logger.info('Greedy Pruning period of epoch (first)')
+                logger.info('Greedy Adapting period of epoch (first)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Greedy')
@@ -1496,7 +1497,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                 adapting_now = True
 
             else:
-                logger.info('Greedy Not adapting period of epoch')
+                logger.info('Greedy Not adapting period of epoch (first)')
                 if np.random.random() < 0.3:
                     state, action, invalid_actions = q_learner.get_naivetrain_action(data)
                 else:
@@ -1505,7 +1506,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
 
         elif adaptation_period == 'last':
             if local_trial_phase > 0.5:
-                logger.info('Greedy Pruning period of epoch (last)')
+                logger.info('Greedy Adapting period of epoch (last)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
                         data, 'Greedy')
@@ -1516,7 +1517,7 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                     )
                 adapting_now=True
             else:
-                logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
+                logger.info('Not adapting period of epoch (last). Randomly outputting (Donothing, Naive Triain, Finetune')
                 if np.random.random()<0.3:
                     state, action, invalid_actions = q_learner.get_naivetrain_action(data)
                 else:
@@ -2006,19 +2007,20 @@ if __name__ == '__main__':
     session = tf.InteractiveSession(config=config)
 
     # Defining pool
-    logger.info('Defining pools of data (validation and finetuning)')
-    hardness = 0.5
-    if datatype != 'imagenet-250':
-        hard_pool_valid = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
-                               num_channels=num_channels, num_labels=num_labels, assert_test=False)
-        hard_pool_ft = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
-                               num_channels=num_channels, num_labels=num_labels, assert_test=False)
-    else:
-        hard_pool_valid = Pool(size=pool_size // 2, batch_size=batch_size, image_size=resize_to,
-                               num_channels=num_channels, num_labels=num_labels, assert_test=False)
-        hard_pool_ft = Pool(size=pool_size // 2, batch_size=batch_size, image_size=resize_to,
-                            num_channels=num_channels, num_labels=num_labels, assert_test=False)
-    logger.info('Defined pools of data successfully\n')
+    if adapt_structure or rigid_pooling:
+        logger.info('Defining pools of data (validation and finetuning)')
+        hardness = 0.5
+        if datatype != 'imagenet-250':
+            hard_pool_valid = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
+                                   num_channels=num_channels, num_labels=num_labels, assert_test=False)
+            hard_pool_ft = Pool(size=pool_size//2, batch_size=batch_size, image_size=image_size,
+                                   num_channels=num_channels, num_labels=num_labels, assert_test=False)
+        else:
+            hard_pool_valid = Pool(size=pool_size // 2, batch_size=batch_size, image_size=resize_to,
+                                   num_channels=num_channels, num_labels=num_labels, assert_test=False)
+            hard_pool_ft = Pool(size=pool_size // 2, batch_size=batch_size, image_size=resize_to,
+                                num_channels=num_channels, num_labels=num_labels, assert_test=False)
+        logger.info('Defined pools of data successfully\n')
 
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
     # -1 is because we don't want to count fulcon_out
@@ -2102,6 +2104,8 @@ if __name__ == '__main__':
         define_tf_ops(global_step,tf_cnn_hyperparameters,init_cnn_hyperparameters)
     logger.info('Defined all TF operations successfully\n')
 
+    # Generating data distribution over time for n_iterations
+    # Repeated every epoch
     data_gen = data_generator.DataGenerator(batch_size,num_labels,dataset_info['train_size'],dataset_info['n_slices'],
                                             image_size, dataset_info['n_channels'], dataset_info['resize_to'],
                                             dataset_info['dataset_name'], session)
@@ -2296,20 +2300,22 @@ if __name__ == '__main__':
                                 single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                           batch_labels[gpu_id], axis=0)
 
-                        if adapt_structure or rigid_pool_type=='smart':
+                        if adapt_structure or (rigid_pooling and rigid_pool_type=='smart'):
                             hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                               super_loss_vec,
                                                               min(research_parameters['hard_pool_max_threshold'],
                                                                   max(0.01, (1.0 - train_accuracy))))
 
-                        elif rigid_pooling and rigid_pool_type=='naive':
+                            logger.debug('Pooling data summary')
+                            logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
+                            logger.debug('\tAccuracy %.3f', train_accuracy)
+                            logger.debug('\tPool size (Valid): %d', hard_pool_valid.get_size())
+
+
+                        elif rigid_pooling and (rigid_pooling and rigid_pool_type=='naive'):
                             hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                               super_loss_vec,1.0)
 
-                        logger.debug('Pooling data summary')
-                        logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
-                        logger.debug('\tAccuracy %.3f', train_accuracy)
-                        logger.debug('\tPool size (Valid): %d', hard_pool_valid.get_size())
 
                 else:
 
@@ -2370,6 +2376,24 @@ if __name__ == '__main__':
                         del valid_acc_queue[0]
 
                 # =============================================================
+
+                if (adapt_structure or rigid_pooling) and \
+                        (batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0):
+
+                    # with open(output_dir + os.sep + 'Q_' + str(epoch) + "_" + str(batch_id)+'.pickle', 'wb') as f:
+                    #    pickle.dump(adapter.get_Q(), f, pickle.HIGHEST_PROTOCOL)
+
+                    pool_dist_string = ''
+                    for val in hard_pool_valid.get_class_distribution():
+                        pool_dist_string += str(val) + ','
+
+                    pool_dist_logger.info('%s%d', pool_dist_string, hard_pool_valid.get_size())
+
+                    pool_dist_string = ''
+                    for val in hard_pool_ft.get_class_distribution():
+                        pool_dist_string += str(val) + ','
+
+                    pool_dist_ft_logger.info('%s%d', pool_dist_string, hard_pool_ft.get_size())
 
                 # ================================================================
                 # Things done if one of below scenarios
@@ -2639,23 +2663,6 @@ if __name__ == '__main__':
 
                         # =============================================================
 
-                    if batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0:
-
-                        # with open(output_dir + os.sep + 'Q_' + str(epoch) + "_" + str(batch_id)+'.pickle', 'wb') as f:
-                        #    pickle.dump(adapter.get_Q(), f, pickle.HIGHEST_PROTOCOL)
-
-                        pool_dist_string = ''
-                        for val in hard_pool_valid.get_class_distribution():
-                            pool_dist_string += str(val) + ','
-
-                        pool_dist_logger.info('%s%d', pool_dist_string, hard_pool_valid.get_size())
-
-                        pool_dist_string = ''
-                        for val in hard_pool_ft.get_class_distribution():
-                            pool_dist_string += str(val) + ','
-
-                        pool_dist_ft_logger.info('%s%d', pool_dist_string, hard_pool_ft.get_size())
-
                     t1 = time.clock()
                     op_count = len(tf.get_default_graph().get_operations())
                     var_count = len(tf.global_variables()) + len(tf.local_variables()) + len(tf.model_variables())
@@ -2687,7 +2694,7 @@ if __name__ == '__main__':
         if research_parameters['adapt_structure']:
             if epoch > 0:
                 start_eps = max([start_eps*eps_decay,0.1])
-                adapt_period = np.random.choice(['first','last','both'],p=[0.25,0.25,0.5])
+                adapt_period = np.random.choice(['first','last','both'],p=[0.0,0.0,1.0])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
 
