@@ -1888,12 +1888,16 @@ if __name__ == '__main__':
     #
     allow_growth = False
     use_multiproc = False
+    fake_tasks = False
+    noise_label_rate = None
+    noise_image_rate = None
+
     try:
         opts, args = getopt.getopt(
             sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'pool_workers=', 'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
                                'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
-                               'use_multiproc='])
+                               'use_multiproc=','all_labels_included=','noise_labels=','noise_images='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory= --pool_workers=')
@@ -1922,6 +1926,12 @@ if __name__ == '__main__':
                 rigid_pool_type = str(arg)
             if opt == '--use_multiproc':
                 use_multiproc = bool(arg)
+            if opt == '--all_labels_included':
+                fake_tasks = bool(arg)
+            if opt == '--noise_labels':
+                noise_label_rate = float(arg)
+            if opt == '--noise_images':
+                noise_image_rate = float(arg)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -2110,14 +2120,12 @@ if __name__ == '__main__':
                                             image_size, dataset_info['n_channels'], dataset_info['resize_to'],
                                             dataset_info['dataset_name'], session)
 
+    labels_per_task = num_labels // n_tasks
     if datatype=='cifar-10':
-        labels_per_task = 5
-        labels_of_each_task = [[0,1,2,3,4],[5,6,7,8,9]]
+        labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='cifar-100':
-        labels_per_task = 25
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
-        labels_per_task = 25
         labels_of_each_task = [list(range(i * labels_per_task, (i + 1) * labels_per_task)) for i in range(n_tasks)]
 
     if behavior=='non-stationary':
@@ -2283,9 +2291,8 @@ if __name__ == '__main__':
                 # Updating Pools of data
 
                 # This if condition get triggered stochastically for AdaCNN
-                # Always for rigid_pooling
-                if (adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch))) or\
-                        (not adapt_structure):
+                # Never for Rigid-Pooling or Naive-Training
+                if (adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch))):
 
                         # Concatenate current 'num_gpus' batches to a single matrix
                         single_iteration_batch_data, single_iteration_batch_labels = None, None
@@ -2300,22 +2307,16 @@ if __name__ == '__main__':
                                 single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                           batch_labels[gpu_id], axis=0)
 
-                        if adapt_structure or (rigid_pooling and rigid_pool_type=='smart'):
-                            hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                              super_loss_vec,
-                                                              min(research_parameters['hard_pool_max_threshold'],
-                                                                  max(0.01, (1.0 - train_accuracy))))
 
-                            logger.debug('Pooling data summary')
-                            logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
-                            logger.debug('\tAccuracy %.3f', train_accuracy)
-                            logger.debug('\tPool size (Valid): %d', hard_pool_valid.get_size())
+                        hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
+                                                          super_loss_vec,
+                                                          min(research_parameters['hard_pool_max_threshold'],
+                                                              max(0.01, (1.0 - train_accuracy))))
 
-
-                        elif rigid_pooling and (rigid_pooling and rigid_pool_type=='naive'):
-                            hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                              super_loss_vec,1.0)
-
+                        logger.debug('Pooling data summary')
+                        logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
+                        logger.debug('\tAccuracy %.3f', train_accuracy)
+                        logger.debug('\tPool size (Valid): %d', hard_pool_valid.get_size())
 
                 else:
 
@@ -2332,13 +2333,18 @@ if __name__ == '__main__':
                             single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                       batch_labels[gpu_id], axis=0)
 
-
                     # Higer rates of accumulating data causes the pool to lose uniformity
                     if np.random.random()<0.05:
-                        hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                       super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
-                                                                  max(0.01, (1.0 - train_accuracy))))
-                        logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
+                        if adapt_structure or (rigid_pooling and rigid_pool_type == 'smart'):
+                            hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
+                                                           super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
+                                                                      max(0.01, (1.0 - train_accuracy))))
+                            logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
+                        elif (not adapt_structure) and rigid_pooling and rigid_pool_type=='naive':
+                            hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
+                                                              super_loss_vec,1.0)
+
+                            logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
                     # =========================================================
                     # # Training Phase (Optimization)
@@ -2404,22 +2410,19 @@ if __name__ == '__main__':
                         (batch_id > 0 and batch_id % interval_parameters['finetune_interval'] == 0):
 
                     logger.info('Pooling for non-adaptive CNN')
+                    logger.info('Using dropout rate of: %.3f', dropout_rate)
 
-                    if adapt_structure:
-                        logger.info('Adaptations stopped. Finetune is at its maximum utility (Batch: %d)' % (
-                        global_batch_id))
-
-                        logger.info('Using dropout rate of: %.3f', dropout_rate)
-
-                        # ===============================================================
-                        # Finetune with data in hard_pool_ft (AdaCNN)
-                        fintune_with_pool_ft(hard_pool_ft)
-                    elif rigid_pooling:
-                        fintune_with_pool_ft(hard_pool_valid)
+                    # ===============================================================
+                    # Finetune with data in hard_pool_ft (AdaCNN)
+                    fintune_with_pool_ft(hard_pool_ft)
 
                     # =================================================================
                     # Calculate pool accuracy (hard_pool_valid)
-                    mean_pool_accuracy = get_pool_valid_accuracy(hard_pool_valid)
+                    if adapt_structure:
+                        mean_pool_accuracy = get_pool_valid_accuracy(hard_pool_valid)
+                    elif rigid_pooling:
+                        mean_pool_accuracy = get_pool_valid_accuracy(hard_pool_ft)
+
                     logger.info('\tPool accuracy (hard_pool_valid): %.5f', mean_pool_accuracy)
                     # ==================================================================
 
