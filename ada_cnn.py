@@ -1843,6 +1843,11 @@ def get_pruned_cnn_hyp_feed_dict(prune_hyps):
 
 
 def calculate_pool_accuracy(hard_pool):
+    '''
+    Calculates the mini-batch wise accuracy for all the data points in the pool
+    :param hard_pool:
+    :return:
+    '''
     global batch_size, tf_pool_data_batch, tf_pool_label_batch
     pool_accuracy = []
     pool_dataset, pool_labels = hard_pool.get_pool_data(False)
