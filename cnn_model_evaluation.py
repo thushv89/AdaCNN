@@ -5,6 +5,11 @@ import os
 import constants
 import functools
 import h5py
+import data_generator
+import ada_cnn
+import cnn_intializer
+import sys
+import getopt
 
 def get_weight_vector_with_variables(cnn_ops,n):
 
@@ -68,6 +73,41 @@ def read_data_file(datatype):
 
 if __name__ == '__main__':
 
+    allow_growth = False
+    use_multiproc = False
+    fake_tasks = False
+    noise_label_rate = None
+    noise_image_rate = None
+    adapt_randomly = False
+
+    try:
+        opts, args = getopt.getopt(
+            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'allow_growth=',
+                               'dataset_type=',
+                               'adapt_structure=', 'rigid_pooling=', 'rigid_pool_type='])
+    except getopt.GetoptError as err:
+        print(err.with_traceback())
+        print('<filename>.py --output_dir= --num_gpus= --memory= --pool_workers=')
+
+    if len(opts) != 0:
+        for opt, arg in opts:
+            if opt == '--output_dir':
+                output_dir = arg
+            if opt == '--num_gpus':
+                num_gpus = int(arg)
+            if opt == '--memory':
+                mem_frac = float(arg)
+            if opt == '--allow_growth':
+                allow_growth = bool(arg)
+            if opt == '--dataset_type':
+                datatype = str(arg)
+            if opt == '--adapt_structure':
+                adapt_structure = bool(int(arg))
+            if opt == '--rigid_pooling':
+                rigid_pooling = bool(int(arg))
+            if opt == '--rigid_pool_type':
+                rigid_pool_type = str(arg)
+
     cnn_hyperparam_file = 'test' + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-0.pickle'
     cnn_weights_file = 'test' + os.sep + 'model_weights' + os.sep + 'cnn-model-0.ckpt'
 
@@ -79,6 +119,7 @@ if __name__ == '__main__':
     tf_rand_seed_ph = tf.placeholder(shape=None,dtype=tf.int32)
     n = cnn_model_saver.get_weight_vector_length(cnn_hyperparam_file)
     p = 100
+
     print('Found weight vector length: ',n)
     A = tf.random_uniform(shape=[n,p],minval=-1.0, maxval=1.0)
     A_plus = tf.py_func(np.linalg.pinv, [A], tf.float32)
@@ -100,11 +141,58 @@ if __name__ == '__main__':
 
     tf_restore_weights_with_w_corrupt = update_weight_variables_from_vector(cnn_ops,cnn_hyperparameters,W_corrupt,n)
 
+    batch_size = 128
+    n_iterations = 0
+    dataset_info = {}
+
+    if datatype=='cifar-10':
+        image_size = 24
+        n_iterations = 400
+        num_labels = 10
+        dataset_info['dataset_name']='cifar-10'
+        dataset_info['n_channels']=3
+        dataset_info['resize_to'] = 0
+        dataset_info['n_slices'] = 1
+        dataset_info['train_size'] = 50000
+    if datatype=='cifar-100':
+        image_size = 24
+        n_iterations = 400
+        num_labels = 100
+        dataset_info['dataset_name']='cifar-100'
+        dataset_info['n_channels']=3
+        dataset_info['resize_to'] = 0
+        dataset_info['n_slices'] = 1
+        dataset_info['train_size'] = 50000
+
+    train_dataset, train_labels = read_data_file(datatype)
+
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
                                             dataset_info['n_slices'],
                                             image_size, dataset_info['n_channels'], dataset_info['resize_to'],
                                             dataset_info['dataset_name'], session)
 
-    n_iterations = 0
-    if datatype=='cifar-10':
-        n_iterations = 400
+    if datatype != 'imagenet-250':
+        tf_train_images = tf.placeholder(tf.float32,
+                                         shape=(batch_size, image_size,
+                                                image_size, dataset_info['n_channels']),
+                                         name='TrainDataset')
+    else:
+        train_train_images = tf.placeholder(tf.float32,
+                                            shape=(batch_size, dataset_info['resize_to'],
+                                                   dataset_info['resize_to'], dataset_info['n_channels']),
+                                            name='TrainDataset')
+
+    tf_cnn_hyperparameters = cnn_intializer.init_tf_hyperparameters(cnn_ops,cnn_hyperparameters)
+
+    tf_train_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TrainLabels')
+
+    tf_data_weights = tf.placeholder(tf.float32, shape=(batch_size), name='TrainWeights')
+
+    tf_logits_train = ada_cnn.inference(tf_train_images, tf_cnn_hyperparameters, True)
+
+
+    tf_loss_train = ada_cnn.tower_loss(tf_train_images, tf_train_labels, True,
+                               tf_data_weights, tf_cnn_hyperparameters)
+    for iteration in range(n_iterations):
+
+        b_d, b_l = data_gen.generate_data_ordered(train_dataset, train_labels, dataset_info)

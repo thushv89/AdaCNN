@@ -22,7 +22,7 @@ class DataGenerator(object):
 
         self.slice_index = 0
         self.step_index_in_slice = 0
-
+        self.begin_index_in_slice = 0
         self.slice_index_changed = True
 
         self.current_image_slice, self.current_label_slice = None, None
@@ -54,6 +54,64 @@ class DataGenerator(object):
         #tf_image_batch = tf.map_fn(lambda img: tf.image.per_image_standardization(img), tf_image_batch)
 
         return tf_image_batch
+
+    def generate_data_ordered(self, dataset_images, dataset_labels, dataset_info):
+
+        global step_in_slice, steps_per_slice, slice_index
+
+        dataset_name, resize_to, n_labels = dataset_info['dataset_name'], dataset_info['resize_to'], dataset_info[
+            'n_labels']
+
+        if self.slice_index_changed:
+            print('Load data slice')
+            self.current_image_slice = dataset_images[
+                                       self.slice_index * self.slice_size:(self.slice_index + 1) * self.slice_size, :,
+                                       :, :]
+            self.current_label_slice = dataset_labels[
+                                       self.slice_index * self.slice_size:(self.slice_index + 1) * self.slice_size, 0]
+            for label in range(self.n_labels):
+                self.labels_to_index_map[label] = list(np.where(self.current_label_slice == label)[0].flatten())
+            print('Slice index changed')
+
+        # USE for Testing
+        # print('Summary of the label slice')
+        # print('Slice index: ',self.slice_index)
+        # print('Class distribution: ',Counter(label_slice.tolist()))
+
+        img_indices = []
+
+        assert len(img_indices) == self.batch_size, 'Selected random indices count is not same as batch size'
+        # has one additional axis for the split axis
+        image_list = self.current_image_slice[self.begin_index_in_slice:self.begin_index_in_slice+self.batch_size, :, :, :]
+        sorted_label_list = self.current_label_slice[self.begin_index_in_slice:self.begin_index_in_slice+self.batch_size, 0]
+
+        rng_state = np.random.get_state()
+        np.random.shuffle(image_list)
+        np.random.set_state(rng_state)
+        np.random.shuffle(sorted_label_list)
+
+        train_images = self.session.run(self.tf_augment_data_func,
+                                        feed_dict={self.tf_image_ph: np.squeeze(np.stack(image_list))})
+        train_labels = np.asarray(sorted_label_list).reshape(-1, 1)
+
+        train_ohe_labels = np.zeros((self.batch_size, self.n_labels), dtype=np.float32)
+        train_ohe_labels[np.arange(self.batch_size), train_labels[:, 0]] = 1.0
+
+        # Check if one hot encoding is done right
+        assert np.all(np.argmax(train_ohe_labels, axis=1) == train_labels.flatten())
+
+        self.begin_index_in_slice = (min([self.begin_index_in_slice + 2*self.batch_size,self.slice_size])) % self.slice_size
+
+        # whenever steps_per_slice number of steps completed,
+        # increment the slice index by 1
+        if self.begin_index_in_slice == 0:
+            self.slice_index = (self.slice_index + 1) % self.n_slices
+            self.slice_index_changed = True
+        else:
+            self.slice_index_changed = False
+
+        return train_images, train_ohe_labels
+
 
     def generate_data_with_label_sequence(self, dataset_images, dataset_labels, label_sequence, dataset_info):
         '''
