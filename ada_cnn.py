@@ -1554,6 +1554,79 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
 
     return state, action, invalid_actions, adapting_now
 
+def get_continuous_adaptation_action_randomly(q_learner, data, epoch, global_trial_phase, local_trial_phase, n_conv, n_fulcon, eps, adaptation_period):
+    '''
+    Continuously adapting the structure
+    :param q_learner:
+    :param data:
+    :param epoch:
+    :param trial_phase (global and local):
+    :param n_conv:
+    :param eps:
+    :param adaptation_period:
+    :return:
+    '''
+
+    adapting_now = None
+
+    logger.info('Epsilon: %.3f',eps)
+    if adaptation_period=='first':
+        if local_trial_phase<=0.5:
+            logger.info('Greedy Adapting period of epoch (first)')
+
+            state, action, invalid_actions = q_learner.output_action_with_type(
+                data, 'Stochastic'
+            )
+            adapting_now = True
+
+        else:
+            logger.info('Greedy Not adapting period of epoch (first)')
+            if np.random.random() < 0.3:
+                state, action, invalid_actions = q_learner.get_naivetrain_action(data)
+            else:
+                state, action, invalid_actions = q_learner.get_finetune_action(data)
+            adapting_now = False
+
+    elif adaptation_period == 'last':
+        if local_trial_phase > 0.5:
+            logger.info('Greedy Adapting period of epoch (last)')
+            state, action, invalid_actions = q_learner.output_action_with_type(
+                data, 'Stochastic'
+            )
+            adapting_now=True
+        else:
+            logger.info('Not adapting period of epoch (last). Randomly outputting (Donothing, Naive Triain, Finetune')
+            if np.random.random()<0.3:
+                state, action, invalid_actions = q_learner.get_naivetrain_action(data)
+            else:
+                state, action, invalid_actions = q_learner.get_finetune_action(data)
+
+            adapting_now = False
+
+    elif adaptation_period =='both':
+
+        logger.info('Greedy Adapting period of epoch (both)')
+        state, action, invalid_actions = q_learner.output_action_with_type(
+            data, 'Stochastic'
+        )
+        adapting_now = True
+
+    elif adaptation_period =='none':
+
+        logger.info('Greedy Adapting period of epoch (both)')
+        logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
+        if np.random.random() < 0.3:
+            state, action, invalid_actions = q_learner.get_naivetrain_action(data)
+        else:
+            state, action, invalid_actions = q_learner.get_finetune_action(data)
+
+        adapting_now = False
+
+    else:
+        raise NotImplementedError
+
+    return state, action, invalid_actions, adapting_now
+
 
 def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_iterations,labels_of_each_task,n_labels):
     '''
@@ -1891,13 +1964,14 @@ if __name__ == '__main__':
     fake_tasks = False
     noise_label_rate = None
     noise_image_rate = None
+    adapt_randomly = False
 
     try:
         opts, args = getopt.getopt(
             sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'pool_workers=', 'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
                                'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
-                               'use_multiproc=','all_labels_included=','noise_labels=','noise_images='])
+                               'use_multiproc=','all_labels_included=','noise_labels=','noise_images=','adapt_randomly='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory= --pool_workers=')
@@ -1932,6 +2006,8 @@ if __name__ == '__main__':
                 noise_label_rate = float(arg)
             if opt == '--noise_images':
                 noise_image_rate = float(arg)
+            if opt == '--adapt_randomly':
+                adapt_randomly = bool(arg)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -2535,7 +2611,7 @@ if __name__ == '__main__':
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
                         # (Not just outputting finetune action)
                         # ==================================================================
-                        if curr_adaptation_status and current_state:
+                        if (not adapt_randomly) and curr_adaptation_status and current_state:
 
                             # ==================================================================
                             # Calculating pool accuracy
@@ -2623,10 +2699,19 @@ if __name__ == '__main__':
                         # For epoch 0 and 1
                         # Epoch 0: Randomly grow the network
                         # Epoch 1: Deterministically grow the network
-                        current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
-                            adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list, 'binned_data_dist':running_binned_data_dist_vector.tolist()}, epoch=epoch,
-                            global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
-                            eps=start_eps, adaptation_period=adapt_period)
+                        if not adapt_randomly:
+                            current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
+                                adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list, 'binned_data_dist':running_binned_data_dist_vector.tolist()}, epoch=epoch,
+                                global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
+                                eps=start_eps, adaptation_period=adapt_period)
+                        else:
+                            current_state, current_action, curr_invalid_actions, curr_adaptation_status = get_continuous_adaptation_action_randomly(
+                                adapter, data={'filter_counts': filter_dict, 'filter_counts_list': filter_list,
+                                               'binned_data_dist': running_binned_data_dist_vector.tolist()},
+                                epoch=epoch,
+                                global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase,
+                                n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
+                                eps=start_eps, adaptation_period=adapt_period)
 
                         current_action_type = adapter.get_action_type_with_action_list(current_action)
                         # reset the binned data distribution
@@ -2674,7 +2759,8 @@ if __name__ == '__main__':
 
             # We prune netowork at the end of each task
             if adapt_structure:
-                if epoch<1:
+                # always prune the structure randomly if adapt-random
+                if adapt_randomly or epoch<1:
                     prune_the_network(prune_reward_reg, task,'random',prune_logger)
                 else:
                     if np.random.random()<0.5:
@@ -2688,8 +2774,8 @@ if __name__ == '__main__':
                         prune_the_network(prune_reward_reg, task, 'regress', prune_logger)
 
         # =======================================================
-        # Decay learning rate (if set)
-        if (research_parameters['adapt_structure'] or research_parameters['pooling_for_nonadapt']) and decay_learning_rate and epoch > 0:
+        # Decay learning rate (if set) Every 2 epochs
+        if decay_learning_rate and epoch>0 and epoch%2==0:
             session.run(increment_global_step_op)
         # ======================================================
 
