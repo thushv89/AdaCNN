@@ -64,15 +64,21 @@ def get_interval_related_hyperparameters(dataset_name):
         interval_parameters['policy_interval'] = 24
         interval_parameters['finetune_interval'] = 24
         interval_parameters['orig_finetune_interval'] = 50
-    elif dataset_name == 'imagenet-250':
+
+    if dataset_name == 'cifar-100':
         interval_parameters['policy_interval'] = 24
         interval_parameters['finetune_interval'] = 24
         interval_parameters['orig_finetune_interval'] = 50
 
-    elif dataset_name == 'svhn-10':
-
+    elif dataset_name == 'imagenet-250':
         interval_parameters['policy_interval'] = 50
         interval_parameters['finetune_interval'] = 50
+        interval_parameters['orig_finetune_interval'] = 50
+
+    elif dataset_name == 'svhn-10':
+
+        interval_parameters['policy_interval'] = 24
+        interval_parameters['finetune_interval'] = 24
         interval_parameters['orig_finetune_interval'] = 50
 
     return interval_parameters
@@ -91,14 +97,12 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['dropout_rate'] = 0.5
     model_hyperparameters['in_dropout_rate'] = 0.2
     model_hyperparameters['use_dropout'] = True
-    model_hyperparameters['use_loc_res_norm'] = False
-    # keep beta small (0.2 is too much >0.002 seems to be fine)
-    model_hyperparameters['include_l2_loss'] = True
-    model_hyperparameters['beta'] = 5e-4
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
-    model_hyperparameters['epochs'] = 20
+
+    model_hyperparameters['epochs'] = 10
+
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
@@ -110,15 +114,14 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-    #if adapt_structure:
-    #    model_hyperparameters['epochs'] += 1  # for the trial one
 
-    model_hyperparameters['include_l2_loss'] = True
-    model_hyperparameters['use_loc_res_norm'] = False
-    model_hyperparameters['lrn_radius'] = 5
-    model_hyperparameters['lrn_alpha'] = 0.0005
-    model_hyperparameters['lrn_beta'] = 0.75
     model_hyperparameters['start_lr'] = 0.01
+    model_hyperparameters['include_l2_loss'] = True
+    model_hyperparameters['beta'] = 0.0005
+    model_hyperparameters['use_loc_res_norm'] = False
+
+    model_hyperparameters['top_k_accuracy'] = 1.0
+
 
     if dataset_name == 'cifar-10':
 
@@ -133,33 +136,69 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#C,3,1,32#C,3,1,32#C,3,1,32" \
                          "#PG,3,2,0#Terminate,0,0,0"
 
-            filter_vector = [144, 144, 144, 0, 288, 288, 288]
+            filter_vector = [144, 144, 144, 0, 288, 288, 288,0]
             add_amount, remove_amount = 8, 4
             filter_min_threshold = 24
+            fulcon_min_threshold = 64
+
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 10
-    elif dataset_name== 'imagenet-250':
+        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_max_bound'] = 0.75
 
-        pool_size = model_hyperparameters['batch_size'] * 1 * num_labels
+    if dataset_name == 'cifar-100':
+
+        pool_size = model_hyperparameters['batch_size'] * 1* num_labels
 
         if not adapt_structure:
-            cnn_string = "C,3,1,64#P,2,2,0#C,3,1,128#P,2,2,0" \
-                         "#C,3,1,256#C,3,1,256#P,2,2,0#C,3,1,512" \
-                         "#C,3,1,512#P,2,2,0#C,3,1,512#C,3,1,512" \
-                         "#PG,2,2,0#FC,4096,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,64#C,3,1,128#C,3,1,256#C,3,1,256" \
+                         "#P,2,2,0#C,3,1,256#C,3,1,256#C,3,1,256#C,3,1,256" \
+                         "#PG,3,2,0#FC,512,0,0#FC,512,0,0#FC,100,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#P,2,2,0#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#PG,2,2,0#FC,4096,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#C,3,1,32" \
+                         "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
+                         "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,64,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 0, 128, 0, 256, 256, 0, 512, 512, 0, 512, 512]
-            filter_min_threshold = 24
+            filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
             add_amount, remove_amount = 8, 4
-        model_hyperparameters['n_tasks'] = 10
-        model_hyperparameters['binned_data_dist_length'] = 25
+            filter_min_threshold = 24
+            fulcon_min_threshold = 48
+
         model_hyperparameters['n_iterations'] = 10000
+        model_hyperparameters['n_tasks'] = 4
+        model_hyperparameters['binned_data_dist_length'] = 10
+        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_max_bound'] = 0.75
+
+    elif dataset_name== 'imagenet-250':
+        model_hyperparameters['top_k_accuracy'] = 5.0
+        model_hyperparameters['n_iterations'] = 10000
+        model_hyperparameters['epochs'] = 10
+        pool_size = int(model_hyperparameters['batch_size'] * 0.5 * num_labels)
+
+        if not adapt_structure:
+            cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,64#C,3,1,64#P,2,2,0" \
+                         "#C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128" \
+                         "#C,3,1,128#P,2,2,0#C,3,1,128#C,3,1,128" \
+                         "#PG,2,2,0#FC,1024,0,0#FC,1024,0,0#FC,250,0,0#Terminate,0,0,0"
+        else:
+            cnn_string = "C,3,1,32#C,3,1,32#P,2,2,0#C,3,1,32#C,3,1,32" \
+                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
+                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
+                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
+                         "#PG,2,2,0#FC,192,0,0#FC,192,0,0#FC,192,0,0#Terminate,0,0,0"
+
+            filter_vector = [64, 64, 0, 64, 64, 0, 64, 64, 0, 128, 128, 0, 128, 128, 0, 1024, 1024,250]
+            filter_min_threshold = 24
+            fulcon_min_threshold = 128
+            add_amount, remove_amount = 12, 6
+
+        model_hyperparameters['n_tasks'] = 5
+        model_hyperparameters['binned_data_dist_length'] = 25
+
+        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_max_bound'] = 0.75
+
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
@@ -185,6 +224,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['add_amount'] = add_amount
         model_hyperparameters['remove_amount'] = remove_amount
         model_hyperparameters['filter_min_threshold'] = filter_min_threshold
+        model_hyperparameters['fulcon_min_threshold'] = fulcon_min_threshold
 
     return model_hyperparameters
 
@@ -201,7 +241,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 25
 
     elif dataset_name == 'cifar-100':
 
@@ -211,7 +251,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 15
 
     elif dataset_name == 'imagenet-250':
         image_size = 128
@@ -220,8 +260,8 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 300000
         test_size = 12500
         n_slices = 10
-        fluctuation = 5
-        resize_to = 64
+        fluctuation = 10
+        resize_to = 96
 
     elif dataset_name == 'svhn-10':
 
@@ -231,7 +271,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 73257
         test_size = 26032
         n_slices = 1
-        fluctuation = 10
+        fluctuation = 25
 
     else:
         raise NotImplementedError
