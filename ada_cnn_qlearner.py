@@ -3,7 +3,6 @@ __author__ = 'Thushan Ganegedara'
 
 from enum import IntEnum
 from collections import defaultdict
-# from sklearn.gaussian_process import GaussianProcessRegressor
 import numpy as np
 import json
 import random
@@ -12,9 +11,7 @@ import sys
 from math import ceil, floor
 from six.moves import cPickle as pickle
 import os
-from sklearn.neural_network import MLPRegressor
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.base import clone
+
 import tensorflow as tf
 
 from collections import OrderedDict
@@ -629,17 +626,15 @@ class AdaCNNAdaptingQLearner(object):
 
         return layer_actions_list,found_valid_action,invalid_actions
 
-    def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data, q_for_actions):
+    def get_new_valid_action_when_stochastic(self, action_idx, found_valid_action, data):
 
         self.verbose_logger.debug('Getting new valid action (stochastic)')
         layer_actions_list = self.action_list_with_index(action_idx)
         invalid_actions = []
 
         # If the qlearner type is pruning we have to be careful not to take "remove from last layer" action
-        if self.qlearner_type=='prune':
-            allowed_actions = np.argsort(q_for_actions).flatten()[1:]  # Only get a random index from the highest q values
-        else:
-            allowed_actions = np.argsort(q_for_actions).flatten()
+
+        allowed_actions = np.arange(self.output_size).flatten()
 
         allowed_actions = allowed_actions.tolist()
 
@@ -751,9 +746,9 @@ class AdaCNNAdaptingQLearner(object):
     def get_stochastic_type_action(self,data, history_t_plus_1):
 
         self.verbose_logger.debug('Getting new action (stochastic)')
-        curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
-        q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
-        self.current_q_for_actions = q_for_actions
+        #curr_x = np.asarray(self.phi(history_t_plus_1)).reshape(1, -1)
+        #q_for_actions = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: curr_x})
+        #self.current_q_for_actions = q_for_actions
 
         # not to restrict from the beginning
 
@@ -772,7 +767,7 @@ class AdaCNNAdaptingQLearner(object):
 
         # Check if the next filter count is invalid for any layer
         found_valid_action = False
-        layer_actions_list, found_valid_action, invalid_actions = self.get_new_valid_action_when_stochastic(action_idx,found_valid_action,data,q_for_actions)
+        layer_actions_list, found_valid_action, invalid_actions = self.get_new_valid_action_when_stochastic(action_idx,found_valid_action,data)
 
         assert found_valid_action
 
@@ -1040,9 +1035,9 @@ class AdaCNNAdaptingQLearner(object):
                 total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
 
         if 'add' in act_string:
-            return - total * (self.top_k_accuracy/(10.0*self.num_classes))
+            return - total * (self.top_k_accuracy/self.num_classes)
         elif 'remove' in act_string:
-            return total * (self.top_k_accuracy/(10.0*self.num_classes))
+            return total * (self.top_k_accuracy/self.num_classes)
         else:
             return 0.0
 

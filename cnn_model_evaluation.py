@@ -10,14 +10,87 @@ import ada_cnn
 import cnn_intializer
 import sys
 import getopt
+import utils
+
+
+def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
+    global logger
+
+
+    first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
+
+    last_conv_id = ''
+    for op in cnn_ops:
+        if 'conv' in op:
+            last_conv_id = op
+
+    print('Defining the logit calculation ...')
+    print('\tCurrent set of operations: %s' % cnn_ops)
+    activation_ops = []
+
+    x = dataset
+
+    print('\tReceived data for X(%s)...' % x.get_shape().as_list())
+
+    # need to calculate the output according to the layers we have
+    for op in cnn_ops:
+        if 'conv' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                print('\tConvolving (%s) With Weights:%s Stride:%s' % (
+                    op, cnn_hyperparameters[op]['weights'], cnn_hyperparameters[op]['stride']))
+                print('\t\tWeights: %s', tf.shape(tf.get_variable(constants.TF_WEIGHTS)).eval())
+                w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+
+                x = tf.nn.conv2d(x, w, cnn_hyperparameters[op]['stride'],
+                                 padding=cnn_hyperparameters[op]['padding'])
+                x = utils.lrelu(x + b, name=scope.name + '/top')
+
+        if 'pool' in op:
+            print('\tPooling (%s) with Kernel:%s Stride:%s Type:%s' % (
+                op, cnn_hyperparameters[op]['kernel'], cnn_hyperparameters[op]['stride'], cnn_hyperparameters[op]['type']))
+            if cnn_hyperparameters[op]['type']=='max':
+                x = tf.nn.max_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
+                                   strides=cnn_hyperparameters[op]['stride'],
+                                   padding=cnn_hyperparameters[op]['padding'])
+            elif cnn_hyperparameters[op]['type']=='avg':
+                x = tf.nn.avg_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
+                                   strides=cnn_hyperparameters[op]['stride'],
+                                   padding=cnn_hyperparameters[op]['padding'])
+            else:
+                raise NotImplementedError
+
+        if 'fulcon' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+
+                if first_fc == op:
+                    # we need to reshape the output of last subsampling layer to
+                    # convert 4D output to a 2D input to the hidden layer
+                    # e.g subsample layer output [batch_size,width,height,depth] -> [batch_size,width*height*depth]
+
+                    print('Input size of fulcon_out : ', cnn_hyperparameters[op]['in'])
+                    print('Current input size ', x.get_shape().as_list())
+                    # Transpose x (b,h,w,d) to (b,d,w,h)
+                    # This help us to do adaptations more easily
+                    x = tf.transpose(x, [0, 3, 1, 2])
+                    x = tf.reshape(x, [batch_size, cnn_hyperparameters[op]['in']])
+                    x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
+
+                elif 'fulcon_out' == op:
+                    x = tf.matmul(x, w) + b
+
+                else:
+                    x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
+
+    return x
 
 def get_weight_vector_with_variables(cnn_ops,n):
 
     w_vector = None
-    with tf.variable_scope(constants.TF_GLOBAL_SCOPE):
+    with tf.variable_scope(constants.TF_GLOBAL_SCOPE, reuse = True):
         for op in cnn_ops:
-            if 'pool' not in cnn_ops:
-                with tf.variable_scope(op):
+            if 'pool' not in op:
+                with tf.variable_scope(op, reuse=True):
                     w = tf.get_variable(constants.TF_WEIGHTS)
                     w_unwrap = tf.reshape(w,[-1])
                     if w_vector is None:
@@ -26,26 +99,29 @@ def get_weight_vector_with_variables(cnn_ops,n):
                         w_vector = tf.concat([w_vector,w_unwrap],axis=0)
 
     assert n == w_vector.get_shape().as_list()[0],'n (%d) and weight vector length (%d) do not match'%(n,w_vector.get_shape().as_list()[0])
-    return tf.reshape(w_vector,[-1,1])
+    return tf.reshape(w_vector,[-1])
 
 def update_weight_variables_from_vector(cnn_ops, cnn_hyps, w_vec, n):
 
     assign_ops = []
     begin_index = 0
-    with tf.variable_scope(constants.TF_GLOBAL_SCOPE):
+    print('Updating weight Tensors from the vector')
+    with tf.variable_scope(constants.TF_GLOBAL_SCOPE, reuse=True):
         for op in cnn_ops:
             if 'conv' in op:
                 w_size = functools.reduce(lambda x,y:x*y, cnn_hyps[op]['weights'])
-                w_tensor = tf.reshape(tf.slice(w_vec,begin=begin_index,size=w_size),cnn_hyps[op]['weights'])
+                print('Updating the weight tensor for ', op, ' with a vector slice of size ',w_size)
+                w_tensor = tf.reshape(tf.slice(w_vec,begin=[begin_index],size=[w_size]),cnn_hyps[op]['weights'])
                 begin_index += w_size
-                with tf.variable_scope(op):
+                with tf.variable_scope(op, reuse= True):
                     assign_ops.append(tf.assign(tf.get_variable(constants.TF_WEIGHTS),w_tensor))
 
             elif 'fulcon' in op:
                 w_size = cnn_hyps[op]['in']*cnn_hyps[op]['out']
-                w_tensor = tf.reshape(tf.slice(w_vec,begin=begin_index,size=w_size), [cnn_hyps[op]['in'],cnn_hyps[op]['out']])
+                print('Updating the weight tensor for ', op, ' with a vector slice of size ', w_size)
+                w_tensor = tf.reshape(tf.slice(w_vec,begin=[begin_index],size=[w_size]), [cnn_hyps[op]['in'],cnn_hyps[op]['out']])
                 begin_index += w_size
-                with tf.variable_scope(op):
+                with tf.variable_scope(op, reuse=True):
                     assign_ops.append(tf.assign(tf.get_variable(constants.TF_WEIGHTS),w_tensor))
 
     return assign_ops
@@ -70,6 +146,38 @@ def read_data_file(datatype):
         train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
 
     return train_dataset, train_labels
+
+def loss(batch_size, cnn_ops, dataset, labels, cnn_hyperparameters):
+
+    logits = inference(batch_size, cnn_ops, dataset, cnn_hyperparameters)
+    # use weighted loss
+
+    loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels))
+
+    beta = 0.0005
+    fulcons = []
+    for op in cnn_ops:
+        if 'fulcon' in op and op != 'fulcon_out':
+            fulcons.append(op)
+
+    fc_weights = []
+    for op in fulcons:
+        with tf.variable_scope(op):
+            fc_weights.append(tf.get_variable(constants.TF_WEIGHTS))
+
+    loss = tf.reduce_sum([loss, beta * tf.reduce_sum([tf.nn.l2_loss(w) for w in fc_weights])])
+
+    total_loss = loss
+
+    return total_loss
+
+def callback_loss(loss):
+    global x_loss
+    print('x_loss: ',x_loss)
+    print('x_plus_Ay loss: ',loss)
+    print('epsilon-sharpness:', (loss-x_loss)*100.0/(1+x_loss))
+
+x_loss = None
 
 if __name__ == '__main__':
 
@@ -108,40 +216,48 @@ if __name__ == '__main__':
             if opt == '--rigid_pool_type':
                 rigid_pool_type = str(arg)
 
-    cnn_hyperparam_file = 'test' + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-0.pickle'
-    cnn_weights_file = 'test' + os.sep + 'model_weights' + os.sep + 'cnn-model-0.ckpt'
+    cnn_hyperparam_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-0.pickle'
+    cnn_weights_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-model-0.ckpt'
 
-    cnn_ops, cnn_hyperparameters = cnn_model_saver.get_cnn_ops_and_hyperparameters(cnn_hyperparam_file)
+    cnn_ops, cnn_hyperparameters, final_2d_width = cnn_model_saver.get_cnn_ops_and_hyperparameters(cnn_hyperparam_file)
+    print(cnn_hyperparameters)
 
     session = tf.InteractiveSession()
-    cnn_model_saver.load_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
-
+    cnn_model_saver.create_and_restore_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
+    cnn_model_saver.set_shapes_for_all_weights(cnn_ops,cnn_hyperparameters)
     tf_rand_seed_ph = tf.placeholder(shape=None,dtype=tf.int32)
     n = cnn_model_saver.get_weight_vector_length(cnn_hyperparam_file)
+
     p = 100
 
-    print('Found weight vector length: ',n)
-    A = tf.random_uniform(shape=[n,p],minval=-1.0, maxval=1.0)
+    print('Found weight vector length: ',n, '\n')
+    A = tf.random_uniform(shape=[n,p],minval=-100.0, maxval=100.0)
     A_plus = tf.py_func(np.linalg.pinv, [A], tf.float32)
 
     print('Creating a weight vector from weight tensors')
     W = get_weight_vector_with_variables(cnn_ops,n)
-    print('Successfully created the weight vector')
-
-    n_sample_within_box = 25
+    print('\tSuccessfully created the weight vector (shape: %s)\n'%W.get_shape().as_list())
 
     epsilon = 1e-3
-    lower_bound_vec = -epsilon * (tf.abs(tf.matmul(A_plus,W)) + 1)
-    upper_bound_vec = epsilon * (tf.abs(tf.matmul(A_plus,W)) + 1)
+    tf_lower_bound_vec = -epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
+    tf_upper_bound_vec = epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
 
-    z = tf.map_fn(lambda x:tf.random_uniform(shape=None,minval=x[0],maxval=x[1],seed=tf_rand_seed_ph),
-                  (lower_bound_vec,upper_bound_vec),dtype=tf.float32)
+    #z = tf.map_fn(lambda x:tf.random_uniform(shape=[0], minval=x[0],maxval=x[1],seed=np.random.randint(0,39025849)),
+    #              (lower_bound_vec,upper_bound_vec),dtype=tf.float32)
 
-    W_corrupt = W + tf.matmul(A,z)
+
+    #z.set_shape([p,1])
+    lower_bound = tf_lower_bound_vec.eval().ravel()
+    upper_bound = tf_upper_bound_vec.eval().ravel()
+
+    z_init = list(map(lambda x: np.random.uniform(low=x[0],high=x[1],size=(1))[0],
+                      zip(lower_bound.tolist(),upper_bound.tolist())))
+    z = tf.Variable(dtype=tf.float32, initial_value=z_init)
+
+    W_corrupt = W + tf.reshape(tf.matmul(A,tf.reshape(z,[-1,1])),[-1])
 
     tf_restore_weights_with_w_corrupt = update_weight_variables_from_vector(cnn_ops,cnn_hyperparameters,W_corrupt,n)
 
-    batch_size = 128
     n_iterations = 0
     dataset_info = {}
 
@@ -164,6 +280,7 @@ if __name__ == '__main__':
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 50000
 
+    batch_size = dataset_info['train_size']//20
     train_dataset, train_labels = read_data_file(datatype)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
@@ -182,17 +299,36 @@ if __name__ == '__main__':
                                                    dataset_info['resize_to'], dataset_info['n_channels']),
                                             name='TrainDataset')
 
-    tf_cnn_hyperparameters = cnn_intializer.init_tf_hyperparameters(cnn_ops,cnn_hyperparameters)
+    # tf_cnn_hyperparameters = cnn_intializer.init_tf_hyperparameters(cnn_ops,cnn_hyperparameters)
+
+    print('Running global variable initializer')
+    init_op = tf.global_variables_initializer()
+    _ = session.run(init_op)
+    print('\tVariable initialization successful\n')
 
     tf_train_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TrainLabels')
 
-    tf_data_weights = tf.placeholder(tf.float32, shape=(batch_size), name='TrainWeights')
+    print(lower_bound.shape)
+    print(upper_bound.shape)
+    print(z.get_shape().as_list())
+    with tf.variable_scope(constants.TF_GLOBAL_SCOPE, reuse=True):
+        tf_logits_train = inference(batch_size, cnn_ops,tf_train_images, cnn_hyperparameters)
+        tf_loss_train = loss(batch_size, cnn_ops, tf_train_images, tf_train_labels, cnn_hyperparameters)
 
-    tf_logits_train = ada_cnn.inference(tf_train_images, tf_cnn_hyperparameters, True)
+        optimizer = tf.contrib.opt.ScipyOptimizerInterface(
+            -tf_loss_train, var_to_bounds={z:(lower_bound.tolist(),upper_bound.tolist())},
+            method = 'L-BFGS-B',options={'maxiter': 10}
+        )
+
+    #cnn_model_saver.restore_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
+    all_d, all_l = data_gen.generate_data_ordered(train_dataset, train_labels, dataset_info)
+
+    x_loss = session.run(tf_loss_train, feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
+
+    session.run(tf_restore_weights_with_w_corrupt)
+    optimizer.minimize(session, fetches=[tf_loss_train], feed_dict={tf_train_images: all_d, tf_train_labels: all_l}, loss_callback=callback_loss)
+
+    #session.run(tf_restore_weights_with_w_corrupt,feed_dict={tf_rand_seed_ph:np.random.randint(low=0,high=23492095)})
 
 
-    tf_loss_train = ada_cnn.tower_loss(tf_train_images, tf_train_labels, True,
-                               tf_data_weights, tf_cnn_hyperparameters)
-    for iteration in range(n_iterations):
 
-        b_d, b_l = data_gen.generate_data_ordered(train_dataset, train_labels, dataset_info)

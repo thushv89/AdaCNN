@@ -55,12 +55,15 @@ class DataGenerator(object):
 
         return tf_image_batch
 
+    def reset_begin_index(self):
+        self.begin_index_in_slice = 0
+        self.slice_index_changed=True
+
     def generate_data_ordered(self, dataset_images, dataset_labels, dataset_info):
 
         global step_in_slice, steps_per_slice, slice_index
 
-        dataset_name, resize_to, n_labels = dataset_info['dataset_name'], dataset_info['resize_to'], dataset_info[
-            'n_labels']
+        dataset_name, resize_to = dataset_info['dataset_name'], dataset_info['resize_to']
 
         if self.slice_index_changed:
             print('Load data slice')
@@ -78,12 +81,9 @@ class DataGenerator(object):
         # print('Slice index: ',self.slice_index)
         # print('Class distribution: ',Counter(label_slice.tolist()))
 
-        img_indices = []
-
-        assert len(img_indices) == self.batch_size, 'Selected random indices count is not same as batch size'
         # has one additional axis for the split axis
         image_list = self.current_image_slice[self.begin_index_in_slice:self.begin_index_in_slice+self.batch_size, :, :, :]
-        sorted_label_list = self.current_label_slice[self.begin_index_in_slice:self.begin_index_in_slice+self.batch_size, 0]
+        sorted_label_list = self.current_label_slice[self.begin_index_in_slice:self.begin_index_in_slice+self.batch_size]
 
         rng_state = np.random.get_state()
         np.random.shuffle(image_list)
