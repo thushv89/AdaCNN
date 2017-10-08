@@ -230,9 +230,16 @@ if __name__ == '__main__':
 
     p = 100
 
+    #print('Creating files to store n-by-p manifold matrix')
+    #hdf5_file = h5py.File(output_dir + os.sep + 'model_weights' + os.sep + 'tmp_manifold.hdf5', "w")
+    #print('\tSuccessfully created the file')
+
     print('Found weight vector length: ',n, '\n')
     A = tf.random_uniform(shape=[n,p],minval=-100.0, maxval=100.0)
     A_plus = tf.py_func(np.linalg.pinv, [A], tf.float32)
+
+    #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
+    #hdf5_A_plus = hdf5_file.create_dataset('A_plus', (p, n), dtype='f')
 
     print('Creating a weight vector from weight tensors')
     W = get_weight_vector_with_variables(cnn_ops,n)
@@ -242,11 +249,7 @@ if __name__ == '__main__':
     tf_lower_bound_vec = -epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
     tf_upper_bound_vec = epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
 
-    #z = tf.map_fn(lambda x:tf.random_uniform(shape=[0], minval=x[0],maxval=x[1],seed=np.random.randint(0,39025849)),
-    #              (lower_bound_vec,upper_bound_vec),dtype=tf.float32)
 
-
-    #z.set_shape([p,1])
     lower_bound = tf_lower_bound_vec.eval().ravel()
     upper_bound = tf_upper_bound_vec.eval().ravel()
 

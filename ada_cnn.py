@@ -177,7 +177,7 @@ tf_valid_data_batch, tf_valid_label_batch = None, None
 
 # Data (Pool) related
 tf_pool_data_batch, tf_pool_label_batch = [], []
-pool_pred = None
+pool_pred, augmented_pool_data_batch, augmented_pool_label_batch = None, [],[]
 
 # Logit related
 tower_grads, tower_loss_vectors, tower_losses, tower_predictions = [], [], [], []
@@ -539,7 +539,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
     global tf_valid_data_batch,tf_valid_label_batch
-    global pool_pred
+    global pool_pred, augmented_pool_data_batch, augmented_pool_label_batch
     global tf_update_hyp_ops, tf_action_info
     global tf_weights_this,tf_bias_this, tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next
     global tf_weight_shape,tf_in_size, tf_out_size
@@ -634,10 +634,15 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_pool_label_batch.append(
                     tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='PoolLabels'))
 
+                # Used for augmenting the pool data
+                aug_img, aug_lbl = tf_augment_data_with(tf_pool_data_batch[-1],tf_pool_label_batch[-1],datatype)
+                augmented_pool_data_batch.append(aug_img)
+                augmented_pool_label_batch.append(aug_lbl)
+
                 with tf.name_scope('pool') as scope:
                     single_pool_logit_op = inference(tf_pool_data_batch[-1],tf_cnn_hyperparameters, True)
 
-                    single_pool_loss = tower_loss(tf_pool_data_batch[-1], tf_pool_label_batch[-1], False, None,
+                    single_pool_loss = tower_loss(augmented_pool_data_batch[-1], augmented_pool_label_batch[-1], False, None,
                                                   tf_cnn_hyperparameters)
                     tower_pool_losses.append(single_pool_loss)
                     single_pool_grad = cnn_optimizer.gradients(optimizer, single_pool_loss, global_step, start_lr)
@@ -673,6 +678,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # GLOBAL: Tensorflow operations for hard_pool
         with tf.name_scope('pool') as scope:
             tf.get_variable_scope().reuse_variables()
+            print(len(tf_pool_label_batch))
             pool_pred = predict_with_dataset(tf_pool_data_batch[0], tf_cnn_hyperparameters)
 
         # GLOBAL: Tensorflow operations for test data
@@ -790,28 +796,18 @@ def distort_img(img):
 
     return img
 
+def tf_augment_data_with(tf_aug_pool_batch, tf_aug_pool_labels, dataset_type):
 
-def augment_pool_data(hard_pool):
-    global pool_dataset, pool_labels
-    pool_dataset, pool_labels = hard_pool.get_pool_data(True)
-    '''if research_parameters['pool_randomize'] and np.random.random() < \
-            research_parameters['pool_randomize_rate']:
-        if use_multiproc:
-            try:
-                pool = MPPool(processes=pool_workers)
-                distorted_imgs = pool.map(distort_img, pool_dataset)
-                pool_dataset = np.asarray(distorted_imgs)
-                pool.close()
-                pool.join()
-            except Exception:
-                raise AssertionError
-        else:
-            distorted_imgs = []
-            for img in pool_dataset:
-                distorted_imgs.append(distort_img(img))
-            pool_dataset = np.vstack(distorted_imgs)'''
+    if dataset_type != 'svhn-10':
+        tf_aug_pool_batch = tf.map_fn(lambda img: tf.image.random_flip_left_right(img), tf_aug_pool_batch)
 
-    return pool_dataset, pool_labels
+    tf_aug_pool_batch = tf.image.random_brightness(tf_aug_pool_batch,0.5)
+    tf_aug_pool_batch = tf.image.random_contrast(tf_aug_pool_batch,0.5,1.5)
+
+    # Not necessary they are already normalized
+    #tf_image_batch = tf.map_fn(lambda img: tf.image.per_image_standardization(img), tf_image_batch)
+
+    return tf_aug_pool_batch, tf_aug_pool_labels
 
 
 def get_pool_valid_accuracy(hard_pool_valid):
@@ -845,7 +841,6 @@ def fintune_with_pool_ft(hard_pool_ft):
 
     if hard_pool_ft.get_size() > batch_size:
         # Randomize data in the batch
-        pool_dataset, pool_labels = augment_pool_data(hard_pool_ft)  # Train with latter half of the data
 
         for pool_id in range(0,
                              (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -979,20 +974,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
     # optimize the newly added fiterls only
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-    if research_parameters['pool_randomize'] and np.random.random() < research_parameters[
-        'pool_randomize_rate']:
-        try:
-            pool = MPPool(processes=10)
-            distorted_imgs = pool.map(distort_img, pool_dataset)
-            pool_dataset = np.asarray(distorted_imgs)
-            pool.close()
-            pool.join()
-        except Exception:
-            raise AssertionError
-
-    # this was done to increase performance and reduce overfitting
-    # instead of optimizing with every single batch in the pool
-    # we select few at random
 
     logger.info('\t(Before) Size of Rolling mean vector for %s: %s', current_op,
                 rolling_ativation_means[current_op].shape)
@@ -1035,17 +1016,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-        if research_parameters['pool_randomize'] and np.random.random() < \
-                research_parameters['pool_randomize_rate']:
-            try:
-                pool = MPPool(processes=10)
-                distorted_imgs = pool.map(distort_img, pool_dataset)
-                pool_dataset = np.asarray(distorted_imgs)
-                pool.close()
-                pool.join()
-            except Exception:
-                raise AssertionError
-        # Train with latter half of the data
+
+        # Train with hard_pool_ft
         for pool_id in range(0,
                              (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
@@ -1149,16 +1121,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
     # optimize the newly added fiterls only
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-    if research_parameters['pool_randomize'] and np.random.random() < research_parameters[
-        'pool_randomize_rate']:
-        try:
-            pool = MPPool(processes=10)
-            distorted_imgs = pool.map(distort_img, pool_dataset)
-            pool_dataset = np.asarray(distorted_imgs)
-            pool.close()
-            pool.join()
-        except Exception:
-            raise AssertionError
 
     current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
@@ -1193,16 +1155,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # Optimize full network
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-        if research_parameters['pool_randomize'] and np.random.random() < \
-                research_parameters['pool_randomize_rate']:
-            try:
-                pool = MPPool(processes=10)
-                distorted_imgs = pool.map(distort_img, pool_dataset)
-                pool_dataset = np.asarray(distorted_imgs)
-                pool.close()
-                pool.join()
-            except Exception:
-                raise AssertionError
+
         # Train with latter half of the data
         for pool_id in range(0,
                              (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1313,16 +1266,6 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-        '''if research_parameters['pool_randomize'] and np.random.random() < \
-                research_parameters['pool_randomize_rate']:
-            try:
-                pool = MPPool(processes=10)
-                distorted_imgs = pool.map(distort_img, pool_dataset)
-                pool_dataset = np.asarray(distorted_imgs)
-                pool.close()
-                pool.join()
-            except Exception:
-                raise AssertionError'''
 
         # Train with latter half of the data
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1353,16 +1296,6 @@ def run_actual_finetune_operation(hard_pool_ft):
     op = cnn_ops[li]
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
-    if research_parameters['pool_randomize'] and np.random.random() < research_parameters[
-        'pool_randomize_rate']:
-        '''try:
-            pool = MPPool(processes=10)
-            distorted_imgs = pool.map(distort_img, pool_dataset)
-            pool_dataset = np.asarray(distorted_imgs)
-            pool.close()
-            pool.join()
-        except Exception:
-            raise AssertionError'''
 
     # without if can give problems in exploratory stage because of no data in the pool
     if hard_pool_ft.get_size() > batch_size:
@@ -1966,7 +1899,6 @@ if __name__ == '__main__':
     # Various run-time arguments specified
     #
     allow_growth = False
-    use_multiproc = False
     fake_tasks = False
     noise_label_rate = None
     noise_image_rate = None
@@ -1974,13 +1906,13 @@ if __name__ == '__main__':
 
     try:
         opts, args = getopt.getopt(
-            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'pool_workers=', 'allow_growth=',
+            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
                                'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
-                               'use_multiproc=','all_labels_included=','noise_labels=','noise_images=','adapt_randomly='])
+                               'all_labels_included=','noise_labels=','noise_images=','adapt_randomly='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
-        print('<filename>.py --output_dir= --num_gpus= --memory= --pool_workers=')
+        print('<filename>.py --output_dir= --num_gpus= --memory=')
 
     if len(opts) != 0:
         for opt, arg in opts:
@@ -1990,8 +1922,6 @@ if __name__ == '__main__':
                 num_gpus = int(arg)
             if opt == '--memory':
                 mem_frac = float(arg)
-            if opt == '--pool_workers':
-                pool_workers = int(arg)
             if opt == '--allow_growth':
                 allow_growth = bool(arg)
             if opt == '--dataset_type':
@@ -2004,8 +1934,6 @@ if __name__ == '__main__':
                 rigid_pooling = bool(int(arg))
             if opt == '--rigid_pool_type':
                 rigid_pool_type = str(arg)
-            if opt == '--use_multiproc':
-                use_multiproc = bool(arg)
             if opt == '--all_labels_included':
                 fake_tasks = bool(arg)
             if opt == '--noise_labels':
@@ -2033,7 +1961,6 @@ if __name__ == '__main__':
     logger.debug('Output DIR: %s', output_dir)
     logger.info('Number of GPUs: %d', num_gpus)
     logger.info('Memory fraction per GPU: %.3f', mem_frac)
-    logger.info('Number of pool workers for MultiProcessing: %d', pool_workers)
     logger.info('Dataset Name: %s', datatype)
     logger.info('Data Behavior: %s', behavior)
     logger.info('Use AdaCNN: %d', adapt_structure)
