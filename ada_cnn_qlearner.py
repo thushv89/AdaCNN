@@ -45,6 +45,7 @@ class AdaCNNAdaptingQLearner(object):
         self.target_update_rate = params['target_update_rate']
         self.batch_size = params['batch_size']
         self.add_amount = params['add_amount']
+        self.add_fulcon_amount = params['add_fulcon_amount']
         self.epsilon = params['epsilon']
         self.min_epsilon = 0.1
 
@@ -398,7 +399,14 @@ class AdaCNNAdaptingQLearner(object):
 
             for ci, c_id in enumerate(self.conv_ids + self.fulcon_ids):
                 if ci == secondary_action:
-                    layer_actions[c_id] = tmp_a
+                    layer_actions[c_id] = list(tmp_a)
+                    if c_id in self.conv_ids:
+                        layer_actions[c_id][1] = self.add_amount
+                    elif c_id in self.fulcon_ids:
+                        layer_actions[c_id][1] = self.add_fulcon_amount
+                    else:
+                        raise AttributeError
+                    layer_actions[c_id] = tuple(layer_actions[c_id])
                 else:
                     layer_actions[c_id] = self.actions[0]
 
@@ -471,7 +479,7 @@ class AdaCNNAdaptingQLearner(object):
                 if la is None:
                     continue
 
-                if la == self.actions[self.global_actions]:
+                if la[0] == self.actions[self.global_actions][0]:
                     secondary_idx = conv_id
                     primary_idx = 0
 
@@ -1217,33 +1225,13 @@ class AdaCNNAdaptingQLearner(object):
 
             for invalid_a in data['invalid_actions']:
                 self.verbose_logger.debug('Adding the invalid action %s to experience', invalid_a)
-                if 'remove' in self.get_action_string(self.action_list_with_index(invalid_a)):
-                    for _ in range(3):
-                        self.experience.append(
-                            [history_t, invalid_a, -self.top_k_accuracy / (self.num_classes), history_t_plus_1, self.global_time_stamp])
-                    self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
-                                            self.action_list_with_index(invalid_a), -1, -1, -self.top_k_accuracy / (self.num_classes))
 
-                    opp_action = []
-                    for la in self.action_list_with_index(invalid_a):
-                        if la is None or la[0] == 'do_nothing':
-                            opp_action.append(la)
-                        if la is not None and la[0] == 'remove':
-                            opp_action.append(('add', self.add_amount))
-                    for _ in range(3):
-                        self.experience.append(
-                            [history_t, self.index_from_action_list(opp_action), self.top_k_accuracy / (self.num_classes * 10.0),
-                             history_t_plus_1, self.global_time_stamp])
-                    self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
-                                            opp_action, -1, -1, self.top_k_accuracy / (self.num_classes * 10.0))
-
-                else:
-                    for _ in range(3):
-                        self.experience.append(
-                            [history_t, invalid_a, -self.top_k_accuracy / (self.num_classes * 10.0), history_t_plus_1,
-                             self.global_time_stamp])
-                    self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
-                                            self.action_list_with_index(invalid_a), -1, -1, -self.top_k_accuracy / (self.num_classes))
+                for _ in range(3):
+                    self.experience.append(
+                        [history_t, invalid_a, -self.top_k_accuracy / (self.num_classes * 10.0), history_t_plus_1,
+                         self.global_time_stamp])
+                self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'],
+                                        self.action_list_with_index(invalid_a), -1, -1, -self.top_k_accuracy / (self.num_classes))
 
             if self.global_time_stamp < 3:
                 self.verbose_logger.debug('Latest Experience: ')

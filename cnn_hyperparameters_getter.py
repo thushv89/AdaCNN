@@ -103,7 +103,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['epochs'] = 10
 
-    model_hyperparameters['n_iterations'] = 1000
+    model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.5
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
@@ -137,7 +137,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#PG,3,2,0#Terminate,0,0,0"
 
             filter_vector = [144, 144, 144, 0, 288, 288, 288,0]
-            add_amount, remove_amount = 8, 4
+            add_amount, remove_amount, add_fulcon_amount = 8, 4, -1
             filter_min_threshold = 24
             fulcon_min_threshold = 64
 
@@ -160,7 +160,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,64,0,0#Terminate,0,0,0"
 
             filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
-            add_amount, remove_amount, add_fulcon_amount = 8, 4, 48
+            add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
             filter_min_threshold = 24
             fulcon_min_threshold = 48
 
@@ -191,7 +191,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [64, 64, 0, 64, 64, 0, 64, 64, 0, 128, 128, 0, 128, 128, 0, 1024, 1024,250]
             filter_min_threshold = 24
             fulcon_min_threshold = 128
-            add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
+            add_amount, remove_amount, add_fulcon_amount = 12, 6, 64
 
         model_hyperparameters['n_tasks'] = 5
         model_hyperparameters['binned_data_dist_length'] = 25
