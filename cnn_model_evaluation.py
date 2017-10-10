@@ -235,8 +235,13 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A = tf.random_uniform(shape=[n,p],minval=-100.0, maxval=100.0)
-    A_plus = tf.py_func(np.linalg.pinv, [A], tf.float32)
+    A = tf.Variable(initial_value=np.random.uniform(size=(n,p),low=-100.0, high=100.0), trainable=False, validate_shape=False)
+    A_plus = tf.Variable(initial_value=tf.py_func(np.linalg.pinv, [A], tf.float32), trainable=False, validate_shape=False)
+
+    saver = tf.train.Saver({'A':A})
+    save_path = saver.save(session, "./A.ckpt")
+
+    session.run(tf.assign(A,np.asarray([[1]]),validate_shape=False))
 
     #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
     #hdf5_A_plus = hdf5_file.create_dataset('A_plus', (p, n), dtype='f')
@@ -249,9 +254,14 @@ if __name__ == '__main__':
     tf_lower_bound_vec = -epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
     tf_upper_bound_vec = epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
 
+    session.run(tf.assign(A_plus,np.asarray([[1]]),validate_shape=False))
+
+    saver.restore(session,"./A.ckpt")
+    A.set_shape([n,p])
 
     lower_bound = tf_lower_bound_vec.eval().ravel()
     upper_bound = tf_upper_bound_vec.eval().ravel()
+
 
     z_init = list(map(lambda x: np.random.uniform(low=x[0],high=x[1],size=(1))[0],
                       zip(lower_bound.tolist(),upper_bound.tolist())))

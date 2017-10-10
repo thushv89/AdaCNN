@@ -261,7 +261,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 300000
         test_size = 12500
         n_slices = 10
-        fluctuation = 10
+        fluctuation = 5
         resize_to = 96
 
     elif dataset_name == 'svhn-10':
