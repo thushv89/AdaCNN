@@ -11,7 +11,7 @@ from collections import defaultdict
 import logging
 from collections import Counter
 import utils
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 
 logging_level = logging.INFO

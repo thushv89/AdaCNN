@@ -11,7 +11,7 @@ import cnn_intializer
 import sys
 import getopt
 import utils
-
+import dask as da
 
 def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
     global logger

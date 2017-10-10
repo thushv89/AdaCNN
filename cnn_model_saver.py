@@ -27,8 +27,6 @@ def set_from_main(m_dir):
 def save_cnn_hyperparameters(cnn_ops, final_2d_width, hyp_dict, hypeparam_filename):
     global main_dir,saver_logger
 
-
-
     hyperparam_dict = {'layers': cnn_ops}
     hyperparam_dict['final_2d_width'] = final_2d_width
 

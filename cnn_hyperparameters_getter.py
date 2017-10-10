@@ -174,26 +174,26 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['top_k_accuracy'] = 5.0
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['epochs'] = 10
-        pool_size = int(model_hyperparameters['batch_size'] * 0.5 * num_labels)
+        pool_size = int(model_hyperparameters['batch_size'] * 0.75 * num_labels)
 
         if not adapt_structure:
-            cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,64#C,3,1,64#P,2,2,0" \
-                         "#C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128" \
-                         "#C,3,1,128#P,2,2,0#C,3,1,128#C,3,1,128" \
-                         "#PG,2,2,0#FC,1024,0,0#FC,1024,0,0#FC,250,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128#C,3,1,128#P,2,2,0" \
+                         "#C,3,1,256#C,3,1,256#P,2,2,0#C,3,1,256" \
+                         "#C,3,1,256#P,2,2,0#C,3,1,256#C,3,1,256" \
+                         "#PG,2,2,0#FC,2048,0,0#FC,2048,0,0#FC,250,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#C,3,1,32#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,32#C,3,1,32" \
-                         "#PG,2,2,0#FC,192,0,0#FC,192,0,0#FC,192,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,48#C,3,1,48#P,2,2,0#C,3,1,48#C,3,1,48" \
+                         "#P,2,2,0#C,3,1,48#C,3,1,48" \
+                         "#P,2,2,0#C,3,1,48#C,3,1,48" \
+                         "#P,2,2,0#C,3,1,48#C,3,1,48" \
+                         "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,125,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 64, 0, 64, 64, 0, 64, 64, 0, 128, 128, 0, 128, 128, 0, 1024, 1024,250]
-            filter_min_threshold = 24
-            fulcon_min_threshold = 128
-            add_amount, remove_amount, add_fulcon_amount = 12, 6, 64
+            filter_vector = [64, 64, 0, 128, 128, 0, 256, 256, 0, 256, 256, 0, 256, 256, 0, 2048, 2048,250]
+            filter_min_threshold = 32
+            fulcon_min_threshold = 100
+            add_amount, remove_amount, add_fulcon_amount = 16, 8, 64
 
-        model_hyperparameters['n_tasks'] = 5
+        model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
 
         model_hyperparameters['prune_min_bound'] = 0.25

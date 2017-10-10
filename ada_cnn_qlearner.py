@@ -1290,7 +1290,7 @@ class AdaCNNAdaptingQLearner(object):
         return "DoNothing"
 
     def get_naivetrain_action_type(self):
-        return "DoNothing"
+        return "NaiveTrain"
 
     def get_action_type_with_action_list(self,action_list):
         for li,la in enumerate(action_list):

@@ -832,7 +832,8 @@ def get_adaptive_dropout():
     for scope in cnn_ops:
         if 'conv' in scope:
             current_depth_total += cnn_hyperparameters[scope]['weights'][3]
-
+        if 'fulcon' in scope:
+            current_depth_total += cnn_hyperparameters[scope]['out']
     return dropout_rate*np.sqrt(current_depth_total*1.0/sum(filter_vector))
 
 
@@ -1923,7 +1924,7 @@ if __name__ == '__main__':
             if opt == '--memory':
                 mem_frac = float(arg)
             if opt == '--allow_growth':
-                allow_growth = bool(arg)
+                allow_growth = bool(int(arg))
             if opt == '--dataset_type':
                 datatype = str(arg)
             if opt == '--dataset_behavior':
@@ -1935,13 +1936,13 @@ if __name__ == '__main__':
             if opt == '--rigid_pool_type':
                 rigid_pool_type = str(arg)
             if opt == '--all_labels_included':
-                fake_tasks = bool(arg)
+                fake_tasks = bool(int(arg))
             if opt == '--noise_labels':
                 noise_label_rate = float(arg)
             if opt == '--noise_images':
                 noise_image_rate = float(arg)
             if opt == '--adapt_randomly':
-                adapt_randomly = bool(arg)
+                adapt_randomly = bool(int(arg))
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -1966,6 +1967,7 @@ if __name__ == '__main__':
     logger.info('Use AdaCNN: %d', adapt_structure)
     logger.info('Use rigid pooling: %d', rigid_pooling)
     logger.info('Use rigid naive: %d',rigid_naive)
+    logger.info('Adapt Randomly: %d',adapt_randomly)
 
     # =====================================================================
     # VARIOS SETTING UPS
@@ -2305,7 +2307,7 @@ if __name__ == '__main__':
                 # This if condition get triggered stochastically for AdaCNN
                 # Never for Rigid-Pooling or Naive-Training
                 if (adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch))):
-
+                        #print('Only collecting valid data')
                         # Concatenate current 'num_gpus' batches to a single matrix
                         single_iteration_batch_data, single_iteration_batch_labels = None, None
                         for gpu_id in range(num_gpus):
@@ -2319,7 +2321,6 @@ if __name__ == '__main__':
                                 single_iteration_batch_labels = np.append(single_iteration_batch_labels,
                                                                           batch_labels[gpu_id], axis=0)
 
-
                         hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                           super_loss_vec,
                                                           min(research_parameters['hard_pool_max_threshold'],
@@ -2332,6 +2333,7 @@ if __name__ == '__main__':
 
                 else:
 
+                    #print('Current data batch and hard_pool_ft')
                     # Concatenate current 'num_gpus' batches to a single matrix
                     single_iteration_batch_data, single_iteration_batch_labels = None, None
                     for gpu_id in range(num_gpus):
@@ -2348,11 +2350,13 @@ if __name__ == '__main__':
                     # Higer rates of accumulating data causes the pool to lose uniformity
                     if np.random.random()<0.05:
                         if adapt_structure or (rigid_pooling and rigid_pool_type == 'smart'):
+                            #print('adding data to hard pool ft')
                             hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                            super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
                                                                       max(0.01, (1.0 - train_accuracy))))
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
                         elif (not adapt_structure) and rigid_pooling and rigid_pool_type=='naive':
+                            #print('rigid pooling naive')
                             hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                               super_loss_vec,1.0)
 
@@ -2361,6 +2365,7 @@ if __name__ == '__main__':
                     # =========================================================
                     # # Training Phase (Optimization)
                     if (not adapt_structure) or current_action_type != adapter.get_donothing_action_type():
+                        #print('training on current batch')
                         for _ in range(iterations_per_batch):
                             _, _ = session.run(
                                 [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
@@ -2711,7 +2716,7 @@ if __name__ == '__main__':
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs
-        if decay_learning_rate and epoch>0 and epoch%2==0:
+        if decay_learning_rate and epoch>0 and epoch%2==1:
             session.run(increment_global_step_op)
         # ======================================================
 
