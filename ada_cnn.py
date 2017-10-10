@@ -832,7 +832,7 @@ def get_adaptive_dropout():
     for scope in cnn_ops:
         if 'conv' in scope:
             current_depth_total += cnn_hyperparameters[scope]['weights'][3]
-        if 'fulcon' in scope:
+        if scope!='fulcon_out' and 'fulcon' in scope:
             current_depth_total += cnn_hyperparameters[scope]['out']
     return dropout_rate*np.sqrt(current_depth_total*1.0/sum(filter_vector))
 
