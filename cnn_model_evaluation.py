@@ -11,7 +11,6 @@ import cnn_intializer
 import sys
 import getopt
 import utils
-import dask as da
 
 def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
     global logger
@@ -206,27 +205,27 @@ if __name__ == '__main__':
             if opt == '--memory':
                 mem_frac = float(arg)
             if opt == '--allow_growth':
-                allow_growth = bool(arg)
+                allow_growth = bool(int(arg))
             if opt == '--dataset_type':
                 datatype = str(arg)
-            if opt == '--adapt_structure':
-                adapt_structure = bool(int(arg))
-            if opt == '--rigid_pooling':
-                rigid_pooling = bool(int(arg))
-            if opt == '--rigid_pool_type':
-                rigid_pool_type = str(arg)
 
-    cnn_hyperparam_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-0.pickle'
-    cnn_weights_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-model-0.ckpt'
+
+    cnn_hyperparam_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-3.pickle'
+    cnn_weights_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-model-3.ckpt'
 
     cnn_ops, cnn_hyperparameters, final_2d_width = cnn_model_saver.get_cnn_ops_and_hyperparameters(cnn_hyperparam_file)
     print(cnn_hyperparameters)
 
-    session = tf.InteractiveSession()
-    cnn_model_saver.create_and_restore_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
-    cnn_model_saver.set_shapes_for_all_weights(cnn_ops,cnn_hyperparameters)
-    tf_rand_seed_ph = tf.placeholder(shape=None,dtype=tf.int32)
+    config = tf.ConfigProto()
+    config.gpu_options.allocator_type = 'BFC'
+    config.gpu_options.per_process_gpu_memory_fraction = mem_frac
+    config.gpu_options.allow_growth = allow_growth
+    config.log_device_placement = True
+    session = tf.InteractiveSession(config=config)
+
+    print('Calcluating total number of  CNN parameters.')
     n = cnn_model_saver.get_weight_vector_length(cnn_hyperparam_file)
+    print('\tSuccessfully calcluated total number of  CNN parameters.')
 
     p = 100
 
@@ -235,29 +234,48 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A = tf.Variable(initial_value=np.random.uniform(size=(n,p),low=-100.0, high=100.0), trainable=False, validate_shape=False)
-    A_plus = tf.Variable(initial_value=tf.py_func(np.linalg.pinv, [A], tf.float32), trainable=False, validate_shape=False)
 
-    saver = tf.train.Saver({'A':A})
-    save_path = saver.save(session, "./A.ckpt")
+    print('Creating Variables for A and A_plus')
 
-    session.run(tf.assign(A,np.asarray([[1]]),validate_shape=False))
+    with tf.device('/cpu:0'):
+        A = tf.random_uniform(shape=[n,p],minval=-100.0,maxval=100.0)
+        A_plus = tf.py_func(np.linalg.pinv, [A], tf.float32,name='pseudo-inverse-wrapper')
+
+    print('\t Successfully created variables\n')
+
+    #print('Temporarily saving variable A to disk')
+    #saver = tf.train.Saver({'A':A})
+    #save_path = saver.save(session, "./A.ckpt")
+    #print('\t Successfully saved variable A\n')
+
+    #session.run(tf.assign(A,np.asarray([[1]]),validate_shape=False))
+    #print('Released memory hold for A\n')
 
     #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
     #hdf5_A_plus = hdf5_file.create_dataset('A_plus', (p, n), dtype='f')
+
+    print('Creating variables and restoring values for CNN')
+    cnn_model_saver.create_and_restore_cnn_weights(session, cnn_hyperparam_file, cnn_weights_file)
+    cnn_model_saver.set_shapes_for_all_weights(cnn_ops, cnn_hyperparameters)
+    print('\t Successfully created variables\n')
 
     print('Creating a weight vector from weight tensors')
     W = get_weight_vector_with_variables(cnn_ops,n)
     print('\tSuccessfully created the weight vector (shape: %s)\n'%W.get_shape().as_list())
 
+    print('Calculating lower and upper bound of the box')
     epsilon = 1e-3
     tf_lower_bound_vec = -epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
     tf_upper_bound_vec = epsilon * (tf.abs(tf.matmul(A_plus,tf.reshape(W,[-1,1]))) + 1)
+    print('\t Successfully calculated lower and upper bound of the box\n')
 
-    session.run(tf.assign(A_plus,np.asarray([[1]]),validate_shape=False))
+    #session.run(tf.assign(A_plus,np.asarray([[1]]),validate_shape=False))
+    #print('\t Released memory hold for A_plus\n')
 
-    saver.restore(session,"./A.ckpt")
-    A.set_shape([n,p])
+    #print('Restoring variable A')
+    #saver.restore(session,"./A.ckpt")
+    #A.set_shape([n,p])
+    #print('\t Successfully restored A\n')
 
     lower_bound = tf_lower_bound_vec.eval().ravel()
     upper_bound = tf_upper_bound_vec.eval().ravel()
@@ -293,7 +311,7 @@ if __name__ == '__main__':
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 50000
 
-    batch_size = dataset_info['train_size']//20
+    batch_size = dataset_info['train_size']//10
     train_dataset, train_labels = read_data_file(datatype)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],

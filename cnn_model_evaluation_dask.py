@@ -12,7 +12,7 @@ import sys
 import getopt
 import utils
 import dask as da
-import dask as da
+import dask.array as da
 from scipy.optimize import fmin_l_bfgs_b
 
 def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
@@ -208,15 +208,10 @@ if __name__ == '__main__':
             if opt == '--memory':
                 mem_frac = float(arg)
             if opt == '--allow_growth':
-                allow_growth = bool(arg)
+                allow_growth = bool(int(arg))
             if opt == '--dataset_type':
                 datatype = str(arg)
-            if opt == '--adapt_structure':
-                adapt_structure = bool(int(arg))
-            if opt == '--rigid_pooling':
-                rigid_pooling = bool(int(arg))
-            if opt == '--rigid_pool_type':
-                rigid_pool_type = str(arg)
+
 
     cnn_hyperparam_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-0.pickle'
     cnn_weights_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-model-0.ckpt'
@@ -224,11 +219,19 @@ if __name__ == '__main__':
     cnn_ops, cnn_hyperparameters, final_2d_width = cnn_model_saver.get_cnn_ops_and_hyperparameters(cnn_hyperparam_file)
     print(cnn_hyperparameters)
 
-    session = tf.InteractiveSession()
+    config = tf.ConfigProto()
+    config.gpu_options.allocator_type = 'BFC'
+    config.gpu_options.per_process_gpu_memory_fraction = mem_frac
+    config.gpu_options.allow_growth = allow_growth
+    config.log_device_placement = True
+    session = tf.InteractiveSession(config=config)
+
     cnn_model_saver.create_and_restore_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
     cnn_model_saver.set_shapes_for_all_weights(cnn_ops,cnn_hyperparameters)
 
+    print('Calcluating total number of  CNN parameters.')
     n = cnn_model_saver.get_weight_vector_length(cnn_hyperparam_file)
+    print('\tSuccessfully calcluated total number of  CNN parameters.')
 
     p = 100
 
@@ -237,11 +240,12 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A = da.random.uniform(-100.0, 100.0, size=(n,p), chunks=(n/100,p))
-    A_plus = np.linalg.pinv(A)
-    print('Calculated the psuedo inverse of A')
-    A_plus = da.from_array(A_plus,chunks=(p,n/100))
+    A = da.random.uniform(-100.0, 100.0, size=(n,p), chunks=(n//100,p))
 
+    # A_plus = (A'A)−1A' (https://pythonhosted.org/algopy/examples/moore_penrose_pseudoinverse.html)
+    print('Calculating the psuedo inverse of A')
+    A_plus = da.from_array(np.linalg.pinv(A),chunks=(p,n//100))
+    print('\tSuccessfully calculated the psuedo inverse of A\n')
     #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
     #hdf5_A_plus = hdf5_file.create_dataset('A_plus', (p, n), dtype='f')
 
@@ -249,16 +253,19 @@ if __name__ == '__main__':
     W = session.run(get_weight_vector_with_variables(cnn_ops,n))
     print('\tSuccessfully created the weight vector (shape: %s)\n'%W.shape)
 
+    print('Calculating lower and upper bound of the box')
     epsilon = 1e-3
     lower_bound = -epsilon * (np.abs(da.dot(A_plus,np.reshape(W,(-1,1)))) + 1)
     upper_bound = epsilon * (np.abs(da.dot(A_plus,np.reshape(W,(-1,1)))) + 1)
+    print('\t Successfully calculated lower and upper bound of the box\n')
 
+    del A_plus
 
     z_init = list(map(lambda x: np.random.uniform(low=x[0],high=x[1],size=(1))[0],
                       zip(lower_bound.tolist(),upper_bound.tolist())))
     z = tf.Variable(dtype=tf.float32, initial_value=z_init)
 
-    W_corrupt = W + tf_corrupt_ph
+    W_corrupt = W + tf.reshape(tf.matmul(A,tf.reshape(z,[-1,1])),[-1])
 
     tf_restore_weights_with_w_corrupt = update_weight_variables_from_vector(cnn_ops,cnn_hyperparameters,W_corrupt,n)
 
@@ -284,7 +291,7 @@ if __name__ == '__main__':
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 50000
 
-    batch_size = dataset_info['train_size']//20
+    batch_size = dataset_info['train_size']//10
     train_dataset, train_labels = read_data_file(datatype)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],

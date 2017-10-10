@@ -2250,17 +2250,17 @@ if __name__ == '__main__':
                     logger.debug('Got label sequence (for batch %d)', global_batch_id)
                     logger.debug(Counter(label_seq))
 
+                    # Get current batch of data nd labels (training)
                     b_d, b_l = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
                     batch_data.append(b_d)
                     batch_labels.append(b_l)
 
-                    logger.debug('Training data')
-                    logger.debug(np.argmax(batch_labels,axis=1).flatten()[:25])
-                    logger.debug('='*80)
+
                     if batch_id == 0:
                         logger.info('\tDataset shape: %s', b_d.shape)
                         logger.info('\tLabels shape: %s', b_l.shape)
 
+                    # log class distribution
                     if (batch_id + gpu_id) % research_parameters['log_distribution_every'] == 0:
                         cnt = Counter(label_seq)
                         dist_str = ''
@@ -2268,6 +2268,7 @@ if __name__ == '__main__':
                             dist_str += str(cnt[li] / len(label_seq)) + ',' if li in cnt else str(0) + ','
                         class_dist_logger.info('%d,%s', batch_id, dist_str)
 
+                    # calculate binned data distribution and running average of that for RL state
                     cnt = Counter(np.argmax(batch_labels[-1], axis=1))
                     label_count_sorted = np.asarray([cnt[ci] if ci in cnt.keys() else 0.0 for ci in range(num_labels)])*1.0/batch_size
                     if model_hyperparameters['binned_data_dist_length'] != num_labels:
@@ -2315,7 +2316,7 @@ if __name__ == '__main__':
 
                 # This if condition get triggered stochastically for AdaCNN
                 # Never for Rigid-Pooling or Naive-Training
-                if (adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch))):
+                if adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch)):
                         #print('Only collecting valid data')
                         # Concatenate current 'num_gpus' batches to a single matrix
                         single_iteration_batch_data, single_iteration_batch_labels = None, None
@@ -2408,6 +2409,8 @@ if __name__ == '__main__':
 
                 # =============================================================
 
+                # =============================================================
+                # log hard_pool distribution over time
                 if (adapt_structure or rigid_pooling) and \
                         (batch_id > 0 and batch_id % interval_parameters['history_dump_interval'] == 0):
 
@@ -2425,6 +2428,8 @@ if __name__ == '__main__':
                         pool_dist_string += str(val) + ','
 
                     pool_dist_ft_logger.info('%s%d', pool_dist_string, hard_pool_ft.get_size())
+                # ==============================================================
+
 
                 # ================================================================
                 # Things done if one of below scenarios
