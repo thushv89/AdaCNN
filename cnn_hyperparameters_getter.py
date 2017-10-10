@@ -159,7 +159,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
                          "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,64,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
+            filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 110]
             add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
             filter_min_threshold = 24
             fulcon_min_threshold = 48

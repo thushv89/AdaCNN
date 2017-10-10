@@ -635,12 +635,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                     tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='PoolLabels'))
 
                 # Used for augmenting the pool data
-                aug_img, aug_lbl = tf_augment_data_with(tf_pool_data_batch[-1],tf_pool_label_batch[-1],datatype)
-                augmented_pool_data_batch.append(aug_img)
-                augmented_pool_label_batch.append(aug_lbl)
+
+                augmented_pool_data_batch.append(tf_augment_data_with(tf_pool_data_batch[-1],datatype))
+                augmented_pool_label_batch.append(tf_pool_label_batch[-1])
 
                 with tf.name_scope('pool') as scope:
-                    single_pool_logit_op = inference(tf_pool_data_batch[-1],tf_cnn_hyperparameters, True)
+                    #single_pool_logit_op = inference(tf_pool_data_batch[-1],tf_cnn_hyperparameters, True)
 
                     single_pool_loss = tower_loss(augmented_pool_data_batch[-1], augmented_pool_label_batch[-1], False, None,
                                                   tf_cnn_hyperparameters)
@@ -796,10 +796,10 @@ def distort_img(img):
 
     return img
 
-def tf_augment_data_with(tf_aug_pool_batch, tf_aug_pool_labels, dataset_type):
+def tf_augment_data_with(tf_pool_batch, dataset_type):
 
     if dataset_type != 'svhn-10':
-        tf_aug_pool_batch = tf.map_fn(lambda img: tf.image.random_flip_left_right(img), tf_aug_pool_batch)
+        tf_aug_pool_batch = tf.map_fn(lambda data: tf.image.random_flip_left_right(data), tf_pool_batch)
 
     tf_aug_pool_batch = tf.image.random_brightness(tf_aug_pool_batch,0.5)
     tf_aug_pool_batch = tf.image.random_contrast(tf_aug_pool_batch,0.5,1.5)
@@ -807,7 +807,7 @@ def tf_augment_data_with(tf_aug_pool_batch, tf_aug_pool_labels, dataset_type):
     # Not necessary they are already normalized
     #tf_image_batch = tf.map_fn(lambda img: tf.image.per_image_standardization(img), tf_image_batch)
 
-    return tf_aug_pool_batch, tf_aug_pool_labels
+    return tf_aug_pool_batch
 
 
 def get_pool_valid_accuracy(hard_pool_valid):
@@ -1013,7 +1013,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            pbatch_train_count += 1
+            _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
+                               feed_dict=pool_feed_dict)
+
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
@@ -1091,7 +1093,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # change out hyperparameter of op
     cnn_hyperparameters[current_op]['out'] += amount_to_add
     if research_parameters['debugging']:
-        assert cnn_hyperparameters[current_op]['in'][1] == \
+        assert cnn_hyperparameters[current_op]['in'] == \
                tf.shape(current_op_weights).eval()[1]
 
     session.run(tf_update_hyp_ops[current_op], feed_dict={
@@ -1149,6 +1151,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                                      :])
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
+
+            _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
             pbatch_train_count += 1
 
@@ -1294,9 +1298,7 @@ def run_actual_finetune_operation(hard_pool_ft):
     '''
     global current_adaptive_dropout
 
-    op = cnn_ops[li]
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-
 
     # without if can give problems in exploratory stage because of no data in the pool
     if hard_pool_ft.get_size() > batch_size:
@@ -1304,6 +1306,7 @@ def run_actual_finetune_operation(hard_pool_ft):
 
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
+                #print('fintuning network (pool_id: ',pool_id,')')
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
                 for gpu_id in range(num_gpus):
@@ -1366,19 +1369,19 @@ def get_explore_action_probs(epoch, trial_phase, n_conv, n_fulcon):
     '''
 
     n_all = n_conv + n_fulcon
-
-    if epoch == 0 and trial_phase<0.4:
+    trial_phase_split = 0.4 if datatype != 'imagenet-250' else 0.25
+    if epoch == 0 and trial_phase<trial_phase_split:
         logger.info('Finetune phase')
         trial_action_probs = [0.2 / (1.0 * n_all) for _ in range(n_all)]  # add
-        trial_action_probs.extend([0.26, .26, 0.28])
+        trial_action_probs.extend([0.1, .35, 0.35])
 
-    elif epoch == 0 and trial_phase >= 0.4 and trial_phase < 1.0:
+    elif epoch == 0 and trial_phase >= trial_phase_split and trial_phase < 1.0:
         logger.info('Growth phase')
         # There is 0.1 amount probability to be divided between all the remove actions
         # We give 1/10 th as for other remove actions for the last remove action
         trial_action_probs = []
         trial_action_probs.extend([0.6 / (1.0 * (n_all)) for _ in range(n_all)])  # add
-        trial_action_probs.extend([0.13, 0.13, 0.14])
+        trial_action_probs.extend([0.1, 0.15, 0.15])
 
     elif epoch == 2 and trial_phase >= 2.0 and trial_phase < 2.7:
         logger.info('Shrink phase')
@@ -2140,7 +2143,10 @@ if __name__ == '__main__':
     elif datatype=='cifar-100':
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
-        labels_of_each_task = [list(range(i * labels_per_task, (i + 1) * labels_per_task)) for i in range(n_tasks)]
+        # override settings
+        n_tasks = 2
+        labels_per_task = 200
+        labels_of_each_task = [list(range(0, 200)),list(range(50, 250))]
 
     if behavior=='non-stationary':
         data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
@@ -2248,6 +2254,9 @@ if __name__ == '__main__':
                     batch_data.append(b_d)
                     batch_labels.append(b_l)
 
+                    logger.debug('Training data')
+                    logger.debug(np.argmax(batch_labels,axis=1).flatten()[:25])
+                    logger.debug('='*80)
                     if batch_id == 0:
                         logger.info('\tDataset shape: %s', b_d.shape)
                         logger.info('\tLabels shape: %s', b_l.shape)
@@ -2333,7 +2342,6 @@ if __name__ == '__main__':
 
                 else:
 
-                    #print('Current data batch and hard_pool_ft')
                     # Concatenate current 'num_gpus' batches to a single matrix
                     single_iteration_batch_data, single_iteration_batch_labels = None, None
                     for gpu_id in range(num_gpus):
@@ -2350,13 +2358,13 @@ if __name__ == '__main__':
                     # Higer rates of accumulating data causes the pool to lose uniformity
                     if np.random.random()<0.05:
                         if adapt_structure or (rigid_pooling and rigid_pool_type == 'smart'):
-                            #print('adding data to hard pool ft')
+                            #print('add examples to hard pool ft')
                             hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                            super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
                                                                       max(0.01, (1.0 - train_accuracy))))
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
                         elif (not adapt_structure) and rigid_pooling and rigid_pool_type=='naive':
-                            #print('rigid pooling naive')
+                            #print('add examples to rigid pooling naive')
                             hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
                                                               super_loss_vec,1.0)
 
@@ -2365,8 +2373,8 @@ if __name__ == '__main__':
                     # =========================================================
                     # # Training Phase (Optimization)
                     if (not adapt_structure) or current_action_type != adapter.get_donothing_action_type():
-                        #print('training on current batch')
                         for _ in range(iterations_per_batch):
+                            #print('training on current batch (action type: ', current_action_type, ')')
                             _, _ = session.run(
                                 [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
                             )
@@ -2485,9 +2493,9 @@ if __name__ == '__main__':
 
                             logger.debug('=' * 80)
                             logger.debug('Actual Test Labels %d', test_batch_id)
-                            logger.debug(np.argmax(batch_test_labels, axis=1).flatten()[:5])
+                            logger.debug(batch_test_labels.flatten()[:25])
                             logger.debug('Predicted Test Labels %d', test_batch_id)
-                            logger.debug(np.argmax(test_predictions, axis=1).flatten()[:5])
+                            logger.debug(np.argmax(test_predictions, axis=1).flatten()[:25])
                             logger.debug('Test: %d, %.3f', test_batch_id, accuracy(test_predictions, batch_test_labels))
                             logger.debug('=' * 80)
 
