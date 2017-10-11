@@ -828,13 +828,22 @@ def get_pool_valid_accuracy(hard_pool_valid):
 
 def get_adaptive_dropout():
     global cnn_hyperparameters,cnn_ops, dropout_rate,filter_vector
-    current_depth_total = 0
+    current_conv_depth_total, current_fulcon_depth_total = 0, 0
+    conv_filter_vec, fulcon_filter_vec = [],[]
+    for op_i, op in enumerate(cnn_ops):
+        if 'conv' in op:
+            conv_filter_vec.append(filter_vector[op_i])
+        elif 'fulcon_out'!= op and 'fulcon' in op:
+            fulcon_filter_vec.append(filter_vector[op_i])
+
     for scope in cnn_ops:
         if 'conv' in scope:
-            current_depth_total += cnn_hyperparameters[scope]['weights'][3]
+            current_conv_depth_total += cnn_hyperparameters[scope]['weights'][3]
         if scope!='fulcon_out' and 'fulcon' in scope:
-            current_depth_total += cnn_hyperparameters[scope]['out']
-    return dropout_rate*np.sqrt(current_depth_total*1.0/sum(filter_vector))
+            current_fulcon_depth_total += cnn_hyperparameters[scope]['out']
+
+    dropout_factor =  ((current_conv_depth_total*1.0/sum(conv_filter_vec)) + (current_fulcon_depth_total*1.0/sum(fulcon_filter_vec)))/2.0
+    return dropout_rate*(dropout_factor**2)
 
 
 def fintune_with_pool_ft(hard_pool_ft):
@@ -1466,14 +1475,31 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
         elif adaptation_period =='both':
 
             logger.info('Greedy Adapting period of epoch (both)')
-            if np.random.random() >= eps:
-                state, action, invalid_actions = q_learner.output_action_with_type(
-                    data, 'Greedy')
+            if datatype=='cifar-10':
+                non_adapting_threshold = 0.1
+            elif datatype=='cifar-100':
+                non_adapting_threshold = 0.1
+            elif datatype=='imagenet-250':
+                non_adapting_threshold = 0.25
 
+            if local_trial_phase> non_adapting_threshold:
+                if np.random.random() >= eps:
+                    state, action, invalid_actions = q_learner.output_action_with_type(
+                        data, 'Greedy')
+
+                else:
+                    state, action, invalid_actions = q_learner.output_action_with_type(
+                        data, 'Stochastic'
+                    )
             else:
+
+                # This is a hacky way to get only non-adaptive actions for sometime at the beginning of every task
+                # As this might be cause some problems in convergens
+                logger.info('\tGetting non adaptive actions for a bit')
                 state, action, invalid_actions = q_learner.output_action_with_type(
-                    data, 'Stochastic'
+                    data, 'Explore', p_action=get_explore_action_probs(0, 0.01, n_conv, n_fulcon)
                 )
+
             adapting_now = True
 
         elif adaptation_period =='none':

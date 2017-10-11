@@ -173,7 +173,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     elif dataset_name== 'imagenet-250':
         model_hyperparameters['top_k_accuracy'] = 5.0
         model_hyperparameters['n_iterations'] = 10000
-        model_hyperparameters['epochs'] = 10
+        model_hyperparameters['epochs'] = 8
         pool_size = int(model_hyperparameters['batch_size'] * 0.75 * num_labels)
 
         if not adapt_structure:

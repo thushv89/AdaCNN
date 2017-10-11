@@ -13,7 +13,8 @@ import getopt
 import utils
 import dask as da
 import dask.array as da
-from scipy.optimize import fmin_l_bfgs_b
+from scipy.optimize import minimize
+from functools import partial
 
 def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
     global logger
@@ -128,26 +129,33 @@ def update_weight_variables_from_vector(cnn_ops, cnn_hyps, w_vec, n):
 
     return assign_ops
 
-def read_data_file(datatype):
+def read_data_file(datatype,load_train_data):
 
     print('Reading data from HDF5 File')
     # Datasets
     if datatype == 'cifar-10':
         dataset_file = h5py.File("data" + os.sep + "cifar_10_dataset.hdf5", "r")
-        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
-
+        if load_train_data:
+            dataset, labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        else:
+            dataset, labels = dataset_file['/test/images'], dataset_file['/test/labels']
 
     elif datatype == 'cifar-100':
         dataset_file = h5py.File("data" + os.sep + "cifar_100_dataset.hdf5", "r")
-        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        if load_train_data:
+            dataset, labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        else:
+            dataset, labels = dataset_file['/test/images'], dataset_file['/test/labels']
 
     elif datatype == 'imagenet-250':
         dataset_file = h5py.File(
             ".." + os.sep + "PreprocessingBenchmarkImageDatasets" + os.sep + "imagenet_small_test" + os.sep + 'imagenet_250_dataset.hdf5',
             'r')
-        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
-
-    return train_dataset, train_labels
+        if load_train_data:
+            dataset, labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        else:
+            dataset, labels = dataset_file['/valid/images'], dataset_file['/valid/labels']
+    return dataset, labels
 
 def loss(batch_size, cnn_ops, dataset, labels, cnn_hyperparameters):
 
@@ -173,13 +181,36 @@ def loss(batch_size, cnn_ops, dataset, labels, cnn_hyperparameters):
 
     return total_loss
 
-def callback_loss(loss):
-    global x_loss
+
+def calc_epsilon_sharpness(x_loss,x_max_loss):
     print('x_loss: ',x_loss)
     print('x_plus_Ay loss: ',loss)
-    print('epsilon-sharpness:', (loss-x_loss)*100.0/(1+x_loss))
+    print('epsilon-sharpness:', (x_max_loss-x_loss)*100.0/(1+x_loss))
+    return (x_max_loss-x_loss)*100.0/(1+x_loss)
+
+
+def callback_loss(z,W,A,tf_corrupt_weights_op, tf_loss_op, tf_loss_feed_dict):
+
+    global W_corrupt_placeholder
+
+    W_corrupt = W + np.reshape(da.dot(A, np.reshape(z, [-1, 1])), [-1])
+
+    session.run(tf_corrupt_weights_op,feed_dict={W_corrupt_placeholder:W_corrupt})
+
+    l = session.run(tf_loss_op, feed_dict=tf_loss_feed_dict)
+
+    # use -l since we need to maximize the loss
+
+    return -l
 
 x_loss = None
+W_corrupt_placeholder = None
+
+minimize_iter = 1
+def callback_iteration(xk):
+    global minimize_iter
+    print('\tSingle iteration (%d) finished'%minimize_iter)
+    minimize_iter += 1
 
 if __name__ == '__main__':
 
@@ -192,7 +223,7 @@ if __name__ == '__main__':
 
     try:
         opts, args = getopt.getopt(
-            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'allow_growth=',
+            sys.argv[1:], "", ["output_dir=", "file_id=", "memory=", 'allow_growth=',
                                'dataset_type=',
                                'adapt_structure=', 'rigid_pooling=', 'rigid_pool_type='])
     except getopt.GetoptError as err:
@@ -203,8 +234,8 @@ if __name__ == '__main__':
         for opt, arg in opts:
             if opt == '--output_dir':
                 output_dir = arg
-            if opt == '--num_gpus':
-                num_gpus = int(arg)
+            if opt == '--file_id':
+                file_id = int(arg)
             if opt == '--memory':
                 mem_frac = float(arg)
             if opt == '--allow_growth':
@@ -213,8 +244,8 @@ if __name__ == '__main__':
                 datatype = str(arg)
 
 
-    cnn_hyperparam_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-0.pickle'
-    cnn_weights_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-model-0.ckpt'
+    cnn_hyperparam_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-hyperparameters-%d.pickle'%file_id
+    cnn_weights_file = output_dir + os.sep + 'model_weights' + os.sep + 'cnn-model-%d.ckpt'%file_id
 
     cnn_ops, cnn_hyperparameters, final_2d_width = cnn_model_saver.get_cnn_ops_and_hyperparameters(cnn_hyperparam_file)
     print(cnn_hyperparameters)
@@ -223,7 +254,7 @@ if __name__ == '__main__':
     config.gpu_options.allocator_type = 'BFC'
     config.gpu_options.per_process_gpu_memory_fraction = mem_frac
     config.gpu_options.allow_growth = allow_growth
-    config.log_device_placement = True
+    config.log_device_placement = False
     session = tf.InteractiveSession(config=config)
 
     cnn_model_saver.create_and_restore_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
@@ -240,17 +271,19 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A = da.random.uniform(-100.0, 100.0, size=(n,p), chunks=(n//100,p))
-
+    A = da.random.uniform(-1e-3, 1e-3, size=(n,p), chunks=(n//100,p))
+    print(A[:10,:10].compute())
     # A_plus = (A'A)−1A' (https://pythonhosted.org/algopy/examples/moore_penrose_pseudoinverse.html)
     print('Calculating the psuedo inverse of A')
     A_plus = da.from_array(np.linalg.pinv(A),chunks=(p,n//100))
+    print(A_plus[:10, :10].compute())
     print('\tSuccessfully calculated the psuedo inverse of A\n')
     #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
     #hdf5_A_plus = hdf5_file.create_dataset('A_plus', (p, n), dtype='f')
 
     print('Creating a weight vector from weight tensors')
     W = session.run(get_weight_vector_with_variables(cnn_ops,n))
+    W_corrupt_placeholder = tf.placeholder(shape=[n],dtype=tf.float32,name='W_corrupt_ph')
     print('\tSuccessfully created the weight vector (shape: %s)\n'%W.shape)
 
     print('Calculating lower and upper bound of the box')
@@ -263,36 +296,33 @@ if __name__ == '__main__':
 
     z_init = list(map(lambda x: np.random.uniform(low=x[0],high=x[1],size=(1))[0],
                       zip(lower_bound.tolist(),upper_bound.tolist())))
-    z = tf.Variable(dtype=tf.float32, initial_value=z_init)
 
-    W_corrupt = W + tf.reshape(tf.matmul(A,tf.reshape(z,[-1,1])),[-1])
+    #W_corrupt = W + np.reshape(da.dot(A,tf.reshape(z,[-1,1])),[-1])
 
-    tf_restore_weights_with_w_corrupt = update_weight_variables_from_vector(cnn_ops,cnn_hyperparameters,W_corrupt,n)
+    tf_restore_weights_with_w_corrupt = update_weight_variables_from_vector(cnn_ops,cnn_hyperparameters,W_corrupt_placeholder,n)
 
     n_iterations = 0
     dataset_info = {}
 
     if datatype=='cifar-10':
         image_size = 24
-        n_iterations = 400
         num_labels = 10
         dataset_info['dataset_name']='cifar-10'
         dataset_info['n_channels']=3
         dataset_info['resize_to'] = 0
         dataset_info['n_slices'] = 1
-        dataset_info['train_size'] = 50000
+        dataset_info['train_size'] = 10000
     if datatype=='cifar-100':
         image_size = 24
-        n_iterations = 400
         num_labels = 100
         dataset_info['dataset_name']='cifar-100'
         dataset_info['n_channels']=3
         dataset_info['resize_to'] = 0
         dataset_info['n_slices'] = 1
-        dataset_info['train_size'] = 50000
+        dataset_info['train_size'] = 10000
 
-    batch_size = dataset_info['train_size']//10
-    train_dataset, train_labels = read_data_file(datatype)
+    batch_size = dataset_info['train_size']//4
+    dataset, labels = read_data_file(datatype,load_train_data=False)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
                                             dataset_info['n_slices'],
@@ -319,25 +349,45 @@ if __name__ == '__main__':
 
     tf_train_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TrainLabels')
 
-    print(lower_bound.shape)
-    print(upper_bound.shape)
-    print(z.get_shape().as_list())
+    #print(lower_bound.shape)
+    #print(upper_bound.shape)
+    #print(z.get_shape().as_list())
+    print('Defining ops for logits and loss')
     with tf.variable_scope(constants.TF_GLOBAL_SCOPE, reuse=True):
         tf_logits_train = inference(batch_size, cnn_ops,tf_train_images, cnn_hyperparameters)
         tf_loss_train = loss(batch_size, cnn_ops, tf_train_images, tf_train_labels, cnn_hyperparameters)
+    print('\t Successfully defined\n')
 
-        optimizer = tf.contrib.opt.ScipyOptimizerInterface(
-            -tf_loss_train, var_to_bounds={z:(lower_bound.tolist(),upper_bound.tolist())},
-            method = 'L-BFGS-B',options={'maxiter': 10}
-        )
+    all_d, all_l = data_gen.generate_data_ordered(dataset, labels, dataset_info)
+    print('Retrieved data \n')
+    # Original loss
+    x_loss = session.run(tf_loss_train, feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
+    print('Calculated loss\n')
 
+    part_loss_callback = partial(callback_loss,W=W,A=A,tf_corrupt_weights_op=tf_restore_weights_with_w_corrupt, tf_loss_op=tf_loss_train,
+            tf_loss_feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
+
+    print('Lower and Upper bounds for z')
+    print(list(zip(lower_bound.ravel().tolist(), upper_bound.ravel().tolist())))
+    print('\n')
+    print('L-BFGS Optimization started')
+
+    opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',
+                               bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())), options={'maxfun':100,'maxiter':10}, callback=callback_iteration)
+    z_max = opt_res['x']
+    print('Maximum z is given by')
+    print(z_max,'\n')
+
+    z_max_loss = - opt_res['fun']
+    print('Maximum loss')
+    print(z_max_loss)
+    print('\tL-BFGS Optimization finished \n')
+
+    print('='*80)
+    print('Epsilon-sharpness: ',calc_epsilon_sharpness(x_loss,z_max_loss))
+    print('=' * 80)
     #cnn_model_saver.restore_cnn_weights(session,cnn_hyperparam_file,cnn_weights_file)
-    all_d, all_l = data_gen.generate_data_ordered(train_dataset, train_labels, dataset_info)
 
-    x_loss = session.run(tf_loss_train, feed_dict={tf_train_images: all_d, tf_train_labels: all_l, tf_corrupt_ph: np.reshape(da.dot(A,tf.reshape(z,[-1,1])),[-1])})
-
-    session.run(tf_restore_weights_with_w_corrupt)
-    optimizer.minimize(session, fetches=[tf_loss_train], feed_dict={tf_train_images: all_d, tf_train_labels: all_l}, loss_callback=callback_loss)
 
     #session.run(tf_restore_weights_with_w_corrupt,feed_dict={tf_rand_seed_ph:np.random.randint(low=0,high=23492095)})
 
