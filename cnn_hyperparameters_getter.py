@@ -167,7 +167,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['n_tasks'] = 4
         model_hyperparameters['binned_data_dist_length'] = 10
-        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_min_bound'] = 0.5
         model_hyperparameters['prune_max_bound'] = 0.75
 
     elif dataset_name== 'imagenet-250':
@@ -196,7 +196,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
 
-        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_min_bound'] = 0.5
         model_hyperparameters['prune_max_bound'] = 0.75
 
 
