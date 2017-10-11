@@ -15,6 +15,7 @@ import dask as da
 import dask.array as da
 from scipy.optimize import minimize
 from functools import partial
+import logging
 
 def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
     global logger
@@ -271,7 +272,7 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A = da.random.uniform(-1e-3, 1e-3, size=(n,p), chunks=(n//100,p))
+    A = da.random.uniform(-1e-4, 1e-4, size=(n,p), chunks=(n//100,p))
     print(A[:10,:10].compute())
     # A_plus = (A'A)−1A' (https://pythonhosted.org/algopy/examples/moore_penrose_pseudoinverse.html)
     print('Calculating the psuedo inverse of A')
@@ -304,6 +305,15 @@ if __name__ == '__main__':
     n_iterations = 0
     dataset_info = {}
 
+    logger = logging.getLogger('error_logger')
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+    errHandler = logging.FileHandler(output_dir + os.sep + 'eps-sharpness.log', mode='w')
+    errHandler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(errHandler)
+    logger.info('#Output Dir: %s', output_dir)
+
+
     if datatype=='cifar-10':
         image_size = 24
         num_labels = 10
@@ -321,7 +331,7 @@ if __name__ == '__main__':
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 10000
 
-    batch_size = dataset_info['train_size']//4
+    batch_size = dataset_info['train_size']//10
     dataset, labels = read_data_file(datatype,load_train_data=False)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
@@ -372,8 +382,9 @@ if __name__ == '__main__':
     print('\n')
     print('L-BFGS Optimization started')
 
-    opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',
-                               bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())), options={'maxfun':100,'maxiter':10}, callback=callback_iteration)
+    opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',tol=1e-1,
+                       bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())),
+                       options={'maxfun':25,'maxiter':10}, callback=callback_iteration)
     z_max = opt_res['x']
     print('Maximum z is given by')
     print(z_max,'\n')
@@ -382,6 +393,8 @@ if __name__ == '__main__':
     print('Maximum loss')
     print(z_max_loss)
     print('\tL-BFGS Optimization finished \n')
+
+    logger.info('Epsilon-shapness: %.5f', calc_epsilon_sharpness(x_loss, z_max_loss))
 
     print('='*80)
     print('Epsilon-sharpness: ',calc_epsilon_sharpness(x_loss,z_max_loss))
