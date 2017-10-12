@@ -276,16 +276,17 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A_columns = np.random.uniform(-10.0,10.0,size=(p)).tolist()
+    A_columns = np.random.uniform(-1e8,1e8,size=(p)).astype(np.float32).tolist()
     A = np.stack([np.ones(shape=(n),dtype=np.float32)*col for col in A_columns],axis=1)
+    #A = np.random.uniform(-1e-5,1e-5,size=(n,p))
     assert A.shape==(n,p), 'Shape of A %s'%str(A.shape)
     A = da.from_array(A, chunks=(n//100,p))
-    #print(A[:10,:10].compute())
+    print(A[:10,:10].compute())
     # A_plus = (A'A)−1A' (https://pythonhosted.org/algopy/examples/moore_penrose_pseudoinverse.html)
     print('Calculating the psuedo inverse of A')
     start_time = time.time()
     A_plus = da.from_array(np.linalg.pinv(A),chunks=(p,n//100))
-    #print(A_plus[:10, :10].compute())
+    print(A_plus[:10, :10].compute())
     start_time = time.time()
     print('\tSuccessfully calculated the psuedo inverse of A (%d Secs)\n'%(time.time()-start_time))
     #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
@@ -333,7 +334,7 @@ if __name__ == '__main__':
         dataset_info['n_channels']=3
         dataset_info['resize_to'] = 0
         dataset_info['n_slices'] = 1
-        dataset_info['train_size'] = 10000
+        dataset_info['train_size'] = 50000
     if datatype=='cifar-100':
         image_size = 24
         num_labels = 100
@@ -341,10 +342,10 @@ if __name__ == '__main__':
         dataset_info['n_channels']=3
         dataset_info['resize_to'] = 0
         dataset_info['n_slices'] = 1
-        dataset_info['train_size'] = 10000
+        dataset_info['train_size'] = 50000
 
-    batch_size = dataset_info['train_size']//4
-    dataset, labels = read_data_file(datatype,load_train_data=False)
+    batch_size = dataset_info['train_size']//20
+    dataset, labels = read_data_file(datatype,load_train_data=True)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
                                             dataset_info['n_slices'],
@@ -397,7 +398,7 @@ if __name__ == '__main__':
 
     opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',
                        bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())),
-                       options={'eps':1e-3,'maxfun':50,'maxiter':10,'ftol':0.1}, callback=callback_iteration)
+                       options={'eps':1e-3,'maxfun':100,'maxiter':10,'ftol':0.001}, callback=callback_iteration)
 
     #opt_res = basinhopping(func=part_loss_callback, x0=z_init,
     #                       minimizer_kwargs={'method':'L-BFGS-B','options':{'maxfun':25,'maxiter':10},
@@ -410,6 +411,9 @@ if __name__ == '__main__':
     z_max_loss = - opt_res['fun']
     print('Maximum loss')
     print(z_max_loss)
+    print('Manually calc max loss')
+    print(-part_loss_callback(z_max))
+
     print('\tL-BFGS Optimization finished \n')
 
     logger.info('Epsilon-shapness: %.5f', calc_epsilon_sharpness(x_loss, z_max_loss))

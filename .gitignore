@@ -1,0 +1,5 @@
+aistat_data/*
+.git/*
+.idea/*
+*.png
+__pycache__/*
