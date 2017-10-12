@@ -71,7 +71,7 @@ valid_acc_decay = None
 n_tasks = None
 prune_min_bound, prune_max_bound = None, None
 
-def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling):
+def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling, use_fse_capacity):
     global interval_parameters, model_hyperparameters, research_parameters, dataset_info, cnn_string, filter_vector
     global image_size, num_channels, resize_to
     global n_epochs, n_iterations, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation
@@ -97,7 +97,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     research_parameters = cnn_hyperparameters_getter.get_research_hyperparameters(dataset_name, adapt_structure, use_rigid_pooling, logging_level)
 
     # Model Hyperparameters
-    model_hyperparameters = cnn_hyperparameters_getter.get_model_specific_hyperparameters(datatype, dataset_behavior, adapt_structure, rigid_pooling, dataset_info['n_labels'])
+    model_hyperparameters = cnn_hyperparameters_getter.get_model_specific_hyperparameters(datatype, dataset_behavior, adapt_structure, rigid_pooling, use_fse_capacity, dataset_info['n_labels'])
 
     n_epochs = model_hyperparameters['epochs']
     n_iterations = model_hyperparameters['n_iterations']
@@ -1930,13 +1930,13 @@ if __name__ == '__main__':
     noise_label_rate = None
     noise_image_rate = None
     adapt_randomly = False
-
+    use_fse_capacity = False
     try:
         opts, args = getopt.getopt(
             sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
                                'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
-                               'all_labels_included=','noise_labels=','noise_images=','adapt_randomly='])
+                               'all_labels_included=','noise_labels=','noise_images=','adapt_randomly=','use_fse_capacity='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory=')
@@ -1969,6 +1969,8 @@ if __name__ == '__main__':
                 noise_image_rate = float(arg)
             if opt == '--adapt_randomly':
                 adapt_randomly = bool(int(arg))
+            if opt=='--use_fse_capacity':
+                use_fse_capacity = bool(int(arg))
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -2000,7 +2002,7 @@ if __name__ == '__main__':
     # SET FROM MAIN FUNCTIONS OF OTHER CLASSES
     cnn_model_saver.set_from_main(output_dir)
 
-    set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling)
+    set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling, use_fse_capacity)
     cnn_intializer.set_from_main(research_parameters, logging_level, logging_format)
 
     logger.info('Creating CNN hyperparameters and operations in the correct format')

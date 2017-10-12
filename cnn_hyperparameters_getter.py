@@ -84,7 +84,7 @@ def get_interval_related_hyperparameters(dataset_name):
     return interval_parameters
 
 
-def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, num_labels):
+def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, use_fse_capacity, num_labels):
 
     model_hyperparameters = {}
 
@@ -94,8 +94,12 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['decay_learning_rate'] = True
     model_hyperparameters['decay_rate'] = 0.75
     model_hyperparameters['adapt_decay_rate'] = 0.9 # decay rate used for adaptation related optimziations
-    model_hyperparameters['dropout_rate'] = 0.5
-    model_hyperparameters['in_dropout_rate'] = 0.2
+    if not use_fse_capacity:
+        model_hyperparameters['dropout_rate'] = 0.5
+        model_hyperparameters['in_dropout_rate'] = 0.2
+    else:
+        model_hyperparameters['dropout_rate'] = 0.1
+        model_hyperparameters['in_dropout_rate'] = 0.0
     model_hyperparameters['use_dropout'] = True
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
@@ -128,9 +132,14 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         pool_size = model_hyperparameters['batch_size'] * 10* num_labels
 
         if not adapt_structure:
-            cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
-                         "#C,3,1,288#C,3,1,288#C,3,1,288" \
-                         "#PG,3,2,0#Terminate,0,0,0"
+            if not use_fse_capacity:
+                cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
+                             "#C,3,1,288#C,3,1,288#C,3,1,288" \
+                             "#PG,3,2,0#Terminate,0,0,0"
+            else:
+                cnn_string = "C,3,1,68#C,3,1,68#C,3,1,68#P,3,2,0" \
+                             "#C,3,1,136#C,3,1,136#C,3,1,136" \
+                             "#PG,3,2,0#Terminate,0,0,0"
         else:
             cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#P,3,2,0" \
                          "#C,3,1,32#C,3,1,32#C,3,1,32" \
@@ -151,9 +160,14 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         pool_size = model_hyperparameters['batch_size'] * 1* num_labels
 
         if not adapt_structure:
-            cnn_string = "C,3,1,64#C,3,1,128#C,3,1,256#C,3,1,256" \
-                         "#P,2,2,0#C,3,1,256#C,3,1,256#C,3,1,256#C,3,1,256" \
-                         "#PG,3,2,0#FC,512,0,0#FC,512,0,0#FC,100,0,0#Terminate,0,0,0"
+            if not use_fse_capacity:
+                cnn_string = "C,3,1,64#C,3,1,128#C,3,1,256#C,3,1,256" \
+                             "#P,2,2,0#C,3,1,256#C,3,1,256#C,3,1,256#C,3,1,256" \
+                             "#PG,3,2,0#FC,512,0,0#FC,512,0,0#FC,100,0,0#Terminate,0,0,0"
+            else:
+                cnn_string = "C,3,1,6#C,3,1,12#C,3,1,24#C,3,1,24" \
+                             "#P,2,2,0#C,3,1,24#C,3,1,24#C,3,1,24#C,3,1,24" \
+                             "#PG,3,2,0#FC,48,0,0#FC,48,0,0#FC,100,0,0#Terminate,0,0,0"
         else:
             cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#C,3,1,32" \
                          "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
@@ -167,7 +181,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['n_tasks'] = 4
         model_hyperparameters['binned_data_dist_length'] = 10
-        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_min_bound'] = 0.5
         model_hyperparameters['prune_max_bound'] = 0.75
 
     elif dataset_name== 'imagenet-250':
@@ -196,7 +210,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
 
-        model_hyperparameters['prune_min_bound'] = 0.25
+        model_hyperparameters['prune_min_bound'] = 0.5
         model_hyperparameters['prune_max_bound'] = 0.75
 
 
