@@ -204,7 +204,7 @@ def callback_loss(z,W,A,tf_corrupt_weights_op, tf_loss_op, tf_loss_feed_dict):
 
     # use -l since we need to maximize the loss
 
-    return -l
+    return -1.0*l
 
 x_loss = None
 W_corrupt_placeholder = None
@@ -276,9 +276,9 @@ if __name__ == '__main__':
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A_columns = np.random.uniform(-1e8,1e8,size=(p)).astype(np.float32).tolist()
-    A = np.stack([np.ones(shape=(n),dtype=np.float32)*col for col in A_columns],axis=1)
-    #A = np.random.uniform(-1e-5,1e-5,size=(n,p))
+    #A_columns = np.random.uniform(-1e8,1e8,size=(p)).astype(np.float32).tolist()
+    #A = np.stack([np.ones(shape=(n),dtype=np.float32)*col for col in A_columns],axis=1)
+    A = np.random.uniform(-1e10,1e10,size=(n,p))
     assert A.shape==(n,p), 'Shape of A %s'%str(A.shape)
     A = da.from_array(A, chunks=(n//100,p))
     print(A[:10,:10].compute())
@@ -398,7 +398,7 @@ if __name__ == '__main__':
 
     opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',
                        bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())),
-                       options={'eps':1e-3,'maxfun':100,'maxiter':10,'ftol':0.001}, callback=callback_iteration)
+                       options={'eps':1e-3,'maxfun':100,'maxiter':10}, callback=callback_iteration)
 
     #opt_res = basinhopping(func=part_loss_callback, x0=z_init,
     #                       minimizer_kwargs={'method':'L-BFGS-B','options':{'maxfun':25,'maxiter':10},
