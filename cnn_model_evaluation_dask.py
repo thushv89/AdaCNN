@@ -14,8 +14,10 @@ import utils
 import dask as da
 import dask.array as da
 from scipy.optimize import minimize
+from scipy.optimize import basinhopping
 from functools import partial
 import logging
+import time
 
 def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
     global logger
@@ -34,15 +36,15 @@ def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
 
     x = dataset
 
-    print('\tReceived data for X(%s)...' % x.get_shape().as_list())
+    #print('\tReceived data for X(%s)...' % x.get_shape().as_list())
 
     # need to calculate the output according to the layers we have
     for op in cnn_ops:
         if 'conv' in op:
             with tf.variable_scope(op, reuse=True) as scope:
-                print('\tConvolving (%s) With Weights:%s Stride:%s' % (
-                    op, cnn_hyperparameters[op]['weights'], cnn_hyperparameters[op]['stride']))
-                print('\t\tWeights: %s', tf.shape(tf.get_variable(constants.TF_WEIGHTS)).eval())
+                #print('\tConvolving (%s) With Weights:%s Stride:%s' % (
+                #    op, cnn_hyperparameters[op]['weights'], cnn_hyperparameters[op]['stride']))
+                #print('\t\tWeights: %s', tf.shape(tf.get_variable(constants.TF_WEIGHTS)).eval())
                 w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
 
                 x = tf.nn.conv2d(x, w, cnn_hyperparameters[op]['stride'],
@@ -50,8 +52,8 @@ def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
                 x = utils.lrelu(x + b, name=scope.name + '/top')
 
         if 'pool' in op:
-            print('\tPooling (%s) with Kernel:%s Stride:%s Type:%s' % (
-                op, cnn_hyperparameters[op]['kernel'], cnn_hyperparameters[op]['stride'], cnn_hyperparameters[op]['type']))
+            #print('\tPooling (%s) with Kernel:%s Stride:%s Type:%s' % (
+            #    op, cnn_hyperparameters[op]['kernel'], cnn_hyperparameters[op]['stride'], cnn_hyperparameters[op]['type']))
             if cnn_hyperparameters[op]['type']=='max':
                 x = tf.nn.max_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
                                    strides=cnn_hyperparameters[op]['stride'],
@@ -72,8 +74,8 @@ def inference(batch_size, cnn_ops, dataset, cnn_hyperparameters):
                     # convert 4D output to a 2D input to the hidden layer
                     # e.g subsample layer output [batch_size,width,height,depth] -> [batch_size,width*height*depth]
 
-                    print('Input size of fulcon_out : ', cnn_hyperparameters[op]['in'])
-                    print('Current input size ', x.get_shape().as_list())
+                    #print('Input size of fulcon_out : ', cnn_hyperparameters[op]['in'])
+                    #print('Current input size ', x.get_shape().as_list())
                     # Transpose x (b,h,w,d) to (b,d,w,h)
                     # This help us to do adaptations more easily
                     x = tf.transpose(x, [0, 3, 1, 2])
@@ -208,9 +210,11 @@ x_loss = None
 W_corrupt_placeholder = None
 
 minimize_iter = 1
+start_time = 0
+
 def callback_iteration(xk):
-    global minimize_iter
-    print('\tSingle iteration (%d) finished'%minimize_iter)
+    global minimize_iter, start_time
+    print('\tSingle iteration (%d) finished (%d Secs)'%(minimize_iter,(time.time()-start_time)))
     minimize_iter += 1
 
 if __name__ == '__main__':
@@ -265,20 +269,25 @@ if __name__ == '__main__':
     n = cnn_model_saver.get_weight_vector_length(cnn_hyperparam_file)
     print('\tSuccessfully calcluated total number of  CNN parameters.')
 
-    p = 100
+    p = 50
 
     #print('Creating files to store n-by-p manifold matrix')
     #hdf5_file = h5py.File(output_dir + os.sep + 'model_weights' + os.sep + 'tmp_manifold.hdf5', "w")
     #print('\tSuccessfully created the file')
 
     print('Found weight vector length: ',n, '\n')
-    A = da.random.uniform(-1e-4, 1e-4, size=(n,p), chunks=(n//100,p))
-    print(A[:10,:10].compute())
+    A_columns = np.random.uniform(-10.0,10.0,size=(p)).tolist()
+    A = np.stack([np.ones(shape=(n),dtype=np.float32)*col for col in A_columns],axis=1)
+    assert A.shape==(n,p), 'Shape of A %s'%str(A.shape)
+    A = da.from_array(A, chunks=(n//100,p))
+    #print(A[:10,:10].compute())
     # A_plus = (A'A)−1A' (https://pythonhosted.org/algopy/examples/moore_penrose_pseudoinverse.html)
     print('Calculating the psuedo inverse of A')
+    start_time = time.time()
     A_plus = da.from_array(np.linalg.pinv(A),chunks=(p,n//100))
-    print(A_plus[:10, :10].compute())
-    print('\tSuccessfully calculated the psuedo inverse of A\n')
+    #print(A_plus[:10, :10].compute())
+    start_time = time.time()
+    print('\tSuccessfully calculated the psuedo inverse of A (%d Secs)\n'%(time.time()-start_time))
     #hdf5_A = hdf5_file.create_dataset('A', (n, p), dtype='f')
     #hdf5_A_plus = hdf5_file.create_dataset('A_plus', (p, n), dtype='f')
 
@@ -288,10 +297,13 @@ if __name__ == '__main__':
     print('\tSuccessfully created the weight vector (shape: %s)\n'%W.shape)
 
     print('Calculating lower and upper bound of the box')
+    start_time = time.time()
     epsilon = 1e-3
     lower_bound = -epsilon * (np.abs(da.dot(A_plus,np.reshape(W,(-1,1)))) + 1)
-    upper_bound = epsilon * (np.abs(da.dot(A_plus,np.reshape(W,(-1,1)))) + 1)
-    print('\t Successfully calculated lower and upper bound of the box\n')
+    #upper_bound = epsilon * (np.abs(da.dot(A_plus,np.reshape(W,(-1,1)))) + 1)
+    upper_bound = -np.asarray(lower_bound)
+
+    print('\t Successfully calculated lower and upper bound of the box (%d Secs)\n'%(time.time()-start_time))
 
     del A_plus
 
@@ -331,7 +343,7 @@ if __name__ == '__main__':
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 10000
 
-    batch_size = dataset_info['train_size']//10
+    batch_size = dataset_info['train_size']//4
     dataset, labels = read_data_file(datatype,load_train_data=False)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
@@ -371,20 +383,26 @@ if __name__ == '__main__':
     all_d, all_l = data_gen.generate_data_ordered(dataset, labels, dataset_info)
     print('Retrieved data \n')
     # Original loss
+    start_time = time.time()
     x_loss = session.run(tf_loss_train, feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
-    print('Calculated loss\n')
+    print('Calculated loss (%d Secs)\n'%(time.time()-start_time))
 
     part_loss_callback = partial(callback_loss,W=W,A=A,tf_corrupt_weights_op=tf_restore_weights_with_w_corrupt, tf_loss_op=tf_loss_train,
             tf_loss_feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
 
     print('Lower and Upper bounds for z')
-    print(list(zip(lower_bound.ravel().tolist(), upper_bound.ravel().tolist())))
+    print(list(zip(lower_bound.ravel().tolist(), upper_bound.ravel().tolist()))[:10])
     print('\n')
     print('L-BFGS Optimization started')
 
-    opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',tol=1e-1,
+    opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',
                        bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())),
-                       options={'maxfun':25,'maxiter':10}, callback=callback_iteration)
+                       options={'eps':1e-3,'maxfun':50,'maxiter':10,'ftol':0.1}, callback=callback_iteration)
+
+    #opt_res = basinhopping(func=part_loss_callback, x0=z_init,
+    #                       minimizer_kwargs={'method':'L-BFGS-B','options':{'maxfun':25,'maxiter':10},
+    #                                         'bounds':list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist()))}
+    #                       )
     z_max = opt_res['x']
     print('Maximum z is given by')
     print(z_max,'\n')

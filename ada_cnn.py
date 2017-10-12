@@ -1431,7 +1431,8 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
     else:
         logger.info('Epsilon: %.3f',eps)
         if adaptation_period=='first':
-            if local_trial_phase<=0.5:
+            # use slightly lower value because otherwise the netowrk will get pruned before running non-adaptation
+            if local_trial_phase<=0.49:
                 logger.info('Greedy Adapting period of epoch (first)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
@@ -1452,7 +1453,8 @@ def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch,
                 adapting_now = False
 
         elif adaptation_period == 'last':
-            if local_trial_phase > 0.5:
+            # use slightly lower value because otherwise the netowrk will get pruned before running non-adaptation
+            if local_trial_phase > 0.49:
                 logger.info('Greedy Adapting period of epoch (last)')
                 if np.random.random() >= eps:
                     state, action, invalid_actions = q_learner.output_action_with_type(
@@ -1545,10 +1547,8 @@ def get_continuous_adaptation_action_randomly(q_learner, data, epoch, global_tri
 
         else:
             logger.info('Greedy Not adapting period of epoch (first)')
-            if np.random.random() < 0.3:
-                state, action, invalid_actions = q_learner.get_naivetrain_action(data)
-            else:
-                state, action, invalid_actions = q_learner.get_finetune_action(data)
+            state, action, invalid_actions = q_learner.get_finetune_action(data)
+
             adapting_now = False
 
     elif adaptation_period == 'last':
@@ -1560,10 +1560,7 @@ def get_continuous_adaptation_action_randomly(q_learner, data, epoch, global_tri
             adapting_now=True
         else:
             logger.info('Not adapting period of epoch (last). Randomly outputting (Donothing, Naive Triain, Finetune')
-            if np.random.random()<0.3:
-                state, action, invalid_actions = q_learner.get_naivetrain_action(data)
-            else:
-                state, action, invalid_actions = q_learner.get_finetune_action(data)
+            state, action, invalid_actions = q_learner.get_finetune_action(data)
 
             adapting_now = False
 
@@ -2738,7 +2735,7 @@ if __name__ == '__main__':
                                      (t1_train - t0_train) / num_gpus, op_count, var_count)
 
             # We prune netowork at the end of each task
-            if adapt_structure:
+            if adapt_structure and curr_adaptation_status:
                 # always prune the structure randomly if adapt-random
                 if adapt_randomly or epoch<1:
                     prune_the_network(prune_reward_reg, task,'random',prune_logger)
@@ -2763,7 +2760,7 @@ if __name__ == '__main__':
         if research_parameters['adapt_structure']:
             if epoch > 0:
                 start_eps = max([start_eps*eps_decay,0.1])
-                adapt_period = np.random.choice(['first','last','both'],p=[0.0,0.0,1.0])
+                adapt_period = np.random.choice(['first','last','both'],p=[0.3,0.3,0.4])
                 # At the moment not stopping adaptations for any reason
                 # stop_adapting = adapter.check_if_should_stop_adapting()
 
