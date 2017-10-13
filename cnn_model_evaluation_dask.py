@@ -130,6 +130,7 @@ def update_weight_variables_from_vector(cnn_ops, cnn_hyps, w_vec, n):
                 with tf.variable_scope(op, reuse=True):
                     assign_ops.append(tf.assign(tf.get_variable(constants.TF_WEIGHTS),w_tensor))
 
+    assert begin_index==n,'All the values in the vector were not used'
     return assign_ops
 
 def read_data_file(datatype,load_train_data):
@@ -198,6 +199,9 @@ def callback_loss(z,W,A,tf_corrupt_weights_op, tf_loss_op, tf_loss_feed_dict):
 
     W_corrupt = W + np.reshape(da.dot(A, np.reshape(z, [-1, 1])), [-1])
 
+    #if np.all(z==0.0):
+    #    print('Checking W_corrupt and W')
+    #    assert np.allclose(W_corrupt,W), 'W and W_corrupt are not equal'
     session.run(tf_corrupt_weights_op,feed_dict={W_corrupt_placeholder:W_corrupt})
 
     l = session.run(tf_loss_op, feed_dict=tf_loss_feed_dict)
@@ -278,7 +282,7 @@ if __name__ == '__main__':
     print('Found weight vector length: ',n, '\n')
     #A_columns = np.random.uniform(-1e8,1e8,size=(p)).astype(np.float32).tolist()
     #A = np.stack([np.ones(shape=(n),dtype=np.float32)*col for col in A_columns],axis=1)
-    A = np.random.uniform(-1e10,1e10,size=(n,p))
+    A = np.random.uniform(-1.0,1.0,size=(n,p))
     assert A.shape==(n,p), 'Shape of A %s'%str(A.shape)
     A = da.from_array(A, chunks=(n//100,p))
     print(A[:10,:10].compute())
@@ -295,6 +299,8 @@ if __name__ == '__main__':
     print('Creating a weight vector from weight tensors')
     W = session.run(get_weight_vector_with_variables(cnn_ops,n))
     W_corrupt_placeholder = tf.placeholder(shape=[n],dtype=tf.float32,name='W_corrupt_ph')
+    print('\tSample W')
+    print(W[:10])
     print('\tSuccessfully created the weight vector (shape: %s)\n'%W.shape)
 
     print('Calculating lower and upper bound of the box')
@@ -308,9 +314,9 @@ if __name__ == '__main__':
 
     del A_plus
 
-    z_init = list(map(lambda x: np.random.uniform(low=x[0],high=x[1],size=(1))[0],
-                      zip(lower_bound.tolist(),upper_bound.tolist())))
-
+    #z_init = list(map(lambda x: np.random.uniform(low=x[0],high=x[1],size=(1))[0],
+    #                  zip(lower_bound.tolist(),upper_bound.tolist())))
+    z_init = list(np.zeros(shape=(p),dtype=np.float32).ravel())
     #W_corrupt = W + np.reshape(da.dot(A,tf.reshape(z,[-1,1])),[-1])
 
     tf_restore_weights_with_w_corrupt = update_weight_variables_from_vector(cnn_ops,cnn_hyperparameters,W_corrupt_placeholder,n)
@@ -335,6 +341,7 @@ if __name__ == '__main__':
         dataset_info['resize_to'] = 0
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 50000
+        batch_size = dataset_info['train_size'] // 10
     if datatype=='cifar-100':
         image_size = 24
         num_labels = 100
@@ -343,8 +350,10 @@ if __name__ == '__main__':
         dataset_info['resize_to'] = 0
         dataset_info['n_slices'] = 1
         dataset_info['train_size'] = 50000
+        batch_size = dataset_info['train_size'] // 25
 
-    batch_size = dataset_info['train_size']//20
+
+
     dataset, labels = read_data_file(datatype,load_train_data=True)
 
     data_gen = data_generator.DataGenerator(batch_size, num_labels, dataset_info['train_size'],
@@ -386,7 +395,7 @@ if __name__ == '__main__':
     # Original loss
     start_time = time.time()
     x_loss = session.run(tf_loss_train, feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
-    print('Calculated loss (%d Secs)\n'%(time.time()-start_time))
+    print('Calculated loss (%.5f) (%d Secs)\n'%(x_loss,time.time()-start_time))
 
     part_loss_callback = partial(callback_loss,W=W,A=A,tf_corrupt_weights_op=tf_restore_weights_with_w_corrupt, tf_loss_op=tf_loss_train,
             tf_loss_feed_dict={tf_train_images: all_d, tf_train_labels: all_l})
@@ -396,9 +405,12 @@ if __name__ == '__main__':
     print('\n')
     print('L-BFGS Optimization started')
 
+    x_loss = - part_loss_callback(z_init)
+    print ('Initial func value: %.5f',x_loss)
+
     opt_res = minimize(fun=part_loss_callback,x0=z_init,method='L-BFGS-B',
                        bounds=list(zip(lower_bound.ravel().tolist(),upper_bound.ravel().tolist())),
-                       options={'eps':1e-3,'maxfun':100,'maxiter':10}, callback=callback_iteration)
+                       options={'eps':1e-5,'maxfun':500,'maxiter':10}, callback=callback_iteration)
 
     #opt_res = basinhopping(func=part_loss_callback, x0=z_init,
     #                       minimizer_kwargs={'method':'L-BFGS-B','options':{'maxfun':25,'maxiter':10},

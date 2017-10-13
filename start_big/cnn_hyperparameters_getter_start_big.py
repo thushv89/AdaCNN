@@ -131,6 +131,10 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
         pool_size = model_hyperparameters['batch_size'] * 10* num_labels
 
+        # ConvPool-CNN-C
+        # C(3,1,96) -> C(3,1,96) -> C(3,1,96) -> P(3,2,max) -> C(3,1,192) -> C(3,1,192) -> C(3,1,192) -> Softmax
+        # Weight decay = 0.001
+        # Dropout Input = 0.2 Layers = 0.5
         if not adapt_structure:
             if not use_fse_capacity:
                 cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
@@ -141,19 +145,16 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                              "#C,3,1,136#C,3,1,136#C,3,1,136" \
                              "#PG,3,2,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#P,3,2,0" \
-                         "#C,3,1,32#C,3,1,32#C,3,1,32" \
+            cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
+                         "#C,3,1,288#C,3,1,288#C,3,1,288" \
                          "#PG,3,2,0#Terminate,0,0,0"
 
-            filter_vector = [144, 144, 144, 0, 288, 288, 288,0]
+            filter_vector = [24, 24, 24, 0, 48, 48, 48,0]
             add_amount, remove_amount, add_fulcon_amount = 8, 4, -1
-            filter_min_threshold = 24
-            fulcon_min_threshold = 64
 
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 10
-        model_hyperparameters['prune_min_bound'] = 0.25
-        model_hyperparameters['prune_max_bound'] = 0.75
+
 
     if dataset_name == 'cifar-100':
 
@@ -169,22 +170,19 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                              "#P,2,2,0#C,3,1,24#C,3,1,24#C,3,1,24#C,3,1,24" \
                              "#PG,3,2,0#FC,48,0,0#FC,48,0,0#FC,100,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#C,3,1,32" \
-                         "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
-                         "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,64,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,64#C,3,1,128#C,3,1,256#C,3,1,256" \
+                         "#P,2,2,0#C,3,1,256#C,3,1,256#C,3,1,256#C,3,1,256" \
+                         "#PG,2,2,0#FC,512,0,0#FC,512,0,0#FC,100,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 110]
+            filter_vector = [12, 24, 48, 48, 0, 48, 48, 48, 48, 0, 96, 96, 20]
             add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
-            filter_min_threshold = 24
-            fulcon_min_threshold = 48
+
 
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['n_tasks'] = 4
         model_hyperparameters['binned_data_dist_length'] = 10
-        model_hyperparameters['prune_min_bound'] = 0.5
-        model_hyperparameters['prune_max_bound'] = 0.75
 
-    elif dataset_name== 'imagenet-250':
+    elif dataset_name == 'imagenet-250':
         model_hyperparameters['top_k_accuracy'] = 5.0
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['epochs'] = 8
@@ -210,8 +208,6 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
 
-        model_hyperparameters['prune_min_bound'] = 0.5
-        model_hyperparameters['prune_max_bound'] = 0.75
 
 
     elif dataset_name=='svhn-10':
