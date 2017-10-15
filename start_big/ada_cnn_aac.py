@@ -15,6 +15,8 @@ import os
 import tensorflow as tf
 
 from collections import OrderedDict
+import utils
+import constants
 
 logging_level = logging.INFO
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
@@ -23,11 +25,7 @@ logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 class AdaCNNAdaptingAdvantageActorCritic(object):
     def __init__(self, **params):
 
-        # Action related Hyperparameters
-        self.actions = [
-            ('do_nothing', 0), ('finetune', 0),('naive_train', 0),
-            ('remove', params['remove_amount'])
-        ]
+
 
         self.binned_data_dist_length = params['binned_data_dist_length']
 
@@ -36,8 +34,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.fit_interval = params['fit_interval']  # RL agent training interval
         self.target_update_rate = params['target_update_rate']
         self.batch_size = params['batch_size']
-        self.add_amount = params['add_amount']
-        self.add_fulcon_amount = params['add_fulcon_amount']
+        self.add_amount = params['add_max_amount']
+        self.add_fulcon_amount = params['add_fulcon_max_amount']
         self.epsilon = params['epsilon']
         self.min_epsilon = 0.1
 
@@ -55,10 +53,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.min_filter_threshold = params['filter_min_threshold'] # The minimum bound for each convolution layer
         self.min_fulcon_threshold = params['fulcon_min_threshold'] # The minimum neurons in a fulcon layer
 
-        # Things used for peanalizing reward
-        # e.g. Taking too many add actions without a significant reward
-        self.same_action_threshold = 50
-        self.same_action_count = [0 for _ in range(self.net_depth)]
+        # Action related Hyperparameters
+        self.actions = []
+        self.actions.extend([('adapt', 0.0, conv_id) for conv_id in self.conv_ids])
+        self.actions.extend([('adapt', 0.0, fc_id) for fc_id in self.fulcon_ids])
+        self.actions.extend([('finetune', 0), ('naive_train', 0)])
 
         # Time steps in RL
         self.local_time_stamp = 0
@@ -74,8 +73,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # RL Agent Input/Output sizes
         self.local_actions, self.global_actions = 1, 3
-        self.output_size = self.calculate_output_size()
-        self.input_size = self.calculate_input_size()
+        self.output_size = len(self.actions)
+        self.actor_input_size = self.calculate_input_size(constants.TF_ACTOR_SCOPE)
+        self.critic_input_size = self.calculate_input_size(constants.TF_CRITIC_SCOPE)
+
+        # RL Agent netowrk sizes
+        self.actor_layer_info, self.critic_layer_info = [],[]
+        self.layer_scopes = []
 
         # Behavior of the RL Agent
         self.random_mode = params['random_mode']
@@ -114,12 +118,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.trial_phase_threshold = params['trial_phase_threshold'] # After this threshold all actions will be taken deterministically (e-greedy)
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
+        self.TAU = 0.001
         self.session = params['session']
-        self.tf_state_input, self.tf_q_targets, self.tf_q_mask = None,None,None
-        self.tf_out_op,self.tf_out_target_op = None,None
-        self.tf_weights, self.tf_bias = None, None
-        self.tf_loss_op,self.tf_optimize_op = None,None
-        self.setup_tf_network_and_ops(params)
+        self.learning_rate = params['learning_rate']
+        self.momentum = params['momentum']
+
+        self.tf_state_input, self.tf_action_input, self.tf_y_i_targets, self.tf_q_mask = None,None,None,None
+        self.tf_critic_out_op, self.tf_actor_out_op = None, None
+        self.tf_critic_target_out_op, self.tf_actor_target_out_op = None, None
+        self.tf_critic_loss_op = None
+        self.tf_actor_optimize_op, self.tf_critic_optimize_op = None, None
+        self.tf_actor_target_update_op, self.tf_critic_target_update_op = None, None
 
         self.prev_action, self.prev_state = None, None
 
@@ -132,30 +141,46 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        self.layer_info = [self.input_size]
-        for hidden in params['hidden_layers']:
-            self.layer_info.append(hidden)  # 128,64,32
-        self.layer_info.append(self.output_size)
+        self.actor_layer_info = [self.actor_input_size]
+        self.critic_layer_info = [self.critic_input_size]
 
-        self.verbose_logger.info('Target Network Layer sizes: %s', self.layer_info)
+        for h_i,hidden in enumerate(params['hidden_layers']):
+            self.layer_scopes.append('fulcon_%d'%h_i)
+            self.actor_layer_info.append(hidden)  # 128,64,32
+            self.critic_layer_info.append(hidden)
+        self.layer_scopes.append('fulcon_out')
+        self.actor_layer_info.append(self.output_size)
+        self.critic_layer_info.append(1)
 
-        self.tf_weights, self.tf_bias = [], []
-        self.tf_target_weights, self.tf_target_biase = [], []
+        self.verbose_logger.info('Target Network Layer sizes: %s', self.actor_layer_info)
 
         self.momentum = params['momentum']  # 0.9
         self.learning_rate = params['learning_rate']  # 0.005
 
-        self.tf_init_mlp()
+        # Initialize both actor and critic networks
+        self.tf_init_actor_and_critic()
+
+        # Input and output placeholders
         self.tf_state_input = tf.placeholder(tf.float32, shape=(None, self.input_size), name='InputDataset')
-        self.tf_q_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
-        self.tf_q_mask = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargeMask')
+        self.tf_action_input = tf.placeholder(tf.float32, shape=(None, self.output_size), name='InputDataset')
+        self.tf_y_i_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
 
-        self.tf_out_op = self.tf_calc_output(self.tf_state_input)
-        self.tf_out_target_op = self.tf_calc_output_target(self.tf_state_input)
-        self.tf_loss_op = self.tf_sqr_loss(self.tf_out_op, self.tf_q_targets, self.tf_q_mask)
-        self.tf_optimize_op = self.tf_momentum_optimize(self.tf_loss_op)
 
-        self.tf_target_update_ops = self.tf_target_weight_copy_op()
+        # output of each network
+        self.tf_critic_out_op = self.tf_calc_actor_critic_output(self.tf_state_input,self.tf_action_input,constants.TF_CRITIC_SCOPE)
+        self.tf_actor_out_op = self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_ACTOR_SCOPE)
+        self.tf_critic_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
+                                                           constants.TF_CRITIC_SCOPE)
+        self.tf_actor_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
+                                                         constants.TF_ACTOR_SCOPE)
+
+
+        self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op, self.tf_q_mask)
+        self.tf_critic_optimize_op = self.tf_momentum_optimize(self.tf_critic_loss_op)
+
+        self.tf_actor_optimize_op = self.tf_policy_gradient_optimize()
+        self.tf_actor_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_ACTOR_SCOPE)
+        self.tf_critic_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_CRITIC_SCOPE)
 
         all_variables = []
         for w, b, wt, bt in zip(self.tf_weights, self.tf_bias, self.tf_target_weights, self.tf_target_biase):
@@ -164,6 +189,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         _ = self.session.run(init_op)
 
     def get_finetune_action(self,data):
+        '''
+        Finetune action
+        :param data:
+        :return:
+        '''
         state = data['filter_counts_list'] + data['binned_data_dist']
         return state, [self.actions[1] if li in self.conv_ids else None for li in range(self.net_depth)],[]
 
@@ -197,18 +227,18 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         v_console.setLevel(logging_level)
         self.verbose_logger.addHandler(v_console)
 
-        self.q_logger = logging.getLogger('pred_q_logger_'+self.qlearner_type)
+        self.q_logger = logging.getLogger('q_logger_'+self.qlearner_type)
         self.q_logger.propagate = False
         self.q_logger.setLevel(logging.INFO)
-        q_distHandler = logging.FileHandler(self.persit_dir + os.sep + 'predicted_q_' + self.qlearner_type +'.log', mode='w')
-        q_distHandler.setFormatter(logging.Formatter('%(message)s'))
-        self.q_logger.addHandler(q_distHandler)
+        qHandler = logging.FileHandler(self.persit_dir + os.sep + 'q_logger.log', mode='w')
+        qHandler.setFormatter(logging.Formatter('%(message)s'))
+        self.q_logger.addHandler(qHandler)
         self.q_logger.info(self.get_action_string_for_logging())
 
         self.reward_logger = logging.getLogger('reward_logger'+self.qlearner_type)
         self.reward_logger.propagate = False
         self.reward_logger.setLevel(logging.INFO)
-        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'reward_'+ self.qlearner_type +'.log', mode='w')
+        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'action_reward_.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
         self.reward_logger.addHandler(rewarddistHandler)
         self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
@@ -220,23 +250,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
 
-    def calculate_output_size(self):
-        '''
-        Calculate output size for MLP (depends on the number of layers and actions)
-        :return:
-        '''
-        total = 0
-        for _ in range(self.local_actions):  # add and remove actions
-            total += self.n_conv
-        for _ in range(self.local_actions):
-            total += self.n_fulcon
+        self.advantage_logger = logging.getLogger('adavantage_logger' + self.qlearner_type)
+        self.advantage_logger.propagate = False
+        self.advantage_logger.setLevel(logging.INFO)
+        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'advantage.log',mode='w')
+        actionHandler.setFormatter(logging.Formatter('%(message)s'))
+        self.action_logger.addHandler(actionHandler)
 
-        total += self.global_actions  # finetune and donothing
-        self.verbose_logger.info('Calculated output action space size: %d',total)
-
-        return total
-
-    def calculate_input_size(self):
+    def calculate_input_size(self, actor_or_critic_scope):
         '''
         Calculate input size for MLP (depends on the length of the history)
         :return:
@@ -254,7 +275,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.debug('\t%s\n', dummy_history)
         self.verbose_logger.debug('Input Size: %d', len(self.phi(dummy_history)))
 
-        return len(self.phi(dummy_history))
+        if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
+            return len(self.phi(dummy_history))
+        elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
+            return len(self.phi(dummy_history)) + len(self.actions)
 
     def phi(self, state_history):
         '''
@@ -267,15 +291,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.debug('Converting state history to phi')
         self.verbose_logger.debug('Got (state_history): %s', state_history)
-        preproc_input = []
-        for iindex, item in enumerate(state_history):
-            if iindex == 0:  # first state
-                preproc_input.extend(list(self.normalize_state(item[0])))
-                preproc_input.extend(item[1])
-            elif iindex != len(state_history) - 1:
-                preproc_input.extend(item[1])
-            else:  # last state
-                preproc_input.extend(list(self.normalize_state(item[0])))
+
+        # We directly use the state
+        preproc_input = state_history[-1][0]
 
         self.verbose_logger.debug('Returning (phi): %s\n', preproc_input)
         assert len(state_history) == self.state_history_length
@@ -284,58 +302,146 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
     # ==================================================================
     # All neural network related TF operations
 
-    def tf_init_mlp(self):
+    def tf_init_actor_and_critic(self):
         '''
         Initialize the variables for neural network used for q learning
         :return:
         '''
-        for li in range(len(self.layer_info) - 1):
-            self.tf_weights.append(tf.Variable(tf.truncated_normal([self.layer_info[li], self.layer_info[li + 1]],
-                                                                   stddev=2. / self.layer_info[li]),
-                                               name='weights_' + str(li) + '_' + str(li + 1)))
-            self.tf_target_weights.append(
-                tf.Variable(tf.truncated_normal([self.layer_info[li], self.layer_info[li + 1]],
-                                                stddev=2. / self.layer_info[li]),
-                            name='target_weights_' + str(li) + '_' + str(li + 1)))
-            self.tf_bias.append(
-                tf.Variable(tf.zeros([self.layer_info[li + 1]]), name='bias_' + str(li) + '_' + str(li + 1)))
-            self.tf_target_biase.append(
-                tf.Variable(tf.zeros([self.layer_info[li + 1]]), name='target_bias_' + str(li) + '_' + str(li + 1)))
+        with tf.variable_scope(constants.TF_ACTOR_SCOPE):
+            # Defining actor network
+            for li in range(len(self.actor_layer_info) - 1):
+                with tf.variable_scope(self.layer_scopes):
+                    tf.get_variable(initializer=tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
+                                                                           stddev=2. / self.actor_layer_info[li]),
+                                                       name=constants.TF_WEIGHTS)
+                    tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]),
+                                    name=constants.TF_BIAS)
 
-    def tf_calc_output(self, tf_state_input):
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
+
+                        tf.get_variable(tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
+                                                        stddev=2. / self.actor_layer_info[li]), name=constants.TF_WEIGHTS)
+                        tf.get_variable(tf.zeros([self.actor_layer_info[li + 1]]), name=constants.TF_BIAS)
+
+        with tf.variable_scope(constants.TF_CRITIC_SCOPE):
+            # Defining actor network
+            for li in range(len(self.critic_layer_info) - 1):
+                with tf.variable_scope(self.layer_scopes):
+                    tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                                                           stddev=2. / self.actor_layer_info[li]),
+                                                       name=constants.TF_WEIGHTS)
+                    tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
+
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
+                        tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                                        stddev=2. / self.critic_layer_info[li]),
+                                    name=constants.TF_BIAS)
+                        tf.gat_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
+
+
+    def tf_calc_actor_critic_output(self, tf_state_input, tf_action_input, actor_or_critic_scope):
         '''
-        Calculate the output till the last layer
-        Middle layers have relu activation
-        Last layer is a linear layer
-        :param tf_state_input:
-        :return:
+        Calculate the output of the actor/critic network (quickly updated one)
         '''
-        x = tf_state_input
-        for li, (w, b) in enumerate(zip(self.tf_weights[:-1], self.tf_bias[:-1])):
-            x = tf.nn.relu(tf.matmul(x, w) + b)
+        if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
+            x = tf_state_input
+        elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
+            x = tf.concat([tf_state_input,tf_action_input],axis=1)
 
-        return tf.matmul(x, self.tf_weights[-1]) + self.tf_bias[-1]
+        with tf.variable_scope(actor_or_critic_scope, reuse=True):
+            for scope in self.layer_scopes:
+                with tf.variable_scope(scope, reuse=True):
+                    if scope != self.layer_scopes[-1]:
+                        with tf.variable_scope(scope, reuse=True):
+                            x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                constants.TF_BIAS))
+                    else:
+                        if actor_or_critic_scope == constants.TF_CRITIC_SCOPE:
+                            x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
+                        elif actor_or_critic_scope == constants.TF_ACTOR_SCOPE:
+                            x = tf.nn.tanh(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                constants.TF_BIAS))
+                        else:
+                            raise NotImplementedError
+        return x
 
-    def tf_calc_output_target(self, tf_state_input):
-        x = tf_state_input
-        for li, (w, b) in enumerate(zip(self.tf_target_weights[:-1], self.tf_target_biase[:-1])):
-            x = tf.nn.relu(tf.matmul(x, w) + b)
+    def tf_calc_actor_critic_target_output(self, tf_state_input, tf_action_input, actor_or_critic_scope):
+        '''
+        Calculate the output of the target actor/critic network (slowly updated one)
+        '''
+        if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
+            x = tf_state_input
+        elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
+            x = tf.concat([tf_state_input,tf_action_input],axis=1)
 
-        return tf.matmul(x, self.tf_weights[-1]) + self.tf_bias[-1]
+        with tf.variable_scope(actor_or_critic_scope, reuse=True):
+            for scope in self.layer_scopes:
+                with tf.variable_scope(scope, reuse=True):
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse = True):
+                        if scope != self.layer_scopes[-1]:
+                            with tf.variable_scope(scope,reuse=True):
+                                x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS))+tf.get_variable(constants.TF_BIAS))
+                        else:
+                            if actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
+                                x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
+                            elif actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
+                                x = tf.nn.tanh(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
+                            else:
+                                raise NotImplementedError
+        return x
 
-    def tf_sqr_loss(self, tf_output, tf_targets, tf_mask):
+    def tf_mse_loss_of_critic(self, tf_y_i_output, tf_q_given_s_i):
         '''
         Calculate the squared loss between target and output
         :param tf_output:
         :param tf_targets:
         :return:
         '''
-        return tf.reduce_mean(((tf_output*tf_mask) - tf_targets) ** 2)
+        return tf.reduce_mean((tf_y_i_output - tf_q_given_s_i) ** 2)
+
 
     def tf_momentum_optimize(self, loss):
-        optimizer = tf.train.MomentumOptimizer(learning_rate=self.learning_rate,
+        '''
+        Optimizes critic
+        :param loss:
+        :return:
+        '''
+        optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
                                                momentum=self.momentum).minimize(loss)
         return optimizer
+
+    def tf_policy_gradient_optimize(self):
+
+        mu_s = self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_ACTOR_SCOPE)
+        theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
+        q_grad = tf.gradients(ys=self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_CRITIC_SCOPE),
+                                   xs= mu_s)
+        # grad_ys acts as a way of chaining multiple gradients
+        # more info: https://stackoverflow.com/questions/42399401/use-of-grads-ys-parameter-in-tf-gradients-tensorflow
+        mu_grad = tf.gradients(ys= mu_s,
+                     xs= theta_mu,
+                     grad_ys = -q_grad)
+        grads = zip(mu_grad,theta_mu)
+
+        grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
+                                              momentum=self.momentum).apply_gradients(grads)
+
+        return grad_apply_op
+
+    def get_all_variables(self,actor_or_critic_scope, is_target_network):
+        vars = []
+        with tf.variable_scope(actor_or_critic_scope, reuse=True):
+            for scope in self.layer_scopes:
+                with tf.variable_scope(scope, reuse=True):
+                    if not is_target_network:
+                        vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                     tf.get_variable(constants.TF_BIAS)])
+                    else:
+                        with tf.variable_scope(constants.TF_TARGET_NET_SCOPE,reuse = True):
+                            vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                         tf.get_variable(constants.TF_BIAS)])
+
+        return vars
 
     def tf_target_weight_copy_op(self):
         '''
@@ -351,12 +457,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     # ============================================================================
 
-    def restore_policy(self, **restore_data):
-        # use this to restore from saved data
-        self.q = restore_data['q']
-        self.regressor = restore_data['lrs']
-
-    def clean_Q(self):
+    def clean_experience(self):
         '''
         Delete past experience to free memory
         :return:
@@ -368,122 +469,210 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 self.q.popitem(last=True)
             self.verbose_logger.debug('\tSize of Q after: %d', len(self.q))
 
-    def action_list_with_index(self, action_idx):
-        '''
-        self.actions [('do_nothing', 0), ('finetune', 0),('naive_train', 0),
-                ('remove', params['remove_amount'])]
-        How action_idx turned into action list
-          convert the idx to binary representation (example 10=> 0b1010)
-          get text [2:] to discard first two letters
-          prepend 0s to it so the length is equal to number of conv layers
-        :param action_idx:
-        :return: 0...n_conv for add actions corresponding to each layer n_conv + 1 -> do_nothing, n_conv+2 -> finetune n_conv + 3 -> naive_train
-        '''
-        self.verbose_logger.info('Getting action list from action index')
-        self.verbose_logger.debug('Got (idx): %d\n', action_idx)
-        layer_actions = [None for _ in range(self.net_depth)]
-
-        if action_idx < self.output_size - self.global_actions:
-            primary_action = action_idx // (self.n_conv + self.n_fulcon)  # action
-            secondary_action = action_idx % (self.n_conv + self.n_fulcon)  # the layer the action will be executed
-            if primary_action == 0:
-                tmp_a = self.actions[3]
-
-            for ci, c_id in enumerate(self.conv_ids + self.fulcon_ids):
-                if ci == secondary_action:
-                    layer_actions[c_id] = list(tmp_a)
-                    if c_id in self.conv_ids:
-                        layer_actions[c_id][1] = self.add_amount
-                    elif c_id in self.fulcon_ids:
-                        layer_actions[c_id][1] = self.add_fulcon_amount
-                    else:
-                        raise AttributeError
-                    layer_actions[c_id] = tuple(layer_actions[c_id])
-                else:
-                    layer_actions[c_id] = self.actions[0]
-
-        elif action_idx == self.output_size - 3:
-            layer_actions = [self.actions[0] if (li in self.conv_ids or li in self.fulcon_ids) else None for li in range(self.net_depth)]
-        elif action_idx == self.output_size - 2:
-            layer_actions = [self.actions[1] if (li in self.conv_ids or li in self.fulcon_ids) else None for li in range(self.net_depth)]
-        elif action_idx == self.output_size - 1:
-            layer_actions = [self.actions[2] if (li in self.conv_ids or li in self.fulcon_ids) else None for li in range(self.net_depth)]
-
-        assert len(layer_actions) == self.net_depth
-        self.verbose_logger.debug('Return (action_list): %s\n', layer_actions)
-        return layer_actions
-
     def get_action_string_for_logging(self):
         '''
         Action string for logging purposes (predicted_q.log)
         :return:
         '''
         action_str = 'Time-Stamp,'
-        if self.qlearner_type=='prune':
-            for ci in self.conv_ids:
-                action_str += 'Remove-%d,'%ci
-        elif self.qlearner_type=='growth':
-            for ci in self.conv_ids:
-                action_str += 'Add-%d,' % ci
-        else:
-            raise AttributeError
 
-        action_str+='DoNothing,'
+        for ci in self.conv_ids + self.fulcon_ids:
+            action_str += 'Remove-%d,'%ci
+
         action_str+='Finetune,'
         action_str+='NaiveTrain'
 
         return action_str
 
-    def index_from_action_list(self, action_list):
-        '''
-        Index of an action with the action list
-        Eg for 7 layer net with C,C,C,P,C,C,C (C-conv and P-pool) (n_conv = 6)
-        for action_list [DoNothing, DoNothing, ...] action_idx = # of actions - 2
-        for action_list [Finetune, Finetune, ...] action_idx = # of actions - 1
-        for action_list [DoNothing, DoNothing, Add, None, DoNothing, DoNothing]
-        since "Add" is in the action, primary index = 0
-        and the secondary action is the layer index of which action is Add, so secondary index = 2
-        and action_idx = 0 * n_conv + 2 = 2
-        :param action_list:
-        :return:
-        '''
-        self.verbose_logger.info('Getting action index from action list')
-        self.verbose_logger.debug('Got: %s\n', action_list)
-        if self.get_action_string(action_list) == \
-                self.get_action_string(
-                    [self.actions[0] if li in (self.conv_ids + self.fulcon_ids) else None for li in range(self.net_depth)]):
-            self.verbose_logger.debug('Return: %d\n', self.output_size - 2)
-            return self.output_size - 3
-        elif self.get_action_string(action_list) == \
-                self.get_action_string(
-                    [self.actions[1] if li in (self.conv_ids + self.fulcon_ids) else None for li in range(self.net_depth)]):
-            self.verbose_logger.debug('Return (index): %d\n', self.output_size - 1)
-            return self.output_size - 2
-        elif self.get_action_string(action_list) == \
-                self.get_action_string(
-                    [self.actions[2] if li in (self.conv_ids + self.fulcon_ids) else None for li in range(self.net_depth)]):
-            self.verbose_logger.debug('Return (index): %d\n', self.output_size - 1)
-            return self.output_size - 1
-
-        else:
-            conv_id = 0
-            for li, la in enumerate(action_list):
-                if la is None:
-                    continue
-
-                if la[0] == self.actions[self.global_actions][0]:
-                    secondary_idx = conv_id
-                    primary_idx = 0
-
-                conv_id += 1
-
-            action_idx = primary_idx * (self.n_conv+self.n_fulcon) + secondary_idx
-            self.verbose_logger.debug('Primary %d Secondary %d', primary_idx, secondary_idx)
-            self.verbose_logger.debug('Return (index): %d\n', action_idx)
-            return action_idx
-
     def update_trial_phase(self, trial_phase):
         self.trial_phase = trial_phase
+
+    def get_current_q_vector(self):
+        return self.current_q_for_actions
+
+
+    def get_action_string(self, layer_action_list):
+        act_string = ''
+        for li, la in enumerate(layer_action_list):
+            if la is None:
+                continue
+            else:
+                act_string += la[0] + str(la[1])
+
+        return act_string
+
+    def normalize_state(self, s):
+        '''
+        Normalize the layer filter count to [-1, 1]
+        :param s: current state
+        :return:
+        '''
+        # state looks like [distMSE, filter_count_1, filter_count_2, ...]
+        norm_state = np.zeros((1, self.net_depth))
+        self.verbose_logger.debug('Before normalization: %s', s)
+        # enumerate only the depth related part of the state
+        for ii, item in enumerate(s[:self.net_depth]):
+            if self.filter_bound_vec[ii] > 0:
+                norm_state[0, ii] = item * 1.0 - (self.filter_bound_vec[ii]/2.0)
+                norm_state[0, ii] /= (self.filter_bound_vec[ii]/2.0)
+            else:
+                norm_state[0, ii] = -1.0
+
+        # concatenate binned distributions and normalized layer depth
+        norm_state = np.append(norm_state,np.reshape(s[self.net_depth:],(1,-1)),axis=1)
+        self.verbose_logger.debug('\tNormalized state: %s\n', norm_state)
+        return tuple(norm_state.flatten())
+
+    def get_ohe_state_ndarray(self, s):
+        return np.asarray(self.normalize_state(s)).reshape(1, -1)
+
+    def clean_experience(self):
+        '''
+        Clean experience to reduce the memory requirement
+        We keep a
+        :return:
+        '''
+        exp_action_count = {}
+        for e_i, [_, ai, _, _, time_stamp] in enumerate(self.experience):
+            # phi_t, a_idx, reward, phi_t_plus_1
+            a_idx = ai
+            if a_idx not in exp_action_count:
+                exp_action_count[a_idx] = [(time_stamp, e_i)]
+            else:
+                exp_action_count[a_idx].append((time_stamp, e_i))
+
+        indices_to_remove = []
+        for k, v in exp_action_count.items():
+            sorted_v = sorted(v, key=lambda item: item[0])
+            if len(v) > self.experience_per_action:
+                indices_to_remove.extend(sorted_v[:len(sorted_v) - self.experience_per_action])
+
+        indices_to_remove = sorted(indices_to_remove, reverse=True)
+
+        self.verbose_logger.info('Indices of experience that will be removed')
+        self.verbose_logger.info('\t%s', indices_to_remove)
+
+        for _, r_i in indices_to_remove:  # each element in indices to remove are tuples (time_stamp,exp_index)
+            self.experience.pop(r_i)
+
+        exp_action_count = {}
+        for e_i, [_, ai, _, _, _] in enumerate(self.experience):
+            # phi_t, a_idx, reward, phi_t_plus_1
+            a_idx = ai
+            if a_idx not in exp_action_count:
+                exp_action_count[a_idx] = [e_i]
+            else:
+                exp_action_count[a_idx].append(e_i)
+
+        # np.random.shuffle(self.experience) # decorrelation
+
+        self.verbose_logger.debug('Action count after removal')
+        self.verbose_logger.debug(exp_action_count)
+
+    def get_s_a_r_s_with_experince(self, experience_slice):
+
+        x, y, rewards, sj = None, None, None, None
+
+        for [hist_t, ai, reward, hist_t_plus_1, time_stamp] in experience_slice:
+            # phi_t, a_idx, reward, phi_t_plus_1
+            if x is None:
+                x = np.asarray(self.phi(hist_t)).reshape((1, -1))
+            else:
+                x = np.append(x, np.asarray(self.phi(hist_t)).reshape((1, -1)), axis=0)
+
+            if y is None:
+                y = np.asarray(ai).reshape(1, -1)
+            else:
+                y = np.append(y, np.asarray(ai).reshape(1, -1), axis=0)
+
+            if rewards is None:
+                rewards = np.asarray(reward).reshape(1, -1)
+            else:
+                rewards = np.append(rewards, np.asarray(reward).reshape(1, -1), axis=0)
+
+            if sj is None:
+                sj = np.asarray(self.phi(hist_t_plus_1)).reshape(1, -1)
+            else:
+                sj = np.append(sj, np.asarray(self.phi(hist_t_plus_1)).reshape(1, -1), axis=0)
+
+        return x, y, rewards, sj
+
+    def exploration_noise_OU(self, x, mu, theta, sigma):
+        return theta * (mu - x) + sigma * np.random.randn(1)
+
+    def get_action_with_exploration(self):
+        '''
+        Returns a(t) = mu(s(t)|theta_mu) + N(t) where in is the exploration policy
+        N(t) =
+        :return:
+        '''
+
+    def get_complexity_penalty(self, curr_comp, prev_comp, filter_bound_vec,act_string):
+
+
+        # total gain should be negative for taking add action before half way througl a layer
+        # total gain should be positve for taking add action after half way througl a layer
+        total = 0
+        split_factor = 0.6
+        for l_i,(c_depth, p_depth, up_dept) in enumerate(zip(curr_comp,prev_comp,filter_bound_vec)):
+            if up_dept>0 and abs(c_depth-p_depth) > 0:
+                total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
+
+        if 'add' in act_string:
+            return - total * (self.top_k_accuracy/self.num_classes)
+        elif 'remove' in act_string:
+            return total * (self.top_k_accuracy/self.num_classes)
+        else:
+            return 0.0
+
+    def tf_train_actor_or_critic_target(self,actor_or_critic_scope):
+        target_assign_ops = []
+        with tf.variable_scope(actor_or_critic_scope, reuse=True):
+            for scope in self.layer_scopes:
+                with tf.variable_scope(scope, reuse=True):
+                    w_dash,b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                    with tf.variables_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1-self.TAU)* w_dash))
+                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+
+        return target_assign_ops
+
+    def train_critic(self, experience_batch):
+        # data['prev_state'], data['curr_state']
+
+        # sample a batch from experience
+        s_i, a_i , r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
+
+        self.verbose_logger.debug('Summary of Experience data')
+        self.verbose_logger.debug('\ts(t):%s', s_i.shape)
+        self.verbose_logger.debug('\ta(t):%s', a_i.shape)
+        self.verbose_logger.debug('\tr:%s', r.shape)
+        self.verbose_logger.debug('\ts(t+1):%s', s_i_plus_1.shape)
+
+        # predicte Q(s,a|theta_Q) with the critic
+        mu_s_i_plus_1 = self.session.run(self.tf_actor_target_out_op, feed_dict={self.tf_state_input: s_i_plus_1})
+        q_given_s_i_plus_1_mu_s_i_plus_1 = self.session.run(self.tf_critic_target_out_op,
+                                                            feed_dict={self.tf_state_input: s_i_plus_1,
+                                                                       self.tf_action_input: mu_s_i_plus_1})
+        y_i = r + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
+
+        _ = self.session.run(self.tf_critic_optimize_op,
+                             feed_dict={self.tf_state_input:s_i,self.tf_action_input:a_i,
+                                        self.tf_y_i_targets:y_i})
+
+    def train_actor(self,experience_batch):
+        '''
+        Train the actor with a batch sampled from the experience
+        Gradient update
+        1/N * Sum(d Q(s,a|theta_Q)/d mu(s_i)* d mu(s_i|theta_mu)/d theta_mu)
+        :param experience_batch:
+        :return:
+        '''
+        s_i, a_i, r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
+        _ = self.session.run(self.tf_actor_optimize_op,feed_dict={
+            self.tf_state_input:s_i
+        })
 
     def get_new_valid_action_when_greedy(self,action_idx,found_valid_action, data, q_for_actions):
         '''
@@ -551,22 +740,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         found_valid_action = True
         return layer_actions_list, found_valid_action,invalid_actions
 
-    def check_if_should_stop_adapting(self):
 
-        if np.argmax(self.current_q_for_actions) == self.output_size - 1:
-            if self.current_q_for_actions[-1] > self.max_q_ft:
-                self.max_q_ft = self.current_q_for_actions[-1]
-                self.ft_saturated_count = 0
-                self.stop_adapting = False
-            else:
-                self.ft_saturated_count += 1
-
-            if self.ft_saturated_count > self.threshold_stop_adapting:
-                self.stop_adapting = True
-        else:
-            self.ft_saturated_count = 0
-
-        return self.stop_adapting
 
     def get_new_valid_action_when_exploring(self, action_idx, found_valid_action, data,trial_action_probs):
         '''
@@ -824,7 +998,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         if self.prev_action is not None and \
                         self.get_action_string(layer_actions_list) == self.get_action_string(self.prev_action):
             self.same_action_count += 1
-
         else:
             self.same_action_count = 0
 
@@ -836,221 +1009,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('\tSelected action: %s\n', layer_actions_list)
 
         return state, layer_actions_list, invalid_actions
-
-    def get_current_q_vector(self):
-        return self.current_q_for_actions
-
-    def output_action(self, data):
-        '''
-        Output action acording to one of the below methods
-        Explore: action during the exploration (network growth and netowrk shrinkage)
-        Deterministic: action with highest q value
-        Stochastic: action in a stochastic manner
-        :param data:
-        :return:
-        '''
-
-        invalid_actions = []
-        # data => ['distMSE']['filter_counts']
-        # ['filter_counts'] => depth_index : filter_count
-        # State => Layer_Depth (w.r.t net), dist_MSE, number of filters in layer
-
-        action_type = None  # for logging purpose
-        state = []  # removed distMSE (believe doesn't have much value)
-        state.extend(data['filter_counts_list'])
-
-        self.verbose_logger.info('Data for (Depth Index,DistMSE,Filter Count) %s\n' % str(state))
-        history_t_plus_1 = list(self.current_state_history)
-        history_t_plus_1.append([state])
-
-        self.verbose_logger.debug('Current state history: %s\n', self.current_state_history)
-        self.verbose_logger.debug('history_t+1:%s\n', history_t_plus_1)
-        self.verbose_logger.debug('Epsilons: %.3f\n', self.epsilon)
-        self.verbose_logger.info('Trial phase: %.3f\n', self.trial_phase)
-
-        if self.trial_phase < self.trial_phase_threshold:
-            action_type = 'Explore'
-            layer_actions_list,invalid_actions = self.get_explore_type_action(data,history_t_plus_1)
-
-        # deterministic selection (if epsilon is not 1 or q is not empty)
-        elif np.random.random() > self.epsilon and len(history_t_plus_1) == self.state_history_length:
-            self.verbose_logger.info('Choosing action deterministic...')
-            # we create this copy_actions in case we need to change the order the actions processed
-            # without changing the original action space (self.actions)
-            action_type = 'Greedy'
-            layer_actions_list,invalid_actions = self.get_greedy_type_action(data,history_t_plus_1)
-
-        # random selection
-        else:
-            self.verbose_logger.info('Choosing action stochastic...')
-            action_type = 'Stochastic'
-
-            layer_actions_list,invalid_actions = self.get_stochastic_type_action(data,history_t_plus_1)
-
-        # decay epsilon
-        if self.trial_phase >= self.trial_phase_threshold:
-            self.epsilon = max(self.epsilon * 0.95, self.min_epsilon)
-
-        self.verbose_logger.debug('=' * 60)
-        self.verbose_logger.debug('State')
-        self.verbose_logger.debug(state)
-        self.verbose_logger.debug('Action (%s)',action_type)
-        self.verbose_logger.debug(layer_actions_list)
-        self.verbose_logger.debug('=' * 60)
-
-        if self.prev_action is not None and \
-                        self.get_action_string(layer_actions_list) == self.get_action_string(self.prev_action):
-            self.same_action_count += 1
-
-        else:
-            self.same_action_count = 0
-
-        self.action_logger.info('%s,%s,%s,%.3f', action_type, state, layer_actions_list, self.epsilon)
-
-        self.prev_action = layer_actions_list
-        self.prev_state = state
-
-        self.verbose_logger.info('\tSelected action: %s\n', layer_actions_list)
-
-        return state, layer_actions_list, invalid_actions
-
-
-    def get_action_string(self, layer_action_list):
-        act_string = ''
-        for li, la in enumerate(layer_action_list):
-            if la is None:
-                continue
-            else:
-                act_string += la[0] + str(la[1])
-
-        return act_string
-
-    def normalize_state(self, s):
-        '''
-        Normalize the layer filter count to [-1, 1]
-        :param s: current state
-        :return:
-        '''
-        # state looks like [distMSE, filter_count_1, filter_count_2, ...]
-        norm_state = np.zeros((1, self.net_depth))
-        self.verbose_logger.debug('Before normalization: %s', s)
-        # enumerate only the depth related part of the state
-        for ii, item in enumerate(s[:self.net_depth]):
-            if self.filter_bound_vec[ii] > 0:
-                norm_state[0, ii] = item * 1.0 - (self.filter_bound_vec[ii]/2.0)
-                norm_state[0, ii] /= (self.filter_bound_vec[ii]/2.0)
-            else:
-                norm_state[0, ii] = -1.0
-
-        # concatenate binned distributions and normalized layer depth
-        norm_state = np.append(norm_state,np.reshape(s[self.net_depth:],(1,-1)),axis=1)
-        self.verbose_logger.debug('\tNormalized state: %s\n', norm_state)
-        return tuple(norm_state.flatten())
-
-    def get_ohe_state_ndarray(self, s):
-        return np.asarray(self.normalize_state(s)).reshape(1, -1)
-
-    def clean_experience(self):
-        '''
-        Clean experience to reduce the memory requirement
-        We keep a
-        :return:
-        '''
-        exp_action_count = {}
-        for e_i, [_, ai, _, _, time_stamp] in enumerate(self.experience):
-            # phi_t, a_idx, reward, phi_t_plus_1
-            a_idx = ai
-            if a_idx not in exp_action_count:
-                exp_action_count[a_idx] = [(time_stamp, e_i)]
-            else:
-                exp_action_count[a_idx].append((time_stamp, e_i))
-
-        indices_to_remove = []
-        for k, v in exp_action_count.items():
-            sorted_v = sorted(v, key=lambda item: item[0])
-            if len(v) > self.experience_per_action:
-                indices_to_remove.extend(sorted_v[:len(sorted_v) - self.experience_per_action])
-
-        indices_to_remove = sorted(indices_to_remove, reverse=True)
-
-        self.verbose_logger.info('Indices of experience that will be removed')
-        self.verbose_logger.info('\t%s', indices_to_remove)
-
-        for _, r_i in indices_to_remove:  # each element in indices to remove are tuples (time_stamp,exp_index)
-            self.experience.pop(r_i)
-
-        exp_action_count = {}
-        for e_i, [_, ai, _, _, _] in enumerate(self.experience):
-            # phi_t, a_idx, reward, phi_t_plus_1
-            a_idx = ai
-            if a_idx not in exp_action_count:
-                exp_action_count[a_idx] = [e_i]
-            else:
-                exp_action_count[a_idx].append(e_i)
-
-        # np.random.shuffle(self.experience) # decorrelation
-
-        self.verbose_logger.debug('Action count after removal')
-        self.verbose_logger.debug(exp_action_count)
-
-    def get_xy_with_experince(self, experience_slice):
-
-        x, y, rewards, sj = None, None, None, None
-
-        for [hist_t, ai, reward, hist_t_plus_1, time_stamp] in experience_slice:
-            # phi_t, a_idx, reward, phi_t_plus_1
-            if x is None:
-                x = np.asarray(self.phi(hist_t)).reshape((1, -1))
-            else:
-                x = np.append(x, np.asarray(self.phi(hist_t)).reshape((1, -1)), axis=0)
-
-            ohe_a = [1 if ai == act else 0 for act in range(self.output_size)]
-            if y is None:
-                y = np.asarray(ohe_a).reshape(1, -1)
-            else:
-                y = np.append(y, np.asarray(ohe_a).reshape(1, -1), axis=0)
-
-            if rewards is None:
-                rewards = np.asarray(reward).reshape(1, -1)
-            else:
-                rewards = np.append(rewards, np.asarray(reward).reshape(1, -1), axis=0)
-
-            if sj is None:
-                sj = np.asarray(self.phi(hist_t_plus_1)).reshape(1, -1)
-            else:
-                sj = np.append(sj, np.asarray(self.phi(hist_t_plus_1)).reshape(1, -1), axis=0)
-
-        return x, y, rewards, sj
-
-
-    def get_complexity_penalty(self, curr_comp, prev_comp, filter_bound_vec,act_string):
-
-
-        # total gain should be negative for taking add action before half way througl a layer
-        # total gain should be positve for taking add action after half way througl a layer
-        total = 0
-        split_factor = 0.6
-        for l_i,(c_depth, p_depth, up_dept) in enumerate(zip(curr_comp,prev_comp,filter_bound_vec)):
-            if up_dept>0 and abs(c_depth-p_depth) > 0:
-                total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
-
-        if 'add' in act_string:
-            return - total * (self.top_k_accuracy/self.num_classes)
-        elif 'remove' in act_string:
-            return total * (self.top_k_accuracy/self.num_classes)
-        else:
-            return 0.0
-
-    def get_grow_encouragement(self,affected_layer_idx,action_string, curr_comp, filter_bound_vec,top_k,split_fraction):
-
-        growth_enc = (1+np.log(affected_layer_idx+1))*\
-                     ((filter_bound_vec[affected_layer_idx]*split_fraction) - curr_comp[affected_layer_idx])*(top_k/self.num_classes)\
-                     /(filter_bound_vec[affected_layer_idx])
-        if 'add' in action_string:
-            return growth_enc
-        if 'remove' in action_string:
-            return - growth_enc
-
 
     def update_policy(self, data, add_future_reward):
         # data['prev_state']
@@ -1072,9 +1030,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 if len(self.experience) > self.batch_size:
                     exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                     self.verbose_logger.debug('Experience indices: %s', exp_indices)
-                    x, y, r, next_state = self.get_xy_with_experince([self.experience[ei] for ei in exp_indices])
+                    x, y, r, next_state = self.get_s_a_r_s_with_experince([self.experience[ei] for ei in exp_indices])
                 else:
-                    x, y, r, next_state = self.get_xy_with_experince(self.experience)
+                    x, y, r, next_state = self.get_s_a_r_s_with_experince(self.experience)
 
                 if self.global_time_stamp < 5:
                     assert np.max(x) <= 1.0 and np.max(x) >= -1.0 and np.max(y) <= 1.0 and np.max(y) >= -1.0
