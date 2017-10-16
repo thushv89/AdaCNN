@@ -8,7 +8,7 @@ import os
 from math import ceil, floor
 import logging
 import sys
-import ada_cnn_qlearner
+import ada_cnn_aac
 from data_pool import Pool
 from collections import Counter
 from scipy.misc import imsave
@@ -26,7 +26,6 @@ import ada_cnn_adapter
 import data_generator
 import label_sequence_generator
 import h5py
-import prune_reward_regressor
 import cnn_model_saver
 
 logging_level = logging.INFO
@@ -2127,27 +2126,23 @@ if __name__ == '__main__':
         # Adapting Policy Learner
         current_adaptive_dropout = get_adaptive_dropout()
         state_history_length = 2
-        growth_adapter = ada_cnn_qlearner.AdaCNNAdaptingQLearner(
-            qlearner_type='growth', discount_rate=0.5, fit_interval=1,
-            exploratory_tries_factor=5, exploratory_interval=10000, stop_exploring_after=10,
+        growth_adapter = ada_cnn_aac.AdaCNNAdaptingAdvantageActorCritic(
+            discount_rate=0.75,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
             n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
-            epsilon=0.5, target_update_rate=20,
+            epsilon=0.5,
             batch_size=32, persist_dir=output_dir,
-            session=session, random_mode=False,
+            session=session,
             state_history_length=state_history_length,
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
-            rand_state_length=32, add_amount=model_hyperparameters['add_amount'],
-            remove_amount=model_hyperparameters['remove_amount'], add_fulcon_amount=model_hyperparameters['add_fulcon_amount'],
+            rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
+            adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
             fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
             trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length'],
             top_k_accuracy=model_hyperparameters['top_k_accuracy']
         )
-
-        prune_reward_reg = prune_reward_regressor.PruneRewardRegressor(session=session,n_tasks=n_tasks,persist_dir=output_dir,
-                                                                       prune_min_bound=prune_min_bound, prune_max_bound=prune_max_bound)
 
     # Running initialization opeartion
     logger.info('Running global variable initializer')

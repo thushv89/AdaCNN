@@ -34,8 +34,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.fit_interval = params['fit_interval']  # RL agent training interval
         self.target_update_rate = params['target_update_rate']
         self.batch_size = params['batch_size']
-        self.add_amount = params['add_max_amount']
-        self.add_fulcon_amount = params['add_fulcon_max_amount']
+        self.add_amount = params['adapt_max_amount']
+        self.add_fulcon_amount = params['adapt_fulcon_max_amount']
         self.epsilon = params['epsilon']
         self.min_epsilon = 0.1
 
@@ -165,7 +165,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_action_input = tf.placeholder(tf.float32, shape=(None, self.output_size), name='InputDataset')
         self.tf_y_i_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
 
-
         # output of each network
         self.tf_critic_out_op = self.tf_calc_actor_critic_output(self.tf_state_input,self.tf_action_input,constants.TF_CRITIC_SCOPE)
         self.tf_actor_out_op = self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_ACTOR_SCOPE)
@@ -173,7 +172,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                                            constants.TF_CRITIC_SCOPE)
         self.tf_actor_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
                                                          constants.TF_ACTOR_SCOPE)
-
 
         self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op, self.tf_q_mask)
         self.tf_critic_optimize_op = self.tf_momentum_optimize(self.tf_critic_loss_op)

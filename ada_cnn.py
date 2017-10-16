@@ -2176,8 +2176,8 @@ if __name__ == '__main__':
     elif datatype=='imagenet-250':
         # override settings
         n_tasks = 2
-        labels_per_task = 250
-        labels_of_each_task = [list(range(0, 250)),list(range(0, 250))]
+        labels_per_task = 125
+        labels_of_each_task = [list(range(0, 125)),list(range(125, 250))]
 
     if behavior=='non-stationary':
         data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
