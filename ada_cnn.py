@@ -893,38 +893,51 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
 
+    with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
+
+        with tf.variable_scope(current_op,reuse=True):
+            curr_weights = tf.get_variable(TF_WEIGHTS).eval()
+            curr_bias = tf.get_variable(TF_BIAS).eval()
+        with tf.variable_scope(next_conv_op, reuse=True):
+            next_weights = tf.get_variable(TF_WEIGHTS).eval()
+
+        rand_indices = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
+        ind_counter = Counter(np.stack([np.arange(0,curr_weights.shape[3]).ravel(), rand_indices.ravel()]))
+        count_vec = sorted(ind_counter)
+
+        new_curr_weights = curr_weights[:,:,:,rand_indices]
+        new_curr_bias = curr_bias[rand_indices]
+
+        if last_conv_id != current_op:
+            count_vec = np.reshape(count_vec,(1,1,-1,1))
+            new_next_weights = np.divide(next_weights[:,:,rand_indices,:],count_vec)
+        else:
+            low_bound = (rand_indices*final_2d_width*final_2d_width).tolist()
+            upper_bound = ((rand_indices+1) * final_2d_width * final_2d_width).tolist()
+            low_up_bounds = list(zip(low_bound,upper_bound))
+            all_indices = [np.arange(l,u) for (l,u) in low_up_bounds]
+            all_indices = np.stack(all_indices).ravel()
+            new_next_weights = next_weights[all_indices,:]
+
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
-                        tf_weights_this: np.random.normal(scale=0.001, size=(
+                        tf_weights_this: new_curr_weights,
+                        tf_bias_this: new_curr_bias,
+
+                        tf_weights_next: new_next_weights,
+
+                        tf_wvelocity_this: np.random.uniform(low=0.0,high=0.5,size=(
                             cnn_hyperparameters[current_op]['weights'][0],
                             cnn_hyperparameters[current_op]['weights'][1],
                             cnn_hyperparameters[current_op]['weights'][2], amount_to_add)),
-                        tf_bias_this: np.random.normal(scale=0.001, size=(amount_to_add)),
-
-                        tf_weights_next: np.random.normal(scale=0.001, size=(
+                        tf_bvelocity_this: np.random.uniform(low=0.0, high=0.5, size=(amount_to_add,)),
+                        tf_wvelocity_next: np.random.uniform(low=0.0, high=0.5, size=(
                             cnn_hyperparameters[next_conv_op]['weights'][0],
                             cnn_hyperparameters[next_conv_op]['weights'][1],
-                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])
-                                                          ) if last_conv_id != current_op else
-                        np.random.normal(scale=0.001, size=(
-                            amount_to_add * final_2d_width * final_2d_width,
-                            cnn_hyperparameters[first_fc]['out'], 1, 1)),
-
-                        tf_wvelocity_this: np.zeros(shape=(
-                            cnn_hyperparameters[current_op]['weights'][0],
-                            cnn_hyperparameters[current_op]['weights'][1],
-                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),
-                            dtype=np.float32),
-                        tf_bvelocity_this: np.zeros(shape=(amount_to_add,), dtype=np.float32),
-                        tf_wvelocity_next: np.zeros(shape=(
-                            cnn_hyperparameters[next_conv_op]['weights'][0],
-                            cnn_hyperparameters[next_conv_op]['weights'][1],
-                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),
-                            dtype=np.float32) if last_conv_id != current_op else
-                        np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
-                                        cnn_hyperparameters[first_fc]['out'], 1, 1),
-                                 dtype=np.float32),
+                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])) if last_conv_id != current_op else
+                        np.random.uniform(low=0.0, high=0.5, size=(final_2d_width * final_2d_width * amount_to_add,
+                                        cnn_hyperparameters[first_fc]['out'], 1, 1)),
                     })
 
     # change both weights and biase in the current op
