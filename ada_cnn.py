@@ -912,7 +912,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         ind_counter = Counter(all_indices_plus_rand.tolist())
         sorted_keys = sorted(ind_counter.keys())
         count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-        count_vec = np.concatenate([count_vec,count_vec[rand_indices]])
+        count_vec = np.concatenate([count_vec,count_vec[rand_indices]*2])
         print('count vec',count_vec.shape)
         print(count_vec)
         new_curr_weights = curr_weights[:,:,:,rand_indices]
@@ -1032,7 +1032,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    pbatch_train_count = 0
+    '''pbatch_train_count = 0
 
     # Train only with half of the batch
     for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1055,7 +1055,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
-                               feed_dict=pool_feed_dict)
+                               feed_dict=pool_feed_dict)'''
 
 
     if hard_pool_ft.get_size() > batch_size:
@@ -1115,7 +1115,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         ind_counter = Counter(all_indices_plus_rand.tolist())
         sorted_keys = np.asarray(sorted(ind_counter.keys()))
         count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
-        count_vec = np.concatenate([count_vec,count_vec[rand_indices]])
+        count_vec = np.concatenate([count_vec,count_vec[rand_indices]*2])
         print('count vec',count_vec.shape)
         print(count_vec)
         new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices],-1),-1)
@@ -1191,7 +1191,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    pbatch_train_count = 0
+    '''pbatch_train_count = 0
 
     # Train only newly added parameters
     for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1215,7 +1215,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
-            pbatch_train_count += 1
+            pbatch_train_count += 1'''
 
 
     # Optimize full network
