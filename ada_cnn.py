@@ -192,7 +192,7 @@ valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
 tf_slice_optimize = {}
 tf_slice_vel_update = {}
 tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
-tf_indices, tf_indices_size = None,None
+tf_indices, tf_indices_size, tf_replicative_factor_vec = None,None,None
 tf_update_hyp_ops = {}
 tf_action_info = None
 tf_weights_this,tf_bias_this = None, None
@@ -534,7 +534,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
     global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
-    global tf_indices, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
+    global tf_indices, tf_indices_size, tf_replicative_factor_vec, tf_weight_mean_ops, tf_retain_id_placeholders
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
@@ -729,7 +729,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='fulcon_input_size')
                 tf_out_size = tf.placeholder(dtype=tf.int32, name='fulcon_output_size')
-
+                tf_replicative_factor_vec = tf.placeholder(dtype=tf.float32, shape=[None], name='tf_replicative_factor')
                 init_tf_prune_cnn_hyperparameters()
 
                 tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(tf_prune_cnn_hyperparameters,cnn_ops)
@@ -751,7 +751,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
                                                                      tf_bias_this, tf_weights_next,
                                                                      tf_wvelocity_this, tf_bvelocity_this,
-                                                                     tf_wvelocity_next)
+                                                                     tf_wvelocity_next,tf_replicative_factor_vec)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
@@ -767,7 +767,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         if tmp_op!='fulcon_out':
                             tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
                                 tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
-                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next
+                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec
                             )
 
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
@@ -906,26 +906,29 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
         rand_indices = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
-        #print('rand_indices',np.asarray(rand_indices).shape)
-        #all_indices_plus_rand = np.stack([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices).ravel()])
-        #print('allindices plus rand',all_indices_plus_rand.shape)
-        #ind_counter = Counter(all_indices_plus_rand.tolist())
-        #count_vec = np.asarray(sorted(ind_counter))
-        #count_vec = np.stack([count_vec,count_vec[rand_indices]])
-        #print('count vec',count_vec.shape)
+        print('rand_indices',np.asarray(rand_indices).shape)
+        all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices).ravel()])
+        print('allindices plus rand',all_indices_plus_rand.shape)
+        ind_counter = Counter(all_indices_plus_rand.tolist())
+        sorted_keys = sorted(ind_counter.keys())
+        count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+        count_vec = np.concatenate([count_vec,count_vec[rand_indices]])
+        print('count vec',count_vec.shape)
+        print(count_vec)
         new_curr_weights = curr_weights[:,:,:,rand_indices]
         new_curr_bias = curr_bias[rand_indices]
 
         if last_conv_id != current_op:
-            #count_vec = np.reshape(count_vec,(1,1,-1,1))
-            #new_next_weights = np.divide(next_weights[:,:,rand_indices,:],count_vec)
-            new_next_weights = next_weights[:, :, rand_indices, :]
+            new_next_weights = next_weights[:,:,rand_indices,:]
+            #new_next_weights = next_weights[:, :, rand_indices, :]
         else:
             low_bound = (rand_indices*final_2d_width*final_2d_width).tolist()
             upper_bound = ((rand_indices+1) * final_2d_width * final_2d_width).tolist()
             low_up_bounds = list(zip(low_bound,upper_bound))
             all_indices = [np.arange(l,u) for (l,u) in low_up_bounds]
             all_indices = np.stack(all_indices).ravel()
+
+            count_vec = np.repeat(count_vec,final_2d_width*final_2d_width)
             new_next_weights = next_weights[all_indices,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
@@ -936,18 +939,18 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                         tf_bias_this: new_curr_bias,
 
                         tf_weights_next: new_next_weights,
-
-                        tf_wvelocity_this: np.random.uniform(low=0.0,high=0.25,size=(
+                        tf_replicative_factor_vec: count_vec,
+                        tf_wvelocity_this: np.zeros(shape=(
                             cnn_hyperparameters[current_op]['weights'][0],
                             cnn_hyperparameters[current_op]['weights'][1],
-                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add)),
-                        tf_bvelocity_this: np.random.uniform(low=0.0, high=0.25, size=(amount_to_add,)),
-                        tf_wvelocity_next: np.random.uniform(low=0.0, high=0.25, size=(
+                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),dtype=np.float32),
+                        tf_bvelocity_this: np.zeros(shape=(amount_to_add,),dtype=np.float32),
+                        tf_wvelocity_next: np.zeros(shape=(
                             cnn_hyperparameters[next_conv_op]['weights'][0],
                             cnn_hyperparameters[next_conv_op]['weights'][1],
-                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])) if last_conv_id != current_op else
-                        np.random.uniform(low=0.0, high=0.25, size=(final_2d_width * final_2d_width * amount_to_add,
-                                        cnn_hyperparameters[first_fc]['out'], 1, 1)),
+                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32) if last_conv_id != current_op else
+                        np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
+                                        cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32),
                     })
 
     # change both weights and biase in the current op
@@ -1106,13 +1109,15 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
         rand_indices = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
-        #print('rand_indices',np.asarray(rand_indices).shape)
-        #all_indices_plus_rand = np.stack([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices).ravel()])
-        #print('allindices plus rand',all_indices_plus_rand.shape)
-        #ind_counter = Counter(all_indices_plus_rand.tolist())
-        #count_vec = np.asarray(sorted(ind_counter))
-        #count_vec = np.stack([count_vec,count_vec[rand_indices]])
-        #print('count vec',count_vec.shape)
+        print('rand_indices',np.asarray(rand_indices).shape)
+        all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices).ravel()])
+        print('allindices plus rand',all_indices_plus_rand.shape)
+        ind_counter = Counter(all_indices_plus_rand.tolist())
+        sorted_keys = np.asarray(sorted(ind_counter.keys()))
+        count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+        count_vec = np.concatenate([count_vec,count_vec[rand_indices]])
+        print('count vec',count_vec.shape)
+        print(count_vec)
         new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices],-1),-1)
         new_curr_bias = curr_bias[rand_indices]
 
@@ -1124,15 +1129,15 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                         tf_action_info: np.asarray([li, 1, ai[1]]),
                         tf_weights_this: new_curr_weights,
                         tf_bias_this: new_curr_bias,
-
+                        tf_replicative_factor_vec: count_vec,
                         tf_weights_next: new_next_weights,
-                        tf_wvelocity_this: np.random.uniform(low=0.0,high=0.25,size=(
+                        tf_wvelocity_this: np.zeros(shape=(
                             cnn_hyperparameters[current_op]['in'],
-                            amount_to_add,1,1)),
-                        tf_bvelocity_this: np.random.uniform(low=0.0, high=0.25, size=(amount_to_add)),
-                        tf_wvelocity_next: np.random.uniform(low=0.0, high=0.25, size=(
+                            amount_to_add,1,1),dtype=np.float32),
+                        tf_bvelocity_this: np.zeros(shape=(amount_to_add),dtype=np.float32),
+                        tf_wvelocity_next: np.zeros(shape=(
                             amount_to_add,
-                            cnn_hyperparameters[next_fulcon_op]['out'],1,1))
+                            cnn_hyperparameters[next_fulcon_op]['out'],1,1),dtype=np.float32)
                     })
 
     # change both weights and biase in the current op
