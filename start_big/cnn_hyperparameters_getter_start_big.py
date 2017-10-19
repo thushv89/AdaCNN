@@ -153,8 +153,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
             filter_min_threshold = 24
             fulcon_min_threshold = 64
-            filter_vector = [24, 24, 24, 0, 48, 48, 48,0]
-            add_amount, remove_amount, add_fulcon_amount = 8, 4, -1
+            filter_vector = [144, 144, 144, 0, 288, 288, 288,0]
+            add_amount, remove_amount, add_fulcon_amount = 16, 12, -1
 
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 10
@@ -180,7 +180,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
             filter_min_threshold = 24
             fulcon_min_threshold = 48
-            filter_vector = [12, 24, 48, 48, 0, 48, 48, 48, 48, 0, 96, 96, 20]
+            filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
             add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
 
 

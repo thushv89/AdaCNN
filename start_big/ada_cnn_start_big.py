@@ -875,7 +875,7 @@ def fintune_with_pool_ft(hard_pool_ft):
                                    feed_dict=pool_feed_dict)
 
 
-def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft):
+def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add):
     '''
     Run the add operation using the given Session
     :param session:
@@ -886,7 +886,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     :return:
     '''
     global current_adaptive_dropout
-    amount_to_add = ai[1]
 
     if current_op != last_conv_id:
         next_conv_op = \
@@ -1115,7 +1114,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                    feed_dict=pool_feed_dict)'''
 
 
-def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft):
+def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add):
     '''
     Run the add operation using the given Session
     :param session:
@@ -1126,7 +1125,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     :return:
     '''
     global current_adaptive_dropout
-    amount_to_add = ai[1]
 
     if current_op != last_conv_id:
         next_fulcon_op = \
@@ -1290,10 +1288,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                                    feed_dict=pool_feed_dict)'''
 
 
-def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
+def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
     global current_adaptive_dropout
-
-    amount_to_rmv = ai[1]
     rm_indices = np.random.randint(low=0, high=cnn_hyperparameters[current_op]['weights'][3], size=(amount_to_rmv))
 
     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op, reuse=True):
@@ -1377,6 +1373,74 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
                                    feed_dict=pool_feed_dict)'''
+
+
+def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
+    global current_adaptive_dropout
+    rm_indices = np.random.randint(low=0, high=cnn_hyperparameters[current_op]['weights'][3], size=(amount_to_rmv))
+
+    with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op, reuse=True):
+        current_op_weights = tf.get_variable(TF_WEIGHTS)
+
+
+    cnn_hyperparameters[current_op]['out'] -= amount_to_rmv
+    if research_parameters['debugging']:
+        logger.debug('\tSize after feature map reduction: %s,%s', current_op,
+                     tf.shape(current_op_weights).eval())
+        assert tf.shape(current_op_weights).eval()[1] == \
+               cnn_hyperparameters[current_op]['out']
+
+    session.run(tf_update_hyp_ops[current_op], feed_dict={
+        tf_in_size: cnn_hyperparameters[current_op]['in'],
+        tf_out_size: cnn_hyperparameters[current_op]['out']
+    })
+
+    next_fulcon_op = \
+        [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'fulcon' in tmp_op][0]
+    assert current_op != next_fulcon_op
+
+    with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + next_fulcon_op, reuse=True):
+        next_fulcon_op_weights = tf.get_variable(TF_WEIGHTS)
+
+    cnn_hyperparameters[next_fulcon_op]['in'] -= amount_to_rmv
+
+    if research_parameters['debugging']:
+        logger.debug('\tSize after feature map reduction: %s,%s', next_fulcon_op,
+                     str(tf.shape(next_fulcon_op).eval()))
+        assert tf.shape(next_fulcon_op_weights).eval()[0] == \
+               cnn_hyperparameters[next_fulcon_op]['in']
+
+    session.run(tf_update_hyp_ops[next_fulcon_op], feed_dict={
+        tf_in_size: cnn_hyperparameters[next_fulcon_op]['in'],
+        tf_out_size: cnn_hyperparameters[next_fulcon_op]['out']
+    })
+
+    current_adaptive_dropout = get_adaptive_dropout()
+    # This is a pretty important step
+    # Unless you run this onces, the sizes of weights do not change
+    _ = session.run([tower_logits], feed_dict=train_feed_dict)
+
+    '''if hard_pool_ft.get_size() > batch_size:
+        pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
+
+        # Train with latter half of the data
+        for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+            if np.random.random() < research_parameters['finetune_rate']:
+                pool_feed_dict = {}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+                for gpu_id in range(num_gpus):
+                    pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
+                                                                                   pool_id + gpu_id + 1) * batch_size,
+                                  :, :, :]
+                    pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
+                                                                                    pool_id + gpu_id + 1) * batch_size,
+                                    :]
+                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
+                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
+
+                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                   feed_dict=pool_feed_dict)'''
+
 
 def run_actual_finetune_operation(hard_pool_ft,rate):
     '''
@@ -2790,15 +2854,15 @@ if __name__ == '__main__':
 
                             if ai>0.0:
                                 if 'conv' in current_op:
-                                    run_actual_add_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai)
                                 elif 'fulcon' in current_op:
-                                    run_actual_add_operation_for_fulcon(session,current_op,li, last_conv_id, hard_pool_ft)
+                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai)
 
                             elif ai <0.0:
                                 if 'conv' in current_op:
-                                    run_actual_remove_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                                    run_actual_remove_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai)
                                 elif 'fulcon' in current_op:
-                                    raise NotImplementedError
+                                    run_actual_remove_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id,hard_pool_ft,ai)
 
                         if finetune_action>0.0:
                             # pooling takes place here

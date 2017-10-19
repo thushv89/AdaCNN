@@ -654,7 +654,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         state.extend(data['filter_counts_list'])
         state.extend(data['binned_data_dist'])
 
-        self.verbose_logger.info('Data for (Depth Index,DistMSE,Filter Count) %s\n' % str(state))
+        self.verbose_logger.info('State to infer action stochastically')
+        self.verbose_logger.info('\t%s',state)
 
         self.verbose_logger.debug('Epsilons: %.3f\n', self.epsilon)
         self.verbose_logger.info('Trial phase: %.3f\n', self.trial_phase)
@@ -663,8 +664,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         s_i = np.asarray(self.phi(state)).reshape(1, -1)
         cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
-
-        cont_actions_all_layers += self.exploration_noise_OU(cont_actions_all_layers,0.0,0.3,1.0)
+        self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
+        exp_noise = self.exploration_noise_OU(cont_actions_all_layers, 0.0, 0.2, 0.5)
+        self.verbose_logger.debug('Adding exploration noise: %s',exp_noise)
+        cont_actions_all_layers += exp_noise
 
         valid_action = self.get_new_valid_action_when_stochastic(
              cont_actions_all_layers, data
@@ -715,21 +718,24 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             # For Convolution layers
             if a_idx < len(self.conv_ids):
                 layer_id_for_action = self.conv_ids[a_idx]
-
+                self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (conv)',a_idx,layer_id_for_action)
                 next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + ceil(a * self.add_amount)
+                self.verbose_logger.debug('\tNext layer complexity: %d (min: %d), (max: %d)',next_layer_complexity, self.min_filter_threshold, self.filter_bound_vec[layer_id_for_action])
 
                 if next_layer_complexity < self.min_filter_threshold or next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
+                    self.verbose_logger.debug('\tAction Invalid')
                     valid_action[a_idx] = 0.0
 
             # For fully-connected layers
             elif a_idx < len(self.conv_ids) + len(self.fulcon_ids):
                 layer_id_for_action = self.fulcon_ids[a_idx - len(self.conv_ids)]
-
+                self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (fulcon)', a_idx,
+                                          layer_id_for_action)
                 next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + ceil(a * self.add_fulcon_amount)
-
+                self.verbose_logger.debug('\tNext layer complexity: %d', next_layer_complexity)
                 if next_layer_complexity < self.min_fulcon_threshold or \
                                 next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
-
+                    self.verbose_logger.debug('\tAction Invalid')
                     valid_action[a_idx] = 0.0
             # For finetune action there is no invalid state
             else:
