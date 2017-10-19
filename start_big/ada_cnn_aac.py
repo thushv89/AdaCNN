@@ -156,7 +156,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.learning_rate = params['learning_rate']  # 0.005
 
         # Initialize both actor and critic networks
-        self.tf_init_actor_and_critic()
+        all_variables = self.tf_init_actor_and_critic()
 
         # Input and output placeholders
         self.tf_state_input = tf.placeholder(tf.float32, shape=(None, self.input_size), name='InputDataset')
@@ -178,9 +178,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_actor_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_ACTOR_SCOPE)
         self.tf_critic_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_CRITIC_SCOPE)
 
-        all_variables = []
-        for w, b, wt, bt in zip(self.tf_weights, self.tf_bias, self.tf_target_weights, self.tf_target_biase):
-            all_variables.extend([w, b, wt, bt])
         init_op = tf.variables_initializer(all_variables)
         _ = self.session.run(init_op)
 
@@ -268,35 +265,39 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         Initialize the variables for neural network used for q learning
         :return:
         '''
+
+        all_vars = []
         with tf.variable_scope(constants.TF_ACTOR_SCOPE):
             # Defining actor network
             for li in range(len(self.actor_layer_info) - 1):
                 with tf.variable_scope(self.layer_scopes[li]):
-                    tf.get_variable(initializer=tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
+                    all_vars.append(tf.get_variable(initializer=tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
                                                                            stddev=2. / self.actor_layer_info[li]),
-                                                       name=constants.TF_WEIGHTS)
-                    tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]),
-                                    name=constants.TF_BIAS)
+                                                       name=constants.TF_WEIGHTS))
+                    all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]),
+                                    name=constants.TF_BIAS))
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
 
-                        tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
-                                                        dtype=tf.float32),name=constants.TF_WEIGHTS)
-                        tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]), name=constants.TF_BIAS)
+                        all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
+                                                        dtype=tf.float32),name=constants.TF_WEIGHTS))
+                        all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]), name=constants.TF_BIAS))
 
         with tf.variable_scope(constants.TF_CRITIC_SCOPE):
             # Defining critic network
             for li in range(len(self.critic_layer_info) - 1):
                 with tf.variable_scope(self.layer_scopes[li]):
-                    tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                    all_vars.append(tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
                                                                            stddev=2. / self.actor_layer_info[li]),
-                                                       name=constants.TF_WEIGHTS)
-                    tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
+                                                       name=constants.TF_WEIGHTS))
+                    all_vars.append(tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS))
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
-                        tf.get_variable(initializer=tf.zeros(shape=[self.critic_layer_info[li], self.critic_layer_info[li + 1]],
-                                                        dtype=tf.float32),name=constants.TF_WEIGHTS)
-                        tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
+                        all_vars.append(tf.get_variable(initializer=tf.zeros(shape=[self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                                        dtype=tf.float32),name=constants.TF_WEIGHTS))
+                        all_vars.append(tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS))
+
+        return all_vars
 
 
 
@@ -382,17 +383,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         mu_s = self.tf_calc_actor_output(self.tf_state_input)
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
-        q_grad = tf.gradients(ys=self.tf_calc_critic_output(self.tf_state_input, self.tf_action_input),
-                                   xs= mu_s)
-        print(q_grad)
-        negative_grads = []
-        for g,v in q_grad:
-            negative_grads.append((-g,v))
+
+
         # grad_ys acts as a way of chaining multiple gradients
         # more info: https://stackoverflow.com/questions/42399401/use-of-grads-ys-parameter-in-tf-gradients-tensorflow
         mu_grad = tf.gradients(ys= mu_s,
                      xs= theta_mu,
-                     grad_ys = negative_grads)
+                     grad_ys = -self.tf_calc_actor_output(self.tf_state_input))
         grads = zip(mu_grad,theta_mu)
 
         grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
@@ -603,7 +600,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             for scope in self.layer_scopes:
                 with tf.variable_scope(scope, reuse=True):
                     w_dash,b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                    with tf.variables_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
                         w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
                         target_assign_ops.append(tf.assign(w, self.TAU * w + (1-self.TAU)* w_dash))
                         target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
