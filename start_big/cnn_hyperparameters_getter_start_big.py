@@ -149,6 +149,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#C,3,1,288#C,3,1,288#C,3,1,288" \
                          "#PG,3,2,0#Terminate,0,0,0"
 
+            filter_min_threshold = 24
+            fulcon_min_threshold = 64
             filter_vector = [24, 24, 24, 0, 48, 48, 48,0]
             add_amount, remove_amount, add_fulcon_amount = 8, 4, -1
 
@@ -174,6 +176,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#P,2,2,0#C,3,1,256#C,3,1,256#C,3,1,256#C,3,1,256" \
                          "#PG,2,2,0#FC,512,0,0#FC,512,0,0#FC,100,0,0#Terminate,0,0,0"
 
+            filter_min_threshold = 24
+            fulcon_min_threshold = 48
             filter_vector = [12, 24, 48, 48, 0, 48, 48, 48, 48, 0, 96, 96, 20]
             add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
 
@@ -207,8 +211,6 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
-
-
 
     elif dataset_name=='svhn-10':
         pool_size = model_hyperparameters['batch_size'] * 10 * num_labels

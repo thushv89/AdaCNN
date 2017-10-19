@@ -19,7 +19,7 @@ import queue
 from multiprocessing import Pool as MPPool
 import copy
 import constants
-import cnn_hyperparameters_getter
+import cnn_hyperparameters_getter_start_big as cnn_hyperparameters_getter
 import cnn_optimizer
 import cnn_intializer
 import ada_cnn_adapter
@@ -146,8 +146,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     # Tasks
     n_tasks = model_hyperparameters['n_tasks']
 
-    prune_min_bound = model_hyperparameters['prune_min_bound']
-    prune_max_bound = model_hyperparameters['prune_max_bound']
+
 
 cnn_ops, cnn_hyperparameters = None, None
 
@@ -191,7 +190,7 @@ valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
 tf_slice_optimize = {}
 tf_slice_vel_update = {}
 tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
-tf_indices, tf_indices_size = None,None
+tf_indices, tf_replicative_factor_vec, tf_indices_size = None,None,None
 tf_update_hyp_ops = {}
 tf_action_info = None
 tf_weights_this,tf_bias_this = None, None
@@ -533,7 +532,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
     global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
-    global tf_indices, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
+    global tf_indices, tf_replicative_factor_vec, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
@@ -728,6 +727,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='fulcon_input_size')
                 tf_out_size = tf.placeholder(dtype=tf.int32, name='fulcon_output_size')
+                tf_replicative_factor_vec = tf.placeholder(dtype=tf.float32, shape=[None], name='tf_replicative_factor')
 
                 init_tf_prune_cnn_hyperparameters()
 
@@ -750,7 +750,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
                                                                      tf_bias_this, tf_weights_next,
                                                                      tf_wvelocity_this, tf_bvelocity_this,
-                                                                     tf_wvelocity_next)
+                                                                     tf_wvelocity_next,tf_replicative_factor_vec)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
@@ -766,7 +766,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         if tmp_op!='fulcon_out':
                             tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
                                 tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
-                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next
+                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec
                             )
 
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
@@ -892,38 +892,100 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
 
+    with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
+
+        with tf.variable_scope(current_op,reuse=True):
+            curr_weights = tf.get_variable(TF_WEIGHTS).eval()
+            curr_bias = tf.get_variable(TF_BIAS).eval()
+        if current_op != last_conv_id:
+            with tf.variable_scope(next_conv_op, reuse=True):
+                next_weights = tf.get_variable(TF_WEIGHTS).eval()
+        else:
+            with tf.variable_scope(first_fc, reuse=True):
+                next_weights = tf.get_variable(TF_WEIGHTS).eval()
+
+        #Net2Net type initialization
+        if np.random.random()<0.5:
+            print('Net2Net Initialization')
+            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
+            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
+
+            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+
+            ind_counter = Counter(all_indices_plus_rand.tolist())
+            sorted_keys = sorted(ind_counter.keys())
+            count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+
+            print('count vec',count_vec.shape)
+            print(count_vec)
+            new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
+            curr_binomial = np.random.uniform(low=-0.001, high=0.001, size=new_curr_weights.shape).astype(np.float32)
+            new_curr_weights *= curr_binomial
+            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+
+            if last_conv_id != current_op:
+                new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
+                next_binomial = np.random.uniform(low=-0.001, high=0.001,size=new_next_weights.shape).astype(np.float32)
+                new_next_weights *= next_binomial
+                #new_next_weights = next_weights[:, :, rand_indices, :]
+            else:
+                low_bound_1 = (rand_indices_1*final_2d_width*final_2d_width).tolist()
+                upper_bound_1 = ((rand_indices_1+1) * final_2d_width * final_2d_width).tolist()
+                low_up_bounds_1 = list(zip(low_bound_1,upper_bound_1))
+                all_indices_1 = [np.arange(l,u) for (l,u) in low_up_bounds_1]
+                all_indices_1 = np.stack(all_indices_1).ravel()
+
+                low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
+                upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
+                low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
+                all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
+                all_indices_2 = np.stack(all_indices_2).ravel()
+
+                count_vec = np.repeat(count_vec, final_2d_width * final_2d_width)
+
+                new_next_weights = (next_weights[all_indices_1,:] + next_weights[all_indices_2,:])/2.0
+                new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+
+        # Random initialization
+        else:
+            print('Random Initialization')
+            curr_weight_shape = curr_weights.shape
+            next_weights_shape = next_weights.shape
+            if last_conv_id != current_op:
+                new_curr_weights = np.random.uniform(low=-0.001, high=0.001, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
+                new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
+                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                                                     size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
+                count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
+            else:
+                new_curr_weights = np.random.uniform(low=-0.001, high=0.001,
+                                                     size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
+                                                     )
+                new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
+                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                                                     size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
+                count_vec = np.ones((curr_weight_shape[3] + amount_to_add)*final_2d_width*final_2d_width, dtype=np.float32)
+
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
-                        tf_weights_this: np.random.normal(scale=0.001, size=(
-                            cnn_hyperparameters[current_op]['weights'][0],
-                            cnn_hyperparameters[current_op]['weights'][1],
-                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add)),
-                        tf_bias_this: np.random.normal(scale=0.001, size=(amount_to_add)),
+                        tf_weights_this: new_curr_weights,
+                        tf_bias_this: new_curr_bias,
 
-                        tf_weights_next: np.random.normal(scale=0.001, size=(
-                            cnn_hyperparameters[next_conv_op]['weights'][0],
-                            cnn_hyperparameters[next_conv_op]['weights'][1],
-                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3])
-                                                          ) if last_conv_id != current_op else
-                        np.random.normal(scale=0.001, size=(
-                            amount_to_add * final_2d_width * final_2d_width,
-                            cnn_hyperparameters[first_fc]['out'], 1, 1)),
-
+                        tf_weights_next: new_next_weights,
+                        tf_replicative_factor_vec: count_vec,
                         tf_wvelocity_this: np.zeros(shape=(
                             cnn_hyperparameters[current_op]['weights'][0],
                             cnn_hyperparameters[current_op]['weights'][1],
-                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),
-                            dtype=np.float32),
-                        tf_bvelocity_this: np.zeros(shape=(amount_to_add,), dtype=np.float32),
+                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),dtype=np.float32),
+                        tf_bvelocity_this: np.zeros(shape=(amount_to_add,),dtype=np.float32),
                         tf_wvelocity_next: np.zeros(shape=(
                             cnn_hyperparameters[next_conv_op]['weights'][0],
                             cnn_hyperparameters[next_conv_op]['weights'][1],
-                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),
-                            dtype=np.float32) if last_conv_id != current_op else
+                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32) if last_conv_id != current_op else
                         np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
-                                        cnn_hyperparameters[first_fc]['out'], 1, 1),
-                                 dtype=np.float32),
+                                        cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32),
                     })
 
     # change both weights and biase in the current op
@@ -1030,8 +1092,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
                                feed_dict=pool_feed_dict)
 
-
-    if hard_pool_ft.get_size() > batch_size:
+    '''if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
         # Train with hard_pool_ft
@@ -1051,7 +1112,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                                   feed_dict=pool_feed_dict)'''
 
 
 def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft):
@@ -1071,26 +1132,60 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_fulcon_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:]][0]
 
+
+    with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
+
+        with tf.variable_scope(current_op,reuse=True):
+            curr_weights = tf.get_variable(TF_WEIGHTS).eval()
+            curr_bias = tf.get_variable(TF_BIAS).eval()
+
+        with tf.variable_scope(next_fulcon_op, reuse=True):
+            next_weights = tf.get_variable(TF_WEIGHTS).eval()
+
+        # Net2Net Initialization
+        if np.random.random()<0.5:
+            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
+            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
+
+            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            print('allindices plus rand',all_indices_plus_rand.shape)
+            ind_counter = Counter(all_indices_plus_rand.tolist())
+            sorted_keys = np.asarray(sorted(ind_counter.keys()))
+            count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            print('count vec',count_vec.shape)
+            print(count_vec)
+            new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
+            new_curr_binomial = np.random.uniform(low=-0.001, high=0.001,size=new_curr_weights.shape)
+            new_curr_weights *= new_curr_binomial
+            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+
+            new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
+            new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+            new_next_binomial = np.random.uniform(low=-0.001, high=0.001, size=new_next_weights.shape)
+            new_next_weights *= new_next_binomial
+        else:
+            curr_weight_shape = curr_weights.shape
+            next_weights_shape = next_weights.shape
+            new_curr_weights = np.random.uniform(low=-0.001,high=0.01,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_bias = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add))
+            new_next_weights = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add,next_weights_shape[1],1,1))
+            count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
+
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
-                        tf_weights_this: np.random.normal(scale=0.001, size=(
-                            cnn_hyperparameters[current_op]['in'],
-                            amount_to_add,1,1)),
-                        tf_bias_this: np.random.normal(scale=0.001, size=(amount_to_add)),
-
-                        tf_weights_next: np.random.normal(scale=0.001, size=(
-                            amount_to_add, cnn_hyperparameters[next_fulcon_op]['out'], 1, 1)
-                                                          ),
+                        tf_weights_this: new_curr_weights,
+                        tf_bias_this: new_curr_bias,
+                        tf_replicative_factor_vec: count_vec,
+                        tf_weights_next: new_next_weights,
                         tf_wvelocity_this: np.zeros(shape=(
                             cnn_hyperparameters[current_op]['in'],
-                            amount_to_add,1,1),
-                            dtype=np.float32),
-                        tf_bvelocity_this: np.zeros(shape=(amount_to_add), dtype=np.float32),
+                            amount_to_add,1,1),dtype=np.float32),
+                        tf_bvelocity_this: np.zeros(shape=(amount_to_add),dtype=np.float32),
                         tf_wvelocity_next: np.zeros(shape=(
                             amount_to_add,
-                            cnn_hyperparameters[next_fulcon_op]['out'],1,1),
-                            dtype=np.float32)
+                            cnn_hyperparameters[next_fulcon_op]['out'],1,1),dtype=np.float32)
                     })
 
     # change both weights and biase in the current op
@@ -1172,7 +1267,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
 
     # Optimize full network
-    if hard_pool_ft.get_size() > batch_size:
+    '''if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
         # Train with latter half of the data
@@ -1192,39 +1287,18 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                                   feed_dict=pool_feed_dict)'''
 
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
     global current_adaptive_dropout
-    _, rm_indices = session.run(tf_rm_filters_ops[current_op],
-                                feed_dict={
-                                    tf_action_info: np.asarray([li, 0, ai[1]]),
-                                    tf_running_activations: rolling_ativation_means[current_op]
-                                })
-    rm_indices = rm_indices.flatten()
+
     amount_to_rmv = ai[1]
+    rm_indices = np.random.randint(low=0, high=cnn_hyperparameters[current_op]['weights'][3], size=(amount_to_rmv))
 
     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op, reuse=True):
         current_op_weights = tf.get_variable(TF_WEIGHTS)
 
-    if research_parameters['remove_filters_by'] == 'Activation':
-        logger.debug('\tRemoving filters for op %s', current_op)
-        logger.debug('\t\t\tIndices: %s', rm_indices[:10])
-
-    elif research_parameters['remove_filters_by'] == 'Distance':
-        logger.debug('\tRemoving filters for op %s', current_op)
-
-        logger.debug('\t\tSimilarity summary')
-        logger.debug('\t\t\tIndices: %s', rm_indices[:10])
-
-        logger.debug('\t\tSize of indices to remove: %s/%d', rm_indices.size,
-                     cnn_hyperparameters[current_op]['weights'][3])
-        indices_of_filters_keep = list(
-            set(np.arange(cnn_hyperparameters[current_op]['weights'][3])) - set(
-                rm_indices.tolist()))
-        logger.debug('\t\tSize of indices to keep: %s/%d', len(indices_of_filters_keep),
-                     cnn_hyperparameters[current_op]['weights'][3])
 
     cnn_hyperparameters[current_op]['weights'][3] -= amount_to_rmv
     if research_parameters['debugging']:
@@ -1283,7 +1357,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
     # Unless you run this onces, the sizes of weights do not change
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
-    if hard_pool_ft.get_size() > batch_size:
+    '''if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
         # Train with latter half of the data
@@ -1302,9 +1376,9 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                                   feed_dict=pool_feed_dict)'''
 
-def run_actual_finetune_operation(hard_pool_ft):
+def run_actual_finetune_operation(hard_pool_ft,rate):
     '''
     Run the finetune opeartion in the default session
     :param hard_pool_ft:
@@ -1319,7 +1393,7 @@ def run_actual_finetune_operation(hard_pool_ft):
         # Train with latter half of the data
 
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
+            if np.random.random() < rate:
                 #print('fintuning network (pool_id: ',pool_id,')')
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
@@ -1905,7 +1979,6 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
                       (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward,type)
 
 
-
 def get_batch_of_prune_reward_exp(batch_size):
     global prune_reward_experience,n_tasks
 
@@ -1936,12 +2009,15 @@ if __name__ == '__main__':
     noise_image_rate = None
     adapt_randomly = False
     use_fse_capacity = False
+    inter_op_threads, intra_op_threads = 0, 0
+
     try:
         opts, args = getopt.getopt(
-            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'allow_growth=',
-                               'dataset_type=', 'dataset_behavior=',
-                               'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
-                               'all_labels_included=','noise_labels=','noise_images=','adapt_randomly=','use_fse_capacity='])
+            sys.argv[1:], "",
+            ["output_dir=", "num_gpus=", "memory=", "intra_op_threads=", "inter_op_threads=", 'allow_growth=',
+             'dataset_type=', 'dataset_behavior=',
+             'adapt_structure=', 'rigid_pooling=', 'rigid_pool_type=',
+             'all_labels_included=', 'noise_labels=', 'noise_images=', 'adapt_randomly=', 'use_fse_capacity='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory=')
@@ -1974,8 +2050,12 @@ if __name__ == '__main__':
                 noise_image_rate = float(arg)
             if opt == '--adapt_randomly':
                 adapt_randomly = bool(int(arg))
-            if opt=='--use_fse_capacity':
+            if opt == '--use_fse_capacity':
                 use_fse_capacity = bool(int(arg))
+            if opt == '--intra_op_threads':
+                intra_op_threads = int(arg)
+            if opt == '--inter_op_threads':
+                inter_op_threads = int(arg)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -2231,7 +2311,6 @@ if __name__ == '__main__':
     running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
     binned_data_dist_decay = 0.5
 
-    current_action_type = growth_adapter.get_naivetrain_action_type() if adapt_structure else None
 
     for epoch in range(n_epochs):
 
@@ -2399,12 +2478,11 @@ if __name__ == '__main__':
 
                     # =========================================================
                     # # Training Phase (Optimization)
-                    if (not adapt_structure) or current_action_type != adapter.get_donothing_action_type():
-                        for _ in range(iterations_per_batch):
-                            #print('training on current batch (action type: ', current_action_type, ')')
-                            _, _ = session.run(
-                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                            )
+                    for _ in range(iterations_per_batch):
+                        #print('training on current batch (action type: ', current_action_type, ')')
+                        _, _ = session.run(
+                            [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                        )
 
                 t1_train = time.clock()
 
@@ -2633,7 +2711,7 @@ if __name__ == '__main__':
 
                             # ================================================================================
                             # Actual updating of the policy
-                            adapter.update_policy({'prev_state': current_state, 'prev_action': current_action,
+                            adapter.train_actor_critic({'prev_state': current_state, 'prev_action': current_action,
                                                    'curr_state': next_state,
                                                    'next_accuracy': None,
                                                    'prev_accuracy': None,
@@ -2642,9 +2720,8 @@ if __name__ == '__main__':
                                                    'max_pool_accuracy': max_pool_accuracy,
                                                    'unseen_valid_accuracy': valid_acc_queue[-1],
                                                    'prev_unseen_valid_accuracy': valid_acc_queue[0],
-                                                   'invalid_actions': curr_invalid_actions,
                                                    'batch_id': global_batch_id,
-                                                   'layer_index': affected_layer_index}, True)
+                                                   'layer_index': affected_layer_index})
                             # ===================================================================================
 
                             cnn_structure_logger.info(
@@ -2680,78 +2757,64 @@ if __name__ == '__main__':
                         # Epoch 0: Randomly grow the network
                         # Epoch 1: Deterministically grow the network
                         if not adapt_randomly:
-                            current_state, current_action, curr_invalid_actions,curr_adaptation_status = get_continuous_adaptation_action_in_different_epochs(
-                                adapter, data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list, 'binned_data_dist':running_binned_data_dist_vector.tolist()}, epoch=epoch,
-                                global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase, n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
-                                eps=start_eps, adaptation_period=adapt_period)
+                            data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
+                                    'binned_data_dist': running_binned_data_dist_vector.tolist()}
+                            if np.random.random()<start_eps:
+                                current_state, current_action = adapter.sample_action_stochastic_from_actor(data)
+                            else:
+                                current_state, current_action = adapter.sample_action_deterministic_from_actor(data)
                         else:
-                            current_state, current_action, curr_invalid_actions, curr_adaptation_status = get_continuous_adaptation_action_randomly(
-                                adapter, data={'filter_counts': filter_dict, 'filter_counts_list': filter_list,
-                                               'binned_data_dist': running_binned_data_dist_vector.tolist()},
-                                epoch=epoch,
-                                global_trial_phase=global_trial_phase, local_trial_phase=local_trial_phase,
-                                n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
-                                eps=start_eps, adaptation_period=adapt_period)
+                            raise NotImplementedError
 
-                        current_action_type = adapter.get_action_type_with_action_list(current_action)
+                        layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
+
                         # reset the binned data distribution
                         running_binned_data_dist_vector = np.zeros(
                             (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
 
-                        for li, la in enumerate(current_action):
-                            # pooling and fulcon layers
-                            if la is None or la[0] == 'do_nothing':
-                                continue
+                        for li, la in enumerate(layer_specific_actions):
 
+                            layer_id_for_action = None
+                            if li < len(convolution_op_ids):
+                                layer_id_for_action = convolution_op_ids[li]
+                            elif li < len(convolution_op_ids+fulcon_op_ids):
+                                layer_id_for_action = fulcon_op_ids[li-len(convolution_op_ids)]
                             # where all magic happens (adding and removing filters)
                             si, ai = current_state, la
-                            current_op = cnn_ops[li]
+                            current_op = cnn_ops[layer_id_for_action]
 
                             for tmp_op in reversed(cnn_ops):
                                 if 'conv' in tmp_op:
                                     last_conv_id = tmp_op
                                     break
 
-                            if ai[0] == 'add':
+                            if ai>0.0:
                                 if 'conv' in current_op:
                                     run_actual_add_operation(session,current_op,li,last_conv_id,hard_pool_ft)
                                 elif 'fulcon' in current_op:
                                     run_actual_add_operation_for_fulcon(session,current_op,li, last_conv_id, hard_pool_ft)
 
-                            elif 'conv' in current_op and ai[0] == 'remove':
+                            elif ai <0.0:
                                 if 'conv' in current_op:
                                     run_actual_remove_operation(session,current_op,li,last_conv_id,hard_pool_ft)
                                 elif 'fulcon' in current_op:
                                     raise NotImplementedError
 
-                            elif 'conv' in current_op and ai[0] == 'finetune':
-                                # pooling takes place here
-                                run_actual_finetune_operation(hard_pool_ft)
-                                break
+                        if finetune_action>0.0:
+                            # pooling takes place here
+                            run_actual_finetune_operation(hard_pool_ft,finetune_action)
 
-                        # =============================================================
 
-                    t1 = time.clock()
-                    op_count = len(tf.get_default_graph().get_operations())
-                    var_count = len(tf.global_variables()) + len(tf.local_variables()) + len(tf.model_variables())
-                    perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
-                                     (t1_train - t0_train) / num_gpus, op_count, var_count)
+                # =============================================================
 
-            # We prune netowork at the end of each task
-            if adapt_structure and curr_adaptation_status:
-                # always prune the structure randomly if adapt-random
-                if adapt_randomly or epoch<1:
-                    prune_the_network(prune_reward_reg, task,'random',prune_logger)
-                else:
-                    if np.random.random()<0.5:
-                        logger.info('Training the Prune Reward Regressor')
-                        in_d, out_d = get_batch_of_prune_reward_exp(5)
-                        prune_reward_reg.train_mlp_with_data(in_d, out_d)
-
-                    if np.random.random()<0.5*(0.75**(epoch)):
-                        prune_the_network(prune_reward_reg, task, 'random',prune_logger)
-                    else:
-                        prune_the_network(prune_reward_reg, task, 'regress', prune_logger)
+                # ==============================================================
+                # Logging time / tensorflow information
+                t1 = time.clock()
+                op_count = len(tf.get_default_graph().get_operations())
+                var_count = len(tf.global_variables()) + len(tf.local_variables()) + len(tf.model_variables())
+                perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
+                                 (t1_train - t0_train) / num_gpus, op_count, var_count)
+                # ================================================================
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs

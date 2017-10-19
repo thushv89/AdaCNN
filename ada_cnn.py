@@ -905,32 +905,68 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             with tf.variable_scope(first_fc, reuse=True):
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
-        rand_indices = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
-        print('rand_indices',np.asarray(rand_indices).shape)
-        all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices).ravel()])
-        print('allindices plus rand',all_indices_plus_rand.shape)
-        ind_counter = Counter(all_indices_plus_rand.tolist())
-        sorted_keys = sorted(ind_counter.keys())
-        count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-        count_vec = np.concatenate([count_vec,count_vec[rand_indices]*2])
-        print('count vec',count_vec.shape)
-        print(count_vec)
-        new_curr_weights = curr_weights[:,:,:,rand_indices]
-        new_curr_bias = curr_bias[rand_indices]
+        #Net2Net type initialization
+        if np.random.random()<0.0:
+            print('Net2Net Initialization')
+            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
+            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
-        if last_conv_id != current_op:
-            new_next_weights = next_weights[:,:,rand_indices,:]
-            #new_next_weights = next_weights[:, :, rand_indices, :]
+            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+
+            ind_counter = Counter(all_indices_plus_rand.tolist())
+            sorted_keys = sorted(ind_counter.keys())
+            count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+
+            print('count vec',count_vec.shape)
+            print(count_vec)
+            new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
+            curr_binomial = np.random.uniform(low=-0.001, high=0.001, size=new_curr_weights.shape).astype(np.float32)
+            new_curr_weights *= curr_binomial
+            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+
+            if last_conv_id != current_op:
+                new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
+                next_binomial = np.random.uniform(low=-0.001, high=0.001,size=new_next_weights.shape).astype(np.float32)
+                new_next_weights *= next_binomial
+                #new_next_weights = next_weights[:, :, rand_indices, :]
+            else:
+                low_bound_1 = (rand_indices_1*final_2d_width*final_2d_width).tolist()
+                upper_bound_1 = ((rand_indices_1+1) * final_2d_width * final_2d_width).tolist()
+                low_up_bounds_1 = list(zip(low_bound_1,upper_bound_1))
+                all_indices_1 = [np.arange(l,u) for (l,u) in low_up_bounds_1]
+                all_indices_1 = np.stack(all_indices_1).ravel()
+
+                low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
+                upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
+                low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
+                all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
+                all_indices_2 = np.stack(all_indices_2).ravel()
+
+                count_vec = np.repeat(count_vec, final_2d_width * final_2d_width)
+
+                new_next_weights = (next_weights[all_indices_1,:] + next_weights[all_indices_2,:])/2.0
+                new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+
+        # Random initialization
         else:
-            low_bound = (rand_indices*final_2d_width*final_2d_width).tolist()
-            upper_bound = ((rand_indices+1) * final_2d_width * final_2d_width).tolist()
-            low_up_bounds = list(zip(low_bound,upper_bound))
-            all_indices = [np.arange(l,u) for (l,u) in low_up_bounds]
-            all_indices = np.stack(all_indices).ravel()
-
-            count_vec = np.repeat(count_vec,final_2d_width*final_2d_width)
-            new_next_weights = next_weights[all_indices,:]
-            new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+            print('Random Initialization')
+            curr_weight_shape = curr_weights.shape
+            next_weights_shape = next_weights.shape
+            if last_conv_id != current_op:
+                new_curr_weights = np.random.uniform(low=-0.001, high=0.001, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
+                new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
+                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                                                     size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
+                count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
+            else:
+                new_curr_weights = np.random.uniform(low=-0.001, high=0.001,
+                                                     size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
+                                                     )
+                new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
+                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                                                     size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
+                count_vec = np.ones((curr_weight_shape[3] + amount_to_add)*final_2d_width*final_2d_width, dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
@@ -1032,7 +1068,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    '''pbatch_train_count = 0
+    pbatch_train_count = 0
 
     # Train only with half of the batch
     for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1055,8 +1091,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
-                               feed_dict=pool_feed_dict)'''
-
+                               feed_dict=pool_feed_dict)
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
@@ -1108,21 +1143,35 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         with tf.variable_scope(next_fulcon_op, reuse=True):
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
-        rand_indices = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
-        print('rand_indices',np.asarray(rand_indices).shape)
-        all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices).ravel()])
-        print('allindices plus rand',all_indices_plus_rand.shape)
-        ind_counter = Counter(all_indices_plus_rand.tolist())
-        sorted_keys = np.asarray(sorted(ind_counter.keys()))
-        count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
-        count_vec = np.concatenate([count_vec,count_vec[rand_indices]*2])
-        print('count vec',count_vec.shape)
-        print(count_vec)
-        new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices],-1),-1)
-        new_curr_bias = curr_bias[rand_indices]
+        # Net2Net Initialization
+        if np.random.random()<0.0:
+            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
+            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
-        new_next_weights = next_weights[rand_indices,:]
-        new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            print('allindices plus rand',all_indices_plus_rand.shape)
+            ind_counter = Counter(all_indices_plus_rand.tolist())
+            sorted_keys = np.asarray(sorted(ind_counter.keys()))
+            count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            print('count vec',count_vec.shape)
+            print(count_vec)
+            new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
+            new_curr_binomial = np.random.uniform(low=-0.001, high=0.001,size=new_curr_weights.shape)
+            new_curr_weights *= new_curr_binomial
+            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+
+            new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
+            new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+            new_next_binomial = np.random.uniform(low=-0.001, high=0.001, size=new_next_weights.shape)
+            new_next_weights *= new_next_binomial
+        else:
+            curr_weight_shape = curr_weights.shape
+            next_weights_shape = next_weights.shape
+            new_curr_weights = np.random.uniform(low=-0.001,high=0.01,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_bias = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add))
+            new_next_weights = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add,next_weights_shape[1],1,1))
+            count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
@@ -1191,7 +1240,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    '''pbatch_train_count = 0
+    pbatch_train_count = 0
 
     # Train only newly added parameters
     for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1215,7 +1264,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
-            pbatch_train_count += 1'''
+            pbatch_train_count += 1
 
 
     # Optimize full network
@@ -1983,9 +2032,11 @@ if __name__ == '__main__':
     noise_image_rate = None
     adapt_randomly = False
     use_fse_capacity = False
+    inter_op_threads, intra_op_threads = 0,0
+
     try:
         opts, args = getopt.getopt(
-            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", 'allow_growth=',
+            sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", "intra_op_threads=", "inter_op_threads=",'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
                                'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
                                'all_labels_included=','noise_labels=','noise_images=','adapt_randomly=','use_fse_capacity='])
@@ -2023,6 +2074,10 @@ if __name__ == '__main__':
                 adapt_randomly = bool(int(arg))
             if opt=='--use_fse_capacity':
                 use_fse_capacity = bool(int(arg))
+            if opt == '--intra_op_threads':
+                intra_op_threads = int(arg)
+            if opt=='--inter_op_threads':
+                inter_op_threads = int(arg)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -2102,6 +2157,8 @@ if __name__ == '__main__':
     config = tf.ConfigProto()
     config.allow_soft_placement = True
     config.log_device_placement = False
+    config.intra_op_parallelism_threads = intra_op_threads
+    config.inter_op_parallelism_threads = inter_op_threads
     if mem_frac is not None:
         config.gpu_options.per_process_gpu_memory_fraction = mem_frac
     else:
