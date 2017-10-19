@@ -21,7 +21,9 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level)
         'use_custom_momentum_opt': True, # Use a custom implemented momentum (Tensorflow builtin optimizer doesnot support variable size tensors
         'remove_filters_by': 'Activation', # The criteria for removing filters (AdaCNN) set of minimum maximum mean activations
         'optimize_end_to_end': True, # if true functions such as add and finetune will optimize the network from starting layer to end (fulcon_out)
-        'loss_diff_threshold': 0.02, # This is used to check if the loss reduction has stabalized
+        # This was 0.02 =========================================================================
+        'loss_diff_threshold': 0.5, # This is used to check if the loss reduction has stabalized
+        # ========================================================================================
         'start_adapting_after': 500, # Acts as a warming up phase, adapting from the very begining can make CNNs unstable
         'debugging': True if logging_level == logging.DEBUG else False,
         'stop_training_at': 11000,  # If needed to truncate training earlier
@@ -145,8 +147,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                              "#C,3,1,136#C,3,1,136#C,3,1,136" \
                              "#PG,3,2,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,144#C,3,1,144#C,3,1,144#P,3,2,0" \
-                         "#C,3,1,288#C,3,1,288#C,3,1,288" \
+            cnn_string = "C,3,1,48#C,3,1,48#C,3,1,48#P,3,2,0" \
+                         "#C,3,1,64#C,3,1,64#C,3,1,64" \
                          "#PG,3,2,0#Terminate,0,0,0"
 
             filter_min_threshold = 24

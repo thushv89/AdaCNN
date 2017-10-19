@@ -120,7 +120,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_critic_out_op, self.tf_actor_out_op = None, None
         self.tf_critic_target_out_op, self.tf_actor_target_out_op = None, None
         self.tf_critic_loss_op = None
-        self.tf_actor_optimize_op, self.tf_critic_optimize_op = None, None
+        self.tf_actor_optimize_op, self.tf_critic_optimize_op, self.tf_critic_grads = None, None, None
         self.tf_actor_target_update_op, self.tf_critic_target_update_op = None, None
 
         self.prev_action, self.prev_state = None, None
@@ -148,7 +148,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             self.critic_layer_info.append(hidden)
         self.layer_scopes.append('fulcon_out')
         self.actor_layer_info.append(self.output_size)
-        self.critic_layer_info.append(1)
+        self.critic_layer_info.append(self.output_size)
 
         self.verbose_logger.info('Target Network Layer sizes: %s', self.actor_layer_info)
 
@@ -173,7 +173,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op)
         self.tf_critic_optimize_op = self.tf_momentum_optimize(self.tf_critic_loss_op)
-
+        self.tf_critic_grads = self.tf_critic_gradients(self.tf_state_input)
         self.tf_actor_optimize_op = self.tf_policy_gradient_optimize()
         self.tf_actor_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_ACTOR_SCOPE)
         self.tf_critic_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_CRITIC_SCOPE)
@@ -265,7 +265,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         Initialize the variables for neural network used for q learning
         :return:
         '''
-
+        self.verbose_logger.info('Initializing actor critic weights and target weights')
         all_vars = []
         with tf.variable_scope(constants.TF_ACTOR_SCOPE):
             # Defining actor network
@@ -296,6 +296,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                         all_vars.append(tf.get_variable(initializer=tf.zeros(shape=[self.critic_layer_info[li], self.critic_layer_info[li + 1]],
                                                         dtype=tf.float32),name=constants.TF_WEIGHTS))
                         all_vars.append(tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS))
+        self.verbose_logger.debug('Initialized the following Variables')
+        self.verbose_logger.debug([v.name for v in all_vars])
 
         return all_vars
 
@@ -305,6 +307,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         '''
         Calculate the output of the actor/critic network (quickly updated one)
         '''
+        self.verbose_logger.info('(Tensorflow) Critic Output Calculation operation')
         x = tf.concat([tf_state_input,tf_action_input],axis=1)
 
         with tf.variable_scope(constants.TF_CRITIC_SCOPE, reuse=True):
@@ -322,7 +325,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         '''
         Calculate the output of the actor/critic network (quickly updated one)
         '''
-
+        self.verbose_logger.info('(Tensorflow) Actor output calculation operation')
         x = tf_state_input
         with tf.variable_scope(constants.TF_ACTOR_SCOPE, reuse=True):
             for scope in self.layer_scopes:
@@ -379,18 +382,27 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                                momentum=self.momentum).minimize(loss)
         return optimizer
 
+    def tf_critic_gradients(self,self_state_input):
+
+        a_for_grad = self.tf_calc_actor_output(self_state_input)
+        q_for_s_and_a = self.tf_calc_critic_output(self_state_input,a_for_grad)
+
+        return tf.gradients(q_for_s_and_a,a_for_grad)
+
     def tf_policy_gradient_optimize(self):
 
         mu_s = self.tf_calc_actor_output(self.tf_state_input)
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
-
+        d_Q_over_a = self.tf_critic_grads
         # grad_ys acts as a way of chaining multiple gradients
         # more info: https://stackoverflow.com/questions/42399401/use-of-grads-ys-parameter-in-tf-gradients-tensorflow
-        mu_grad = tf.gradients(ys= mu_s,
+        # Calculates d(a)/d(Theta_mu) * -a
+        d_mu_over_d_ThetaMu_grad = tf.gradients(ys= mu_s,
                      xs= theta_mu,
-                     grad_ys = -self.tf_calc_actor_output(self.tf_state_input))
-        grads = zip(mu_grad,theta_mu)
+                     grad_ys = [-g for g in  d_Q_over_a])
+
+        grads = zip(d_mu_over_d_ThetaMu_grad,theta_mu)
 
         grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
                                               momentum=self.momentum).apply_gradients(grads)
@@ -411,18 +423,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                          tf.get_variable(constants.TF_BIAS)])
 
         return vars
-
-    def tf_target_weight_copy_op(self):
-        '''
-        Copy the weights from frequently updated RL agent to Target Network
-        :return:
-        '''
-        update_ops = []
-        for li, (w, b) in enumerate(zip(self.tf_weights, self.tf_bias)):
-            update_ops.append(tf.assign(self.tf_target_weights[li], w))
-            update_ops.append(tf.assign(self.tf_target_biase[li], b))
-
-        return update_ops
 
     # ============================================================================
 
@@ -567,7 +567,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         return x, y, rewards, sj
 
     def exploration_noise_OU(self, a, mu, theta, sigma):
-        return theta * (mu - a) + sigma * np.random.randn(1.0)
+        return theta * (mu - a) + sigma * np.random.randn(1)
 
     def get_action_with_exploration(self):
         '''
@@ -624,6 +624,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         q_given_s_i_plus_1_mu_s_i_plus_1 = self.session.run(self.tf_critic_target_out_op,
                                                             feed_dict={self.tf_state_input: s_i_plus_1,
                                                                        self.tf_action_input: mu_s_i_plus_1})
+
+        self.verbose_logger.debug('Obtained q values for')
+        self.verbose_logger.debug('\tAction: %s',mu_s_i_plus_1)
+        self.verbose_logger.debug('\tQ values: %s',q_given_s_i_plus_1_mu_s_i_plus_1)
+
         y_i = r + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
 
         _ = self.session.run(self.tf_critic_optimize_op,
@@ -665,7 +670,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
              cont_actions_all_layers, data
         )
 
-        return valid_action
+        self.verbose_logger.info('Action chosen stochastic')
+        self.verbose_logger.info('\t%s',valid_action)
+
+        scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
+        self.verbose_logger.info('\t%s (scaled)', scaled_a)
+
+        return state, scaled_a
 
     def sample_action_deterministic_from_actor(self,data):
 
@@ -686,7 +697,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
              cont_actions_all_layers, data
         )
 
-        return state, valid_action
+        self.verbose_logger.info('Action chosen deterministic')
+        self.verbose_logger.info('\t%s', valid_action)
+        scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
+        self.verbose_logger.info('\t%s (scaled)',scaled_a)
+        return state, scaled_a
 
     def get_new_valid_action_when_stochastic(self, action, data):
 
@@ -757,8 +772,20 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             else:
                 continue
 
-        return valid_action
+        return self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
 
+
+    def scale_adaptaion_propotions_to_number_of_filters(self,a):
+        new_a = []
+        for a_idx, ai in enumerate(a):
+            if a_idx< len(self.conv_ids):
+                new_a.append(ceil(ai * self.add_amount))
+            elif a_idx < len(self.conv_ids + self.fulcon_ids):
+                new_a.append(ceil(ai * self.add_fulcon_amount))
+
+        new_a.append(a[-1])
+
+        return new_a
 
     def train_actor_critic(self, data):
         # data['prev_state']
@@ -769,19 +796,25 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # data['batch_id']
 
         if self.global_time_stamp > 0 and len(self.experience) > 0:
-            self.verbose_logger.info('Training the Q Approximator with Experience...')
+            self.verbose_logger.info('Training the Actor Critic with Experience...')
             self.verbose_logger.debug('(Q) Total experience data: %d', len(self.experience))
 
             # =====================================================
             # Returns a batch of experience
             # ====================================================
+
+            self.verbose_logger.info("\tSampled a batch of experience")
             if len(self.experience) > self.batch_size:
                 exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 self.verbose_logger.debug('Experience indices: %s', exp_indices)
+                self.verbose_logger.info('\tTrained Actor')
                 self.train_actor([self.experience[ei] for ei in exp_indices])
+                self.verbose_logger.info('\tTrained Critic')
                 self.train_critic([self.experience[ei] for ei in exp_indices])
             else:
+                self.verbose_logger.info('\tTrained Actor')
                 self.train_actor(self.experience)
+                self.verbose_logger.info('\tTrained Critic')
                 self.train_critic(self.experience)
 
             # Removing old experience to save memory
@@ -811,7 +844,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.global_time_stamp, data['batch_id'], ai,
                                 data['prev_pool_accuracy'], data['pool_accuracy'], reward)
 
-        self.update_experience()
+        # ===============================================================
+        # Update Target Networks
+        # (1-Tau) * Theta + Tau * Theta'
+        self.verbose_logger.info('Updating Target Actor Critic Networks')
+        self.session.run([self.tf_actor_target_update_op,self.tf_critic_target_update_op])
+
+        self.update_experience(si,ai,reward,sj)
 
         self.previous_reward = reward
         self.prev_prev_pool_accuracy = data['prev_pool_accuracy']

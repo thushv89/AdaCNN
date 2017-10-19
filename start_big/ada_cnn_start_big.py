@@ -2679,25 +2679,25 @@ if __name__ == '__main__':
                                 del pool_acc_queue[0]
                             # ===============================================================================
 
+                            layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
+                            assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
                             # don't use current state as the next state, current state is for a different layer
-                            next_state = []
+
+                            next_state = [0 for _ in range(len(filter_vector))]
                             affected_layer_index = 0
-                            for li, la in enumerate(current_action):
-                                if la is None:
-                                    assert li not in convolution_op_ids
-                                    next_state.append(0)
-                                    continue
-                                elif la[0] == 'add':
-                                    next_state.append(current_state[li] + la[1])
-                                    affected_layer_index = li
-                                elif la[0] == 'remove':
-                                    next_state.append(current_state[li] - la[1])
-                                    affected_layer_index = li
-                                else:
-                                    next_state.append(current_state[li])
+                            for li, la in enumerate(layer_specific_actions):
 
-                            next_state = tuple(next_state)
+                                layer_id_for_action = None
+                                if li < len(convolution_op_ids):
+                                    layer_id_for_action = convolution_op_ids[li]
+                                elif li < len(convolution_op_ids + fulcon_op_ids):
+                                    layer_id_for_action = fulcon_op_ids[li - len(convolution_op_ids)]
 
+                                next_state[layer_id_for_action]=current_state[layer_id_for_action] + la
+
+
+                            next_state = list(next_state) + list(prev_binned_data_dist_vector)
+                            assert len(current_state)==len(next_state),'Lengths of the current and next state donot match'
                             logger.info(('=' * 40) + ' Update Summary ' + ('=' * 40))
                             logger.info('\tState (prev): %s', str(current_state))
                             logger.info('\tAction (prev): %s', str(current_action))
@@ -2720,8 +2720,7 @@ if __name__ == '__main__':
                                                    'max_pool_accuracy': max_pool_accuracy,
                                                    'unseen_valid_accuracy': valid_acc_queue[-1],
                                                    'prev_unseen_valid_accuracy': valid_acc_queue[0],
-                                                   'batch_id': global_batch_id,
-                                                   'layer_index': affected_layer_index})
+                                                   'batch_id': global_batch_id})
                             # ===================================================================================
 
                             cnn_structure_logger.info(
@@ -2769,6 +2768,7 @@ if __name__ == '__main__':
                         layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
 
                         # reset the binned data distribution
+                        prev_binned_data_dist_vector = running_binned_data_dist_vector
                         running_binned_data_dist_vector = np.zeros(
                             (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
 
