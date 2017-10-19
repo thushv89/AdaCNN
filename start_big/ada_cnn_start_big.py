@@ -2669,7 +2669,7 @@ if __name__ == '__main__':
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
                         # (Not just outputting finetune action)
                         # ==================================================================
-                        if (not adapt_randomly) and curr_adaptation_status and current_state:
+                        if (not adapt_randomly) and current_state:
 
                             # ==================================================================
                             # Calculating pool accuracy

@@ -954,17 +954,17 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
             if last_conv_id != current_op:
-                new_curr_weights = np.random.uniform(low=-0.001, high=0.001, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
-                new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
-                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                new_curr_weights = np.random.uniform(low=-0.0001, high=0.0001, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
+                new_curr_bias = np.random.uniform(low=-0.0001, high=0.0001, size=(amount_to_add))
+                new_next_weights = np.random.uniform(low=-0.0001, high=0.0001,
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
                 count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
             else:
-                new_curr_weights = np.random.uniform(low=-0.001, high=0.001,
+                new_curr_weights = np.random.uniform(low=-0.0001, high=0.0001,
                                                      size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
                                                      )
-                new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
-                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                new_curr_bias = np.random.uniform(low=-0.0001, high=0.0001, size=(amount_to_add))
+                new_next_weights = np.random.uniform(low=-0.0001, high=0.0001,
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
                 count_vec = np.ones((curr_weight_shape[3] + amount_to_add)*final_2d_width*final_2d_width, dtype=np.float32)
 
@@ -1168,9 +1168,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         else:
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
-            new_curr_weights = np.random.uniform(low=-0.001,high=0.01,size=(curr_weight_shape[0],amount_to_add,1,1))
-            new_curr_bias = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add))
-            new_next_weights = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add,next_weights_shape[1],1,1))
+            new_curr_weights = np.random.uniform(low=-0.0001,high=0.0001,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_bias = np.random.uniform(low=-0.0001,high=0.0001,size=(amount_to_add))
+            new_next_weights = np.random.uniform(low=-0.0001,high=0.0001,size=(amount_to_add,next_weights_shape[1],1,1))
             count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],

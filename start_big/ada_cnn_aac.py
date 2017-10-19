@@ -15,7 +15,7 @@ sys.path.append('../AdaCNN')
 import utils
 import constants
 
-logging_level = logging.INFO
+logging_level = logging.DEBUG
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 
@@ -127,6 +127,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.top_k_accuracy = params['top_k_accuracy']
 
+        self.setup_tf_network_and_ops(params)
+
+
     def setup_tf_network_and_ops(self,params):
         '''
         Setup Tensorflow based Multi-Layer Perceptron and TF Operations
@@ -136,6 +139,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.actor_layer_info = [self.actor_input_size]
         self.critic_layer_info = [self.critic_input_size]
+
+        self.input_size = self.net_depth+self.binned_data_dist_length
 
         for h_i,hidden in enumerate(params['hidden_layers']):
             self.layer_scopes.append('fulcon_%d'%h_i)
@@ -159,14 +164,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_y_i_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
 
         # output of each network
-        self.tf_critic_out_op = self.tf_calc_actor_critic_output(self.tf_state_input,self.tf_action_input,constants.TF_CRITIC_SCOPE)
-        self.tf_actor_out_op = self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_ACTOR_SCOPE)
+        self.tf_critic_out_op = self.tf_calc_critic_output(self.tf_state_input,self.tf_action_input)
+        self.tf_actor_out_op = self.tf_calc_actor_output(self.tf_state_input)
         self.tf_critic_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
                                                            constants.TF_CRITIC_SCOPE)
         self.tf_actor_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
                                                          constants.TF_ACTOR_SCOPE)
 
-        self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op, self.tf_q_mask)
+        self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op)
         self.tf_critic_optimize_op = self.tf_momentum_optimize(self.tf_critic_loss_op)
 
         self.tf_actor_optimize_op = self.tf_policy_gradient_optimize()
@@ -266,7 +271,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         with tf.variable_scope(constants.TF_ACTOR_SCOPE):
             # Defining actor network
             for li in range(len(self.actor_layer_info) - 1):
-                with tf.variable_scope(self.layer_scopes):
+                with tf.variable_scope(self.layer_scopes[li]):
                     tf.get_variable(initializer=tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
                                                                            stddev=2. / self.actor_layer_info[li]),
                                                        name=constants.TF_WEIGHTS)
@@ -275,50 +280,58 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
 
-                        tf.get_variable(tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
-                                                        stddev=2. / self.actor_layer_info[li]), name=constants.TF_WEIGHTS)
-                        tf.get_variable(tf.zeros([self.actor_layer_info[li + 1]]), name=constants.TF_BIAS)
+                        tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
+                                                        dtype=tf.float32),name=constants.TF_WEIGHTS)
+                        tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]), name=constants.TF_BIAS)
 
         with tf.variable_scope(constants.TF_CRITIC_SCOPE):
-            # Defining actor network
+            # Defining critic network
             for li in range(len(self.critic_layer_info) - 1):
-                with tf.variable_scope(self.layer_scopes):
+                with tf.variable_scope(self.layer_scopes[li]):
                     tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
                                                                            stddev=2. / self.actor_layer_info[li]),
                                                        name=constants.TF_WEIGHTS)
                     tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
-                        tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
-                                                        stddev=2. / self.critic_layer_info[li]),
-                                    name=constants.TF_BIAS)
-                        tf.gat_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
+                        tf.get_variable(initializer=tf.zeros(shape=[self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                                        dtype=tf.float32),name=constants.TF_WEIGHTS)
+                        tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS)
 
 
-    def tf_calc_actor_critic_output(self, tf_state_input, tf_action_input, actor_or_critic_scope):
+
+    def tf_calc_critic_output(self, tf_state_input, tf_action_input):
         '''
         Calculate the output of the actor/critic network (quickly updated one)
         '''
-        if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
-            x = tf_state_input
-        elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
-            x = tf.concat([tf_state_input,tf_action_input],axis=1)
+        x = tf.concat([tf_state_input,tf_action_input],axis=1)
 
-        with tf.variable_scope(actor_or_critic_scope, reuse=True):
+        with tf.variable_scope(constants.TF_CRITIC_SCOPE, reuse=True):
             for scope in self.layer_scopes:
                 with tf.variable_scope(scope, reuse=True):
                     if scope != self.layer_scopes[-1]:
-                        with tf.variable_scope(scope, reuse=True):
-                            x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
-                                constants.TF_BIAS))
+                        x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                            constants.TF_BIAS))
                     else:
-                        if actor_or_critic_scope == constants.TF_CRITIC_SCOPE:
-                            x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
-                        elif actor_or_critic_scope == constants.TF_ACTOR_SCOPE:
-                            x = tf.nn.tanh(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
-                                constants.TF_BIAS))
-                        else:
-                            raise NotImplementedError
+                        x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
+
+        return x
+
+    def tf_calc_actor_output(self, tf_state_input):
+        '''
+        Calculate the output of the actor/critic network (quickly updated one)
+        '''
+
+        x = tf_state_input
+        with tf.variable_scope(constants.TF_ACTOR_SCOPE, reuse=True):
+            for scope in self.layer_scopes:
+                with tf.variable_scope(scope, reuse=True):
+                    if scope != self.layer_scopes[-1]:
+                        x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                            constants.TF_BIAS))
+                    else:
+                        x = tf.nn.tanh(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                            constants.TF_BIAS))
         return x
 
     def tf_calc_actor_critic_target_output(self, tf_state_input, tf_action_input, actor_or_critic_scope):
@@ -335,8 +348,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 with tf.variable_scope(scope, reuse=True):
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse = True):
                         if scope != self.layer_scopes[-1]:
-                            with tf.variable_scope(scope,reuse=True):
-                                x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS))+tf.get_variable(constants.TF_BIAS))
+                            x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS))+tf.get_variable(constants.TF_BIAS))
                         else:
                             if actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
                                 x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
@@ -368,15 +380,19 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     def tf_policy_gradient_optimize(self):
 
-        mu_s = self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_ACTOR_SCOPE)
+        mu_s = self.tf_calc_actor_output(self.tf_state_input)
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
-        q_grad = tf.gradients(ys=self.tf_calc_actor_critic_output(self.tf_state_input, self.tf_action_input, constants.TF_CRITIC_SCOPE),
+        q_grad = tf.gradients(ys=self.tf_calc_critic_output(self.tf_state_input, self.tf_action_input),
                                    xs= mu_s)
+        print(q_grad)
+        negative_grads = []
+        for g,v in q_grad:
+            negative_grads.append((-g,v))
         # grad_ys acts as a way of chaining multiple gradients
         # more info: https://stackoverflow.com/questions/42399401/use-of-grads-ys-parameter-in-tf-gradients-tensorflow
         mu_grad = tf.gradients(ys= mu_s,
                      xs= theta_mu,
-                     grad_ys = -q_grad)
+                     grad_ys = negative_grads)
         grads = zip(mu_grad,theta_mu)
 
         grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
@@ -643,7 +659,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.debug('Getting new action according the the Actor')
         s_i = np.asarray(self.phi(state)).reshape(1, -1)
-        cont_actions_all_layers = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: s_i})
+        cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
 
         cont_actions_all_layers += self.exploration_noise_OU(cont_actions_all_layers,0.0,0.3,1.0)
@@ -666,7 +682,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.debug('Getting new action according the the Actor')
         s_i = np.asarray(self.phi(state)).reshape(1, -1)
-        cont_actions_all_layers = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: s_i})
+        cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
 
         valid_action = self.get_new_valid_action_when_stochastic(
@@ -707,7 +723,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             else:
                 continue
 
-        return state, valid_action
+        return valid_action
 
     def get_new_valid_action_when_deterministic(self, action, data):
 
@@ -837,7 +853,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                     x = np.append(x, s_t, axis=0)
 
             self.verbose_logger.debug('Shape of x: %s', x.shape)
-            q_pred = self.session.run(self.tf_out_target_op, feed_dict={self.tf_state_input: x})
+            q_pred = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: x})
             self.verbose_logger.debug('Shape of q_pred: %s', q_pred.shape)
             return np.mean(np.max(q_pred, axis=1))
         else:
