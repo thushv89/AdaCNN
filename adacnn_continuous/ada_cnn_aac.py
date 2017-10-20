@@ -279,7 +279,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        self.verbose_logger.debug('Converting state history to phi')
         return si
 
     # ==================================================================
@@ -311,11 +310,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             # Defining actor network
             for li in range(len(self.actor_layer_info) - 1):
                 with tf.variable_scope(self.layer_scopes[li]):
-                    all_vars.append(tf.get_variable(initializer=tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
-                                                                           stddev=2. / self.actor_layer_info[li]),
-                                                       name=constants.TF_WEIGHTS))
-                    all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]),
-                                    name=constants.TF_BIAS))
+                    weights_rand = tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
+                                                                           stddev=2. / self.actor_layer_info[li])
+                    bias_rand = tf.random_uniform(minval=-0.01,maxval=0.01,shape=[self.actor_layer_info[li + 1]])
+                    all_vars.append(tf.get_variable(initializer=weights_rand,name=constants.TF_WEIGHTS))
+                    all_vars.append(tf.get_variable(initializer=bias_rand,name=constants.TF_BIAS))
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
 
@@ -327,15 +326,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             # Defining critic network
             for li in range(len(self.critic_layer_info) - 1):
                 with tf.variable_scope(self.layer_scopes[li]):
-                    all_vars.append(tf.get_variable(initializer=tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
-                                                                           stddev=2. / self.actor_layer_info[li]),
+                    weights_rand = tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                        stddev=2. / self.actor_layer_info[li])
+                    bias_rand = tf.random_uniform(minval=-0.01,maxval=0.01,shape=[self.critic_layer_info[li + 1]])
+                    all_vars.append(tf.get_variable(initializer=weights_rand,
                                                        name=constants.TF_WEIGHTS))
-                    all_vars.append(tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS))
+                    all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
-                        all_vars.append(tf.get_variable(initializer=tf.zeros(shape=[self.critic_layer_info[li], self.critic_layer_info[li + 1]],
-                                                        dtype=tf.float32),name=constants.TF_WEIGHTS))
-                        all_vars.append(tf.get_variable(initializer=tf.zeros([self.critic_layer_info[li + 1]]), name=constants.TF_BIAS))
+                        all_vars.append(tf.get_variable(initializer=weights_rand,name=constants.TF_WEIGHTS))
+                        all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
         self.verbose_logger.debug('Initialized the following Variables')
         self.verbose_logger.debug([v.name for v in all_vars])
 
@@ -557,7 +557,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # np.random.shuffle(self.experience) # decorrelation
 
 
-
     def get_s_a_r_s_with_experince(self, experience_slice):
 
         x, y, rewards, sj = None, None, None, None
@@ -706,7 +705,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.sample_action_global_step += 1
 
-        return state, scaled_a
+        return state, scaled_a,valid_action
 
     def sample_action_deterministic_from_actor(self,data):
 
@@ -728,7 +727,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         summ = self.session.run(self.every_action_sampled_summ,feed_dict={self.tf_summary_action_mean_ph:cont_actions_all_layers,
                                                                           self.tf_summary_q_ph:q_vals_for_action.ravel()})
-        self.summary_writer.add_summary(summ)
+        self.summary_writer.add_summary(summ,global_step=self.sample_action_global_step)
         valid_action = self.get_new_valid_action_when_stochastic(
              cont_actions_all_layers, data
         )
@@ -739,7 +738,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('\t%s', valid_action)
         scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
         self.verbose_logger.info('\t%s (scaled)',scaled_a)
-        return state, scaled_a
+        return state, scaled_a, valid_action
 
     def get_new_valid_action_when_stochastic(self, action, data):
 

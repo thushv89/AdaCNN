@@ -2381,7 +2381,7 @@ if __name__ == '__main__':
             logger.debug('\tDefining rolling activation mean for %s', op)
             rolling_ativation_means[op] = np.zeros([cnn_hyperparameters[op]['weights'][3]])
     act_decay = 0.9
-    current_state, current_action,curr_adaptation_status = None, None,None
+    current_state, current_action,curr_adaptation_status, current_unscaled_action = None, None,None,None
     prev_unseen_valid_accuracy = 0
     pool_acc_queue = []
     valid_acc_queue = []
@@ -2825,7 +2825,7 @@ if __name__ == '__main__':
 
                             # ================================================================================
                             # Actual updating of the policy
-                            adapter.train_actor_critic({'prev_state': current_state, 'prev_action': current_action,
+                            adapter.train_actor_critic({'prev_state': current_state, 'prev_action': current_unscaled_action,
                                                    'curr_state': next_state,
                                                    'next_accuracy': None,
                                                    'prev_accuracy': None,
@@ -2873,9 +2873,9 @@ if __name__ == '__main__':
                             data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
                                     'binned_data_dist': running_binned_data_dist_vector.tolist()}
                             if np.random.random()<start_eps:
-                                current_state, current_action = adapter.sample_action_stochastic_from_actor(data)
+                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data)
                             else:
-                                current_state, current_action = adapter.sample_action_deterministic_from_actor(data)
+                                current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data)
                         else:
                             raise NotImplementedError
 
