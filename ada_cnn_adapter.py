@@ -260,7 +260,7 @@ def get_rm_indices_with_distance(op, tf_action_info, tf_cnn_hyperparameters):
     return tf_unique_rm_ind
 
 
-def remove_with_action(op, tf_action_info, tf_activations, tf_cnn_hyperparameters):
+def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm):
     global cnn_hyperparameters, cnn_ops
     global logger
 
@@ -280,17 +280,7 @@ def remove_with_action(op, tf_action_info, tf_activations, tf_cnn_hyperparameter
 
     with tf.variable_scope(op) as scope:
 
-        if research_parameters['remove_filters_by'] == 'Activation':
-            neg_activations = -1.0 * tf_activations
-            [min_act_values, tf_unique_rm_ind] = tf.nn.top_k(neg_activations, k=amount_to_rmv, name='min_act_indices')
-
-        elif research_parameters['remove_filters_by'] == 'Distance':
-            # calculate cosine distance for F filters (FxF matrix)
-            # take one side of diagonal, find (f1,f2) pairs with least distance
-            # select indices amnt f2 indices
-            tf_unique_rm_ind = get_rm_indices_with_distance(op, tf_action_info)
-
-        tf_indices_to_rm = tf.reshape(tf.slice(tf_unique_rm_ind, [0], [amount_to_rmv]), shape=[amount_to_rmv, 1],
+        tf_indices_to_rm = tf.reshape(tf.slice(tf_indices_to_rm, [0], [amount_to_rmv]), shape=[amount_to_rmv, 1],
                                       name='indices_to_rm')
         tf_rm_ind_scatter = tf.scatter_nd(tf_indices_to_rm, tf.ones(shape=[amount_to_rmv], dtype=tf.int32),
                                           shape=[tf_cnn_hyperparameters[op][TF_CONV_WEIGHT_SHAPE_STR][3]])
@@ -409,6 +399,103 @@ def remove_with_action(op, tf_action_info, tf_activations, tf_cnn_hyperparameter
 
                 update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
                 update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
+
+    return update_ops, tf_indices_to_rm
+
+
+def remove_from_fulcon(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm):
+    global cnn_hyperparameters, cnn_ops
+    global logger
+
+    update_ops = []
+
+    for tmp_op in reversed(cnn_ops):
+        if 'conv' in tmp_op:
+            last_conv_id = tmp_op
+            break
+
+    # this is trickier than adding weights
+    # We remove the given number of filters
+    # which have the least rolling mean activation averaged over whole map
+    amount_to_rmv = tf_action_info[2]
+    assert 'fulcon' in op
+
+    with tf.variable_scope(op) as scope:
+
+        tf_indices_to_rm = tf.reshape(tf.slice(tf_indices_to_rm, [0], [amount_to_rmv]), shape=[amount_to_rmv, 1],
+                                      name='indices_to_rm')
+        tf_rm_ind_scatter = tf.scatter_nd(tf_indices_to_rm, tf.ones(shape=[amount_to_rmv], dtype=tf.int32),
+                                          shape=[tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR]])
+
+        tf_indices_to_keep_boolean = tf.equal(tf_rm_ind_scatter, tf.constant(0, dtype=tf.int32))
+        tf_indices_to_keep = tf.reshape(tf.where(tf_indices_to_keep_boolean), shape=[-1, 1], name='indices_to_keep')
+
+        # currently no way to generally slice using gather
+        # need to do a transoformation to do this.
+        # change both weights and biase in the current op
+        w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        with tf.variable_scope(TF_WEIGHTS) as child_scope:
+            w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+            pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+        with tf.variable_scope(TF_BIAS) as child_scope:
+            b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+            pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+        tf_new_weights = tf.transpose(w, [1, 0])
+        tf_new_weights = tf.gather_nd(tf_new_weights, tf_indices_to_keep)
+        tf_new_weights = tf.transpose(tf_new_weights, [1, 0], name='new_weights')
+
+        update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
+
+        tf_new_biases = tf.reshape(tf.gather(b, tf_indices_to_keep), shape=[-1], name='new_bias')
+        update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+
+        if research_parameters['optimizer'] == 'Momentum':
+            new_weight_vel = tf.transpose(w_vel, [1,0])
+            new_weight_vel = tf.gather_nd(new_weight_vel, tf_indices_to_keep)
+            new_weight_vel = tf.transpose(new_weight_vel, [1, 0])
+
+            new_pool_w_vel = tf.transpose(pool_w_vel, [1, 0])
+            new_pool_w_vel = tf.gather_nd(new_pool_w_vel, tf_indices_to_keep)
+            new_pool_w_vel = tf.transpose(new_pool_w_vel, [1, 0])
+
+            new_bias_vel = tf.reshape(tf.gather(b_vel, tf_indices_to_keep), [-1])
+            new_pool_b_vel = tf.reshape(tf.gather(pool_b_vel, tf_indices_to_keep), [-1])
+
+            update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
+            update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
+            update_ops.append(tf.assign(b_vel, new_bias_vel, validate_shape=False))
+            update_ops.append(tf.assign(pool_b_vel, new_pool_b_vel, validate_shape=False))
+
+
+    # change in hyperparameter of next conv op
+    next_fulcon_op = [tmp_op for tmp_op in cnn_ops[cnn_ops.index(op) + 1:] if 'fulcon' in tmp_op][0]
+    assert op != next_fulcon_op
+
+    # change only the weights in next conv_op
+    with tf.variable_scope(next_fulcon_op) as scope:
+        w = tf.get_variable(TF_WEIGHTS)
+        with tf.variable_scope(TF_WEIGHTS) as child_scope:
+            w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+            pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+        tf_new_weights = tf.transpose(w, [1, 0])
+        tf_new_weights = tf.gather_nd(tf_new_weights, tf_indices_to_keep)
+        tf_new_weights = tf.transpose(tf_new_weights, [1, 0])
+
+        update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
+
+        if research_parameters['optimizer'] == 'Momentum':
+            new_weight_vel = tf.transpose(w_vel, [1, 0])
+            new_weight_vel = tf.gather_nd(new_weight_vel, tf_indices_to_keep)
+            new_weight_vel = tf.transpose(new_weight_vel, [1, 0])
+
+            new_pool_w_vel = tf.transpose(pool_w_vel, [1, 0])
+            new_pool_w_vel = tf.gather_nd(new_pool_w_vel, tf_indices_to_keep)
+            new_pool_w_vel = tf.transpose(new_pool_w_vel, [1, 0])
+
+            update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
+            update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
 
     return update_ops, tf_indices_to_rm
 

@@ -888,7 +888,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     '''
     global current_adaptive_dropout
     amount_to_add = ai[1]
-
+    scale_for_rand = 0.001
     if current_op != last_conv_id:
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
@@ -921,13 +921,13 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
-            curr_binomial = np.random.uniform(low=-0.001, high=0.001, size=new_curr_weights.shape).astype(np.float32)
+            curr_binomial = np.random.normal(scale=scale_for_rand, size=new_curr_weights.shape).astype(np.float32)
             new_curr_weights *= curr_binomial
             new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
 
             if last_conv_id != current_op:
                 new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
-                next_binomial = np.random.uniform(low=-0.001, high=0.001,size=new_next_weights.shape).astype(np.float32)
+                next_binomial = np.random.normal(scale=scale_for_rand,size=new_next_weights.shape).astype(np.float32)
                 new_next_weights *= next_binomial
                 #new_next_weights = next_weights[:, :, rand_indices, :]
             else:
@@ -954,17 +954,17 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
             if last_conv_id != current_op:
-                new_curr_weights = np.random.uniform(low=-0.0001, high=0.0001, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
-                new_curr_bias = np.random.uniform(low=-0.0001, high=0.0001, size=(amount_to_add))
-                new_next_weights = np.random.uniform(low=-0.0001, high=0.0001,
+                new_curr_weights = np.random.normal(scale=scale_for_rand, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
+                new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
+                new_next_weights = np.random.normal(scale=scale_for_rand,
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
                 count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
             else:
-                new_curr_weights = np.random.uniform(low=-0.0001, high=0.0001,
+                new_curr_weights = np.random.normal(scale=scale_for_rand,
                                                      size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
                                                      )
-                new_curr_bias = np.random.uniform(low=-0.0001, high=0.0001, size=(amount_to_add))
-                new_next_weights = np.random.uniform(low=-0.0001, high=0.0001,
+                new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
+                new_next_weights = np.random.normal(scale=scale_for_rand,
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
                 count_vec = np.ones((curr_weight_shape[3] + amount_to_add)*final_2d_width*final_2d_width, dtype=np.float32)
 
@@ -1129,6 +1129,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     global current_adaptive_dropout
     amount_to_add = ai[1]
 
+    scale_for_rand = 0.001
     if current_op != last_conv_id:
         next_fulcon_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:]][0]
@@ -1157,20 +1158,20 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
-            new_curr_binomial = np.random.uniform(low=-0.001, high=0.001,size=new_curr_weights.shape)
+            new_curr_binomial = np.random.normal(scale=scale_for_rand,size=new_curr_weights.shape)
             new_curr_weights *= new_curr_binomial
             new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
 
             new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
-            new_next_binomial = np.random.uniform(low=-0.001, high=0.001, size=new_next_weights.shape)
+            new_next_binomial = np.random.normal(scale=scale_for_rand, size=new_next_weights.shape)
             new_next_weights *= new_next_binomial
         else:
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
-            new_curr_weights = np.random.uniform(low=-0.0001,high=0.0001,size=(curr_weight_shape[0],amount_to_add,1,1))
-            new_curr_bias = np.random.uniform(low=-0.0001,high=0.0001,size=(amount_to_add))
-            new_next_weights = np.random.uniform(low=-0.0001,high=0.0001,size=(amount_to_add,next_weights_shape[1],1,1))
+            new_curr_weights = np.random.normal(scale=scale_for_rand,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_bias = np.random.normal(scale=scale_for_rand,size=(amount_to_add))
+            new_next_weights = np.random.normal(scale=scale_for_rand,size=(amount_to_add,next_weights_shape[1],1,1))
             count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],

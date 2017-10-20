@@ -15,6 +15,7 @@ TF_POOL_MOMENTUM = 'PoolMomentum'
 TF_SCOPE_DIVIDER = '/'
 TF_ADAPTATION_NAME_SCOPE = 'Adapt'
 TF_GLOBAL_SCOPE = 'AdaCNN'
+TF_SUMMARY_SCOPE = 'Summary'
 TF_PRUNE_REWARD_SCOPE = 'PruneRewardRegressor'
 
 TF_ACTOR_SCOPE = 'actor'

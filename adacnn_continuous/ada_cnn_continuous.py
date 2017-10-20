@@ -190,7 +190,7 @@ valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
 tf_slice_optimize = {}
 tf_slice_vel_update = {}
 tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
-tf_indices, tf_replicative_factor_vec, tf_indices_size = None,None,None
+tf_indices, tf_indices_to_rm, tf_replicative_factor_vec, tf_indices_size = None,None,None,None
 tf_update_hyp_ops = {}
 tf_action_info = None
 tf_weights_this,tf_bias_this = None, None
@@ -532,7 +532,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
     global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
-    global tf_indices, tf_replicative_factor_vec, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
+    global tf_indices, tf_indices_to_rm, tf_replicative_factor_vec, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
@@ -704,6 +704,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 # Tensorflow operations that are defined one for each convolution operation
                 tf_indices = tf.placeholder(dtype=tf.int32, shape=(None,), name='optimize_indices')
                 tf_indices_size = tf.placeholder(tf.int32)
+                tf_indices_to_rm = tf.placeholder(dtype=tf.int32, shape=[None], name = 'indices_to_rm')
 
                 tf_action_info = tf.placeholder(shape=[3], dtype=tf.int32,
                                                 name='tf_action')  # [op_id,action_id,amount] (action_id 0 - add, 1 -remove)
@@ -758,6 +759,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             tf.constant(start_lr, dtype=tf.float32), global_step
                         )
 
+                        tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_with_action(tmp_op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm)
+
                     # Fully connected realted adaptation operations
                     elif 'fulcon' in tmp_op:
                         # Update hyp operation is required for fulcon_out
@@ -776,6 +779,9 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 tf.constant(start_lr, dtype=tf.float32), global_step
                             )
 
+                            tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_from_fulcon(tmp_op, tf_action_info,
+                                                                                           tf_cnn_hyperparameters,
+                                                                                           tf_indices_to_rm)
 
 def check_several_conditions_with_assert(num_gpus):
     batches_in_chunk = model_hyperparameters['chunk_size']//model_hyperparameters['batch_size']
@@ -887,6 +893,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     '''
     global current_adaptive_dropout
 
+    logger.info('Running add operation for %s by adding %d from %d(total)',current_op,amount_to_add,cnn_hyperparameters[current_op]['weights'][3])
     if current_op != last_conv_id:
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
@@ -966,9 +973,10 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
                 count_vec = np.ones((curr_weight_shape[3] + amount_to_add)*final_2d_width*final_2d_width, dtype=np.float32)
 
+
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
-                        tf_action_info: np.asarray([li, 1, ai[1]]),
+                        tf_action_info: np.asarray([li, 1, amount_to_add]),
                         tf_weights_this: new_curr_weights,
                         tf_bias_this: new_curr_bias,
 
@@ -1051,15 +1059,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     # optimize the newly added fiterls only
     pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
 
-    logger.info('\t(Before) Size of Rolling mean vector for %s: %s', current_op,
-                rolling_ativation_means[current_op].shape)
-
-    rolling_ativation_means[current_op] = np.append(rolling_ativation_means[current_op],
-                                                    np.zeros(ai[1]))
-
-    logger.info('\tSize of Rolling mean vector for %s: %s', current_op,
-                rolling_ativation_means[current_op].shape)
-
 
     current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
@@ -1074,7 +1073,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             pbatch_data, pbatch_labels = [], []
 
             pool_feed_dict = {
-                tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
+                tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - amount_to_add,
                                       cnn_hyperparameters[current_op]['weights'][3])}
             pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
 
@@ -1126,6 +1125,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     '''
     global current_adaptive_dropout
 
+    logger.info('Running add operation (fulcon) for %s by adding %d from %d', current_op, amount_to_add,cnn_hyperparameters[current_op]['out'])
     if current_op != last_conv_id:
         next_fulcon_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:]][0]
@@ -1172,7 +1172,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
-                        tf_action_info: np.asarray([li, 1, ai[1]]),
+                        tf_action_info: np.asarray([li, 1, amount_to_add]),
                         tf_weights_this: new_curr_weights,
                         tf_bias_this: new_curr_bias,
                         tf_replicative_factor_vec: count_vec,
@@ -1245,7 +1245,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             pbatch_data, pbatch_labels = [], []
 
             pool_feed_dict = {
-                tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
+                tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - amount_to_add,
                                       cnn_hyperparameters[current_op]['out'])}
             pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
 
@@ -1290,18 +1290,30 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
     global current_adaptive_dropout
-    rm_indices = np.random.randint(low=0, high=cnn_hyperparameters[current_op]['weights'][3], size=(amount_to_rmv))
+
+    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3])),replace=False,size=(amount_to_rmv))
+    logger.info('Running remove operation for %s by removing %d filetrs from %d',
+                current_op, amount_to_rmv,cnn_hyperparameters[current_op]['weights'][3])
+    logger.debug('Removing indices')
+    logger.debug('\t%s', rm_indices)
+
+    _ = session.run(tf_rm_filters_ops[current_op],
+                    feed_dict={
+                        tf_action_info: np.asarray([li, 1, amount_to_rmv]),
+                        tf_indices_to_rm: rm_indices
+                    })
 
     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op, reuse=True):
         current_op_weights = tf.get_variable(TF_WEIGHTS)
-
 
     cnn_hyperparameters[current_op]['weights'][3] -= amount_to_rmv
     if research_parameters['debugging']:
         logger.debug('\tSize after feature map reduction: %s,%s', current_op,
                      tf.shape(current_op_weights).eval())
         assert tf.shape(current_op_weights).eval()[3] == \
-               cnn_hyperparameters[current_op]['weights'][3]
+               cnn_hyperparameters[current_op]['weights'][3], \
+            'Shapes of weights (%s) did not match (Actual: %s),(Maintained: %s'\
+            %(current_op,tf.shape(current_op_weights).eval(),cnn_hyperparameters[current_op]['weights'])
 
     session.run(tf_update_hyp_ops[current_op], feed_dict={
         tf_weight_shape: cnn_hyperparameters[current_op]['weights']
@@ -1377,13 +1389,22 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
 
 def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
     global current_adaptive_dropout
-    rm_indices = np.random.randint(low=0, high=cnn_hyperparameters[current_op]['weights'][3], size=(amount_to_rmv))
+    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv))
+
+    logger.info('Running remove (fulcon) operation for %s by removing %d', current_op, amount_to_rmv)
+    logger.debug('Removing indices')
+    logger.debug('\t%s',rm_indices)
+    _ = session.run(tf_rm_filters_ops[current_op],
+                    feed_dict={
+                        tf_action_info: np.asarray([li, 1, amount_to_rmv]),
+                        tf_indices_to_rm: rm_indices
+                    })
 
     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op, reuse=True):
         current_op_weights = tf.get_variable(TF_WEIGHTS)
 
-
     cnn_hyperparameters[current_op]['out'] -= amount_to_rmv
+
     if research_parameters['debugging']:
         logger.debug('\tSize after feature map reduction: %s,%s', current_op,
                      tf.shape(current_op_weights).eval())
@@ -2206,6 +2227,21 @@ if __name__ == '__main__':
 
     session = tf.InteractiveSession(config=config)
 
+    home_dir = '.' + os.sep + output_dir + os.sep + "ada_cnn_tensorboard_data"
+    if not os.path.exists(home_dir):
+        dirs_in_tensorboard = []
+    else:
+        print('file exist')
+        dirs_in_tensorboard = [int(o) for o in os.listdir(home_dir + os.sep + "main")
+                               if os.path.isdir(os.path.join(home_dir + os.sep + "main", o))]
+    if len(dirs_in_tensorboard) == 0:
+        summary_writer = tf.summary.FileWriter(
+            output_dir + os.sep + "ada_cnn_tensorboard_data" + os.sep + "main" + os.sep + '0')
+    else:
+        summary_writer = tf.summary.FileWriter(
+            output_dir + os.sep + "ada_cnn_tensorboard_data" +
+            os.sep + "main" + os.sep + '%d' % (max(dirs_in_tensorboard) + 1))
+
     # Defining pool
     if adapt_structure or rigid_pooling:
         logger.info('Defining pools of data (validation and finetuning)')
@@ -2372,7 +2408,18 @@ if __name__ == '__main__':
 
     n_iter_per_task = n_iterations//n_tasks
 
+    prev_binned_data_dist_vector = None
     running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
+    tf_summary_data_dist = tf.placeholder(shape=[model_hyperparameters['binned_data_dist_length']],dtype=tf.float32,name='tf_summary_data_dist')
+
+    with tf.name_scope(TF_GLOBAL_SCOPE):
+        with tf.name_scope(constants.TF_SUMMARY_SCOPE):
+            tf_summary_data_dist_writer = tf.summary.histogram('data_ditribution', tf_summary_data_dist)
+
+    # Merge all summary writing ops to a single op so we don't ahve to run them individually
+    summaries = tf.summary.merge_all()
+    summary_writer.add_graph(session.graph)
+
     binned_data_dist_decay = 0.5
 
 
@@ -2416,8 +2463,6 @@ if __name__ == '__main__':
                 for gpu_id in range(num_gpus):
                     label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior,
                                                                                          batch_size, num_labels)
-                    logger.debug('Got label sequence (for batch %d)', global_batch_id)
-                    logger.debug(Counter(label_seq))
 
                     # Get current batch of data nd labels (training)
                     b_d, b_l = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
@@ -2445,6 +2490,11 @@ if __name__ == '__main__':
                         label_count_sorted = np.asarray([np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted])
 
                     running_binned_data_dist_vector = binned_data_dist_decay * np.asarray(label_count_sorted) + (1.0-binned_data_dist_decay) * running_binned_data_dist_vector
+                    # Do this only in the first epoch as the data is repeated there onwards
+                    if epoch==0:
+                        if batch_id%10==0:
+                            data_dist_summ = session.run(tf_summary_data_dist_writer, feed_dict={tf_summary_data_dist:np.asarray(label_count_sorted)})
+                            summary_writer.add_summary(data_dist_summ, global_step=global_batch_id)
 
                     if behavior == 'non-stationary':
                         batch_w = np.zeros((batch_size,))
@@ -2860,9 +2910,9 @@ if __name__ == '__main__':
 
                             elif ai <0.0:
                                 if 'conv' in current_op:
-                                    run_actual_remove_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai)
+                                    run_actual_remove_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,abs(ai))
                                 elif 'fulcon' in current_op:
-                                    run_actual_remove_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id,hard_pool_ft,ai)
+                                    run_actual_remove_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id,hard_pool_ft,abs(ai))
 
                         if finetune_action>0.0:
                             # pooling takes place here
