@@ -193,8 +193,8 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
     '''
     global cnn_ops, cnn_hyperparameters
 
-    #decay_lr = model_parameters['decay_learning_rate']
-    decay_lr = False
+    decay_lr = model_parameters['decay_learning_rate']
+    #decay_lr = False
     if decay_lr:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
@@ -345,8 +345,8 @@ def optimize_masked_momentum_gradient_for_fulcon(optimizer, filter_indices_to_re
     '''
     global cnn_ops, cnn_hyperparameters
 
-    #decay_lr = model_parameters['decay_learning_rate']
-    decay_lr = False
+    decay_lr = model_parameters['decay_learning_rate']
+    #decay_lr = False
     if decay_lr:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
                                    tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,

@@ -870,10 +870,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec)
 
-        accuracy_push_reward = self.top_k_accuracy/self.num_classes if (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0<= self.top_k_accuracy/self.num_classes \
-            else (data['prev_pool_accuracy'] - data['pool_accuracy'])/100.0
+        before_adapt_queue = data['pool_accuracy_before_adapt_queue']
+        after_adapt_queue = data['pool_accuracy_after_adapt_queue']
 
-        mean_accuracy = accuracy_push_reward if data['pool_accuracy'] > data['max_pool_accuracy'] else -accuracy_push_reward
+        accuracy_push_reward = self.top_k_accuracy/self.num_classes \
+            if (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0<= self.top_k_accuracy/self.num_classes \
+            else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
+
+        #mean_accuracy = accuracy_push_reward if data['pool_accuracy'] > data['max_pool_accuracy'] else -accuracy_push_reward
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 

@@ -876,7 +876,7 @@ def fintune_with_pool_ft(hard_pool_ft):
                                    feed_dict=pool_feed_dict)
 
 
-def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft):
+def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft, epoch):
     '''
     Run the add operation using the given Session
     :param session:
@@ -889,6 +889,16 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     global current_adaptive_dropout
     amount_to_add = ai[1]
     scale_for_rand = 0.001
+
+    min_rand_threshold = 0.005
+    max_rand_threshold = 0.5
+
+    if epoch==-1:
+        rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * ((1.0 / (li+1.0)) ** 1.5)])
+    else:
+        rand_thresh_for_layer = 0.0
+
+    print('Rand thresh for layer: %.5f',rand_thresh_for_layer)
     if current_op != last_conv_id:
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
@@ -906,7 +916,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
         #Net2Net type initialization
-        if np.random.random()<0.0:
+        if np.random.random()<rand_thresh_for_layer:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -916,7 +926,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             ind_counter = Counter(all_indices_plus_rand.tolist())
             sorted_keys = sorted(ind_counter.keys())
             count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/1.0])
 
             print('count vec',count_vec.shape)
             print(count_vec)
@@ -1116,7 +1126,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                    feed_dict=pool_feed_dict)
 
 
-def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft):
+def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, epoch):
     '''
     Run the add operation using the given Session
     :param session:
@@ -1130,6 +1140,17 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     amount_to_add = ai[1]
 
     scale_for_rand = 0.001
+
+    min_rand_threshold = 0.005
+    max_rand_threshold = 0.5
+
+    if epoch==-1:
+        rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * ((1.0 / (li+1.0)) ** 1.5)])
+    else:
+        rand_thresh_for_layer = 0.0
+
+    print('Rand thresh for layer: %.5f', rand_thresh_for_layer)
+
     if current_op != last_conv_id:
         next_fulcon_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:]][0]
@@ -1145,7 +1166,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
         # Net2Net Initialization
-        if np.random.random()<0.0:
+        if np.random.random()<rand_thresh_for_layer:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -1154,7 +1175,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             ind_counter = Counter(all_indices_plus_rand.tolist())
             sorted_keys = np.asarray(sorted(ind_counter.keys()))
             count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
-            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/1.0])
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
@@ -2823,9 +2844,9 @@ if __name__ == '__main__':
 
                             if ai[0] == 'add':
                                 if 'conv' in current_op:
-                                    run_actual_add_operation(session,current_op,li,last_conv_id,hard_pool_ft)
+                                    run_actual_add_operation(session,current_op,li,last_conv_id,hard_pool_ft, epoch)
                                 elif 'fulcon' in current_op:
-                                    run_actual_add_operation_for_fulcon(session,current_op,li, last_conv_id, hard_pool_ft)
+                                    run_actual_add_operation_for_fulcon(session,current_op,li, last_conv_id, hard_pool_ft, epoch)
 
                             elif 'conv' in current_op and ai[0] == 'remove':
                                 if 'conv' in current_op:

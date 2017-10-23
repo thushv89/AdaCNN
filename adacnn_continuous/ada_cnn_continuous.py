@@ -2383,7 +2383,7 @@ if __name__ == '__main__':
     act_decay = 0.9
     current_state, current_action,curr_adaptation_status, current_unscaled_action = None, None,None,None
     prev_unseen_valid_accuracy = 0
-    pool_acc_queue = []
+    pool_acc_before_adapt_queue, pool_acc_after_adapt_queue = [],[]
     valid_acc_queue = []
 
     current_q_learn_op_id = 0
@@ -2780,18 +2780,18 @@ if __name__ == '__main__':
                                             batch_id % interval_parameters['policy_interval'] == 4:
 
                         # ==================================================================
+                        # Calculating pool accuracy (Before Adaptation)
+                        p_accuracy = calculate_pool_accuracy(hard_pool_ft)
+                        pool_acc_before_adapt_queue.append(p_accuracy)
+                        if len(pool_acc_before_adapt_queue) > 20:
+                            del pool_acc_before_adapt_queue[0]
+                        # ==================================================================
+
+                        # ==================================================================
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
                         # (Not just outputting finetune action)
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
-
-                            # ==================================================================
-                            # Calculating pool accuracy
-                            p_accuracy = calculate_pool_accuracy(hard_pool_ft)
-                            pool_acc_queue.append(p_accuracy)
-                            if len(pool_acc_queue) > 20:
-                                del pool_acc_queue[0]
-                            # ===============================================================================
 
                             layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
@@ -2828,12 +2828,10 @@ if __name__ == '__main__':
                             adapter.train_actor_critic({'prev_state': current_state, 'prev_action': current_unscaled_action,
                                                    'curr_state': next_state,
                                                    'next_accuracy': None,
-                                                   'prev_accuracy': None,
-                                                   'pool_accuracy': pool_acc_queue[-1],
-                                                   'prev_pool_accuracy': pool_acc_queue[0],
+                                                   'pool_accuracy_before_adapt_queue': pool_acc_before_adapt_queue,
+                                                   'pool_accuracy_after_adapt_queue': pool_acc_after_adapt_queue,
+                                                   'prev_pool_accuracy': pool_acc_before_adapt_queue[0],
                                                    'max_pool_accuracy': max_pool_accuracy,
-                                                   'unseen_valid_accuracy': valid_acc_queue[-1],
-                                                   'prev_unseen_valid_accuracy': valid_acc_queue[0],
                                                    'batch_id': global_batch_id})
                             # ===================================================================================
 
@@ -2848,7 +2846,7 @@ if __name__ == '__main__':
 
                             logger.debug('Resetting both data distribution means')
 
-                            max_pool_accuracy = max(max(pool_acc_queue), p_accuracy)
+                            max_pool_accuracy = max(max(pool_acc_before_adapt_queue), p_accuracy)
                             prev_pool_accuracy = p_accuracy
 
                         # ===================================================================================
@@ -2918,6 +2916,13 @@ if __name__ == '__main__':
                             # pooling takes place here
                             run_actual_finetune_operation(hard_pool_ft,finetune_action)
 
+                        # ==================================================================
+                        # Calculating pool accuracy (After Adaptation)
+                        p_accuracy = calculate_pool_accuracy(hard_pool_ft)
+                        pool_acc_after_adapt_queue.append(p_accuracy)
+                        if len(pool_acc_after_adapt_queue) > 20:
+                            del pool_acc_after_adapt_queue[0]
+                        # ==================================================================
 
                 # =============================================================
 
