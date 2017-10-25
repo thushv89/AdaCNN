@@ -69,9 +69,9 @@ def add_with_action(
             pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
         # calculating new weights
-
-        tf_new_weights = tf.concat(axis=3, values=[w, tf_weights_this])
-        tf_new_biases = tf.concat(axis=0, values=[b, tf_bias_this])
+        tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, 1, 1, -1])
+        tf_new_weights = tf.div(tf.concat(axis=3, values=[w, tf_weights_this]),tf_reshaped_replicative_factor_vec)
+        tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_bias_this]),tf_replicative_factor_vec)
 
         if research_parameters['optimizer'] == 'Momentum':
             new_weight_vel = tf.concat(axis=3, values=[w_vel, tf_wvelocity_this])
@@ -100,9 +100,13 @@ def add_with_action(
                 w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                 pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
-            tf_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [-1,1])
+            tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [-1,1])
+            tf_reshaped_replicative_factor_vec = tf.tile(tf_reshaped_replicative_factor_vec,[1,final_2d_width*final_2d_width])
+            tf_reshaped_replicative_factor_vec = tf.reshape(tf_reshaped_replicative_factor_vec,[-1])
+            tf_reshaped_replicative_factor_vec = tf.reshape(tf_reshaped_replicative_factor_vec,[-1,1])
+
             tf_weights_next = tf.squeeze(tf_weights_next)
-            tf_new_weights = tf.div(tf.concat(axis=0, values=[w, tf_weights_next]),tf_replicative_factor_vec)
+            tf_new_weights = tf.div(tf.concat(axis=0, values=[w, tf_weights_next]),tf_reshaped_replicative_factor_vec)
 
             # updating velocity vectors
             if research_parameters['optimizer'] == 'Momentum':
@@ -127,8 +131,8 @@ def add_with_action(
                 w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                 pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
-            tf_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, 1, -1, 1])
-            tf_new_weights = tf.div(tf.concat(axis=2, values=[w, tf_weights_next]),tf_replicative_factor_vec)
+            tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, 1, -1, 1])
+            tf_new_weights = tf.div(tf.concat(axis=2, values=[w, tf_weights_next]),tf_reshaped_replicative_factor_vec)
 
             if research_parameters['optimizer'] == 'Momentum':
                 new_weight_vel = tf.concat(axis=2, values=[w_vel, tf_wvelocity_next])
@@ -176,8 +180,10 @@ def add_to_fulcon_with_action(
             pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
         # calculating new weights
-        tf_new_weights = tf.concat(axis=1, values=[w, tf.squeeze(tf_fulcon_weights_this)])
-        tf_new_biases = tf.concat(axis=0, values=[b, tf_fulcon_bias_this])
+        tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, -1])
+        tf_new_weights = tf.div(tf.concat(axis=1, values=[w, tf.squeeze(tf_fulcon_weights_this)]),tf_reshaped_replicative_factor_vec)
+        tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_fulcon_bias_this]),tf_replicative_factor_vec)
+
 
         if research_parameters['optimizer'] == 'Momentum':
             new_weight_vel = tf.concat(axis=1, values=[w_vel, tf.squeeze(tf_fulcon_wvelocity_this)])
@@ -202,9 +208,9 @@ def add_to_fulcon_with_action(
             w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
             pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
-        tf_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec,[-1,1])
+        tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec,[-1,1])
         tf_weights_next = tf.squeeze(tf_fulcon_weights_next)
-        tf_new_weights = tf.div(tf.concat(axis=0, values=[w, tf_weights_next]),tf_replicative_factor_vec)
+        tf_new_weights = tf.div(tf.concat(axis=0, values=[w, tf_weights_next]),tf_reshaped_replicative_factor_vec)
 
         # updating velocity vectors
         if research_parameters['optimizer'] == 'Momentum':

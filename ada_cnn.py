@@ -210,6 +210,7 @@ perf_logger = None
 
 # Reset CNN
 tf_reset_cnn, tf_reset_cnn_custom = None, None
+tf_prune_factor = None
 prune_reward_experience = []
 
 
@@ -331,16 +332,14 @@ def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameter
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels))
 
     if include_l2_loss:
-        fulcons = []
+        layers_for_l2_loss = []
+        l2_weights = []
         for op in cnn_ops:
-            if 'fulcon' in op and op != 'fulcon_out':
-                fulcons.append(op)
-        fc_weights = []
-        for op in fulcons:
-            with tf.variable_scope(op):
-                fc_weights.append(tf.get_variable(TF_WEIGHTS))
+            if 'fulcon' in op or 'conv' in op:
+                with tf.variable_scope(op):
+                    l2_weights.append(tf.get_variable(TF_WEIGHTS))
 
-        loss = tf.reduce_sum([loss, beta * tf.reduce_sum([tf.nn.l2_loss(w) for w in fc_weights])])
+        loss = tf.reduce_sum([loss, beta * tf.reduce_sum([tf.nn.l2_loss(w) for w in l2_weights])])
 
     total_loss = loss
 
@@ -528,7 +527,7 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
 
 def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global optimizer
-    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_reset_cnn_custom, tf_prune_cnn_hyperparameters
+    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_reset_cnn_custom, tf_prune_factor, tf_prune_cnn_hyperparameters
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
@@ -730,19 +729,22 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='fulcon_input_size')
                 tf_out_size = tf.placeholder(dtype=tf.int32, name='fulcon_output_size')
                 tf_replicative_factor_vec = tf.placeholder(dtype=tf.float32, shape=[None], name='tf_replicative_factor')
+
                 init_tf_prune_cnn_hyperparameters()
+                tf_prune_factor = tf.placeholder(shape=None, dtype=tf.float32,name='prune_factor')
+                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(
+                    tf_prune_cnn_hyperparameters,cnn_ops,tf_prune_factor
+                )
 
-                tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(tf_prune_cnn_hyperparameters,cnn_ops)
-
-                for op in cnn_ops:
+                '''for op in cnn_ops:
                     if 'pool' in op:
                         continue
                     else:
                         tf_retain_id_placeholders[op] = {'in':None, 'out':None}
-                        tf_retain_id_placeholders[op]['in'] = tf.placeholder(dtype=tf.int32,shape=[None],name='weight_mean_placeholder_in_'+op)
+                        tf_retain_id_placeholders[op]['in'] = tf.placeholder(dtype=tf.int32,shape=[None],name='retain_id_placeholder_in_'+op)
                         tf_retain_id_placeholders[op]['out'] = tf.placeholder(dtype=tf.int32, shape=[None],
-                                                                            name='weight_mean_placeholder_out_' + op)
-                tf_reset_cnn_custom = cnn_intializer.reset_cnn_preserve_weights_custom(tf_prune_cnn_hyperparameters,cnn_ops,tf_retain_id_placeholders)
+                                                                            name='retain_id_placeholder_out_' + op)
+                tf_reset_cnn_custom = cnn_intializer.reset_cnn_preserve_weights_custom(tf_prune_cnn_hyperparameters,cnn_ops,tf_retain_id_placeholders)'''
 
                 for tmp_op in cnn_ops:
                     # Convolution related adaptation operations
@@ -753,11 +755,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                                                      tf_wvelocity_this, tf_bvelocity_this,
                                                                      tf_wvelocity_next,tf_replicative_factor_vec)
 
-                        tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
+                        tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
                             optimizer, tf_indices,
                             tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                             tf.constant(start_lr, dtype=tf.float32), global_step
                         )
+
 
                     # Fully connected realted adaptation operations
                     elif 'fulcon' in tmp_op:
@@ -771,7 +774,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             )
 
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
-                                tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
+                                tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
                                 optimizer, tf_indices,
                                 tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                                 tf.constant(start_lr, dtype=tf.float32), global_step
@@ -888,17 +891,17 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     '''
     global current_adaptive_dropout
     amount_to_add = ai[1]
-    scale_for_rand = 0.001
+    scale_for_rand = 0.00001
 
     min_rand_threshold = 0.005
     max_rand_threshold = 0.5
 
-    if epoch==-1:
-        rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * ((1.0 / (li+1.0)) ** 1.5)])
-    else:
-        rand_thresh_for_layer = 0.0
+    #if epoch==-1:
+    rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
+    #else:
+    #rand_thresh_for_layer = 0.0
 
-    print('Rand thresh for layer: %.5f',rand_thresh_for_layer)
+    print('Rand thresh for layer: ',rand_thresh_for_layer)
     if current_op != last_conv_id:
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
@@ -918,26 +921,32 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         #Net2Net type initialization
         if np.random.random()<rand_thresh_for_layer:
             print('Net2Net Initialization')
+
+            curr_weight_shape = curr_weights.shape
+            next_weights_shape = next_weights.shape
+
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
-            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
-
-            ind_counter = Counter(all_indices_plus_rand.tolist())
-            sorted_keys = sorted(ind_counter.keys())
-            count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/1.0])
+            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            #ind_counter = Counter(all_indices_plus_rand.tolist())
+            #sorted_keys = sorted(ind_counter.keys())
+            #normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
+            #print(normalize_factor)
+            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+            #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])#*normalize_factor
+            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  # * normalize_factor
 
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
-            curr_binomial = np.random.normal(scale=scale_for_rand, size=new_curr_weights.shape).astype(np.float32)
+            curr_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_curr_weights.shape).astype(np.float32)
             new_curr_weights *= curr_binomial
-            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+            new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             if last_conv_id != current_op:
                 new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
-                next_binomial = np.random.normal(scale=scale_for_rand,size=new_next_weights.shape).astype(np.float32)
+                next_binomial = np.random.normal(scale=scale_for_rand/10.0,size=new_next_weights.shape).astype(np.float32)
                 new_next_weights *= next_binomial
                 #new_next_weights = next_weights[:, :, rand_indices, :]
             else:
@@ -953,8 +962,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
                 all_indices_2 = np.stack(all_indices_2).ravel()
 
-                count_vec = np.repeat(count_vec, final_2d_width * final_2d_width)
-
                 new_next_weights = (next_weights[all_indices_1,:] + next_weights[all_indices_2,:])/2.0
                 new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
@@ -968,7 +975,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
                 new_next_weights = np.random.normal(scale=scale_for_rand,
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
-                count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
             else:
                 new_curr_weights = np.random.normal(scale=scale_for_rand,
                                                      size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
@@ -976,7 +982,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
                 new_next_weights = np.random.normal(scale=scale_for_rand,
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
-                count_vec = np.ones((curr_weight_shape[3] + amount_to_add)*final_2d_width*final_2d_width, dtype=np.float32)
+
+            normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
+            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)# * normalize_factor
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
@@ -1139,17 +1147,17 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     global current_adaptive_dropout
     amount_to_add = ai[1]
 
-    scale_for_rand = 0.001
+    scale_for_rand = 0.00001
 
     min_rand_threshold = 0.005
     max_rand_threshold = 0.5
 
-    if epoch==-1:
-        rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * ((1.0 / (li+1.0)) ** 1.5)])
-    else:
-        rand_thresh_for_layer = 0.0
+    #if epoch==-1:
+    rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
+    #else:
+    #rand_thresh_for_layer = 0.0
 
-    print('Rand thresh for layer: %.5f', rand_thresh_for_layer)
+    print('Rand thresh for layer: ', rand_thresh_for_layer)
 
     if current_op != last_conv_id:
         next_fulcon_op = \
@@ -1167,33 +1175,45 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
         # Net2Net Initialization
         if np.random.random()<rand_thresh_for_layer:
+
+            print('Net2Net Initialization')
+            curr_weight_shape = curr_weights.shape
+            next_weights_shape = next_weights.shape
+
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
-            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
-            print('allindices plus rand',all_indices_plus_rand.shape)
-            ind_counter = Counter(all_indices_plus_rand.tolist())
-            sorted_keys = np.asarray(sorted(ind_counter.keys()))
-            count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
-            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/1.0])
+            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            #print('allindices plus rand',all_indices_plus_rand.shape)
+            #ind_counter = Counter(all_indices_plus_rand.tolist())
+            #sorted_keys = np.asarray(sorted(ind_counter.keys()))
+            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+
+            normalize_factor = 1.0*(curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
+            print(normalize_factor)
+            #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])#*normalize_factor
+            count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  # *normalize_factor
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
-            new_curr_binomial = np.random.normal(scale=scale_for_rand,size=new_curr_weights.shape)
+            new_curr_binomial = np.random.normal(scale=scale_for_rand/10.0,size=new_curr_weights.shape)
             new_curr_weights *= new_curr_binomial
-            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+            new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
-            new_next_binomial = np.random.normal(scale=scale_for_rand, size=new_next_weights.shape)
+            new_next_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_next_weights.shape)
             new_next_weights *= new_next_binomial
         else:
+            print('Random Initialization')
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
             new_curr_weights = np.random.normal(scale=scale_for_rand,size=(curr_weight_shape[0],amount_to_add,1,1))
-            new_curr_bias = np.random.normal(scale=scale_for_rand,size=(amount_to_add))
+            new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
             new_next_weights = np.random.normal(scale=scale_for_rand,size=(amount_to_add,next_weights_shape[1],1,1))
-            count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
+
+            normalize_factor = (curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
+            count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)#*normalize_factor
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
@@ -1761,13 +1781,13 @@ def init_tf_prune_cnn_hyperparameters():
     for op in cnn_ops:
         if 'conv' in op:
             tf_prune_cnn_hyperparameters[op] = {'weights':
-                                   tf.placeholder(shape=[4],dtype=tf.int32)
+                                   tf.placeholder(shape=[4],dtype=tf.int32,name='tf_prune_hyp_'+op)
                                }
 
         if 'fulcon' in op:
 
-            tf_prune_cnn_hyperparameters[op] = {'in': tf.placeholder(shape=None, dtype=tf.int32),
-                               'out': tf.placeholder(shape=None, dtype=tf.int32)
+            tf_prune_cnn_hyperparameters[op] = {'in': tf.placeholder(shape=None, dtype=tf.int32,name="tf_prune_fulcon_hyp_in"),
+                               'out': tf.placeholder(shape=None, dtype=tf.int32,name="tf_prune_fulcon_hyp_out")
                                    }
 
 
@@ -1833,7 +1853,7 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
     return pruned_cnn_hyps
 
 
-def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps,weight_means):
+def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps):
     global tf_retain_id_placeholders, cnn_ops,num_channels,final_2d_width,first_fc
 
     retain_ids_feed_dict = {}
@@ -1845,55 +1865,72 @@ def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps,weight_means):
         elif 'conv' in op:
 
             # Out pruning
+            amount_before_prune = cnn_hyps[op]['weights'][3]
+            logger.info('\tCurrent amout: %d', amount_before_prune)
             amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
-            logger.info('\tAmount of filers to retain for %s: %d (out)',op,amount_to_retain_out_ch)
-            op_weight_means = weight_means[op]
-            op_retain_ids_out = np.argsort(op_weight_means).ravel()[-amount_to_retain_out_ch:]
-            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: op_retain_ids_out})
+            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
+            amout_to_prune = amount_before_prune - amount_to_retain_out_ch
 
-            # In pruning
+            range_indices_for_conv = np.array_split(np.arange(0,amount_before_prune),amout_to_prune)
+
+            op_prune_ids_out = []
+            for slice in range_indices_for_conv:
+                op_prune_ids_out.append(np.random.choice(slice,replace=False))
+            op_retain_ids_out = np.asarray(list(set(np.arange(amount_before_prune).tolist())-set(op_prune_ids_out)))
+
+            logger.info('\tAmount of filers to retain for %s: %d (out)',op,amount_to_retain_out_ch)
+
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: np.asarray(op_retain_ids_out)})
+
+            # In pruning (For layers other than closest to input)
             if prev_op is not None:
                 assert pruned_cnn_hyps[op]['weights'][2] == pruned_cnn_hyps[prev_op]['weights'][3]
                 amount_to_retain_in_ch = pruned_cnn_hyps[op]['weights'][2]
-                prev_op_weight_means = weight_means[prev_op]
-                op_retain_ids_in = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch:]
+                #op_retain_ids_in = np.repeat(np.asarray(op_retain_ids_out),final_2d_width*final_2d_width)
+                op_retain_ids_in = prev_retain_in_ch
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
                 logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
             else:
                 op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
 
+            prev_retain_in_ch = np.asarray(op_retain_ids_out)
             prev_op = op
 
         elif 'fulcon' in op:
             # Out pruning
+            amount_before_prune = cnn_hyps[op]['out']
+            logger.info('\tCurrent amout: %d',amount_before_prune)
             amount_to_retain_out_ch = pruned_cnn_hyps[op]['out']
             logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
-            op_weight_means = weight_means[op]
-            op_retain_ids_out = np.argsort(op_weight_means).ravel()[-amount_to_retain_out_ch:]
-            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:op_retain_ids_out})
+            amout_to_prune = amount_before_prune - amount_to_retain_out_ch
+
+            op_prune_ids_out = []
+            if amout_to_prune>0:
+                range_indices_for_fulcon = np.array_split(np.arange(0,amount_before_prune),amout_to_prune)
+                for slice in range_indices_for_fulcon:
+                    op_prune_ids_out.append(np.random.choice(slice,replace=False))
+
+            op_retain_ids_out = np.asarray(list(set(np.arange(amount_before_prune).tolist()) - set(op_prune_ids_out)))
+
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:np.asarray(op_retain_ids_out)})
 
             # In Pruning
             if op==first_fc:
                 amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
                 logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
-                prev_op_weight_means = weight_means[prev_op]
-                op_retain_slice_ids = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch_slices:]
-
-                op_retain_ids_in = []
-                for slice_id in op_retain_slice_ids:
-                    op_retain_ids_in.extend(list(range(slice_id*(final_2d_width*final_2d_width),(slice_id+1)*(final_2d_width*final_2d_width))))
-
+                op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
+                #op_retain_ids_in = np.asarray(op_retain_ids_out)
                 logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, len(op_retain_ids_in))
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: np.asarray(op_retain_ids_in)})
 
             else:
                 amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
                 logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
-                prev_op_weight_means = weight_means[prev_op]
-                op_retain_ids_in = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch:]
+                op_retain_ids_in = np.asarray(prev_retain_in_ch)
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
 
+            prev_retain_in_ch = np.asarray(op_retain_ids_out)
             prev_op = op
 
     return retain_ids_feed_dict
@@ -1975,10 +2012,13 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     # With that, we find the amount of prune_ids that will make the final structure same as pruned_hyperparameters
     # weight_mean_ops = session.run(tf_weight_mean_ops)
     pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
-    # prune_ids_feed_dict = get_pruned_ids_feed_dict(cnn_hyperparameters,pruned_hyps, weight_mean_ops)
-    # full_prune_feed_dict = dict(pruned_feed_dict)
-    # full_prune_feed_dict.update(prune_ids_feed_dict)
-    # session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
+    pruned_feed_dict.update({tf_prune_factor:1.0})
+    #prune_ids_feed_dict = get_pruned_ids_feed_dict(cnn_hyperparameters,pruned_hyps)
+    #full_prune_feed_dict = dict(pruned_feed_dict)
+    #full_prune_feed_dict.update(prune_ids_feed_dict)
+
+    #session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
+
     session.run(tf_reset_cnn, feed_dict=pruned_feed_dict)
 
     for tmp_op in cnn_ops:

@@ -158,7 +158,7 @@ def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
     return vel_var_list
 
 
-def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops):
+def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops, tf_prune_factor):
     '''
     Keep the values of the weights but prune the size of the network
     We keep the very first set of indices as the indices are a representation of the age of the filer
@@ -184,7 +184,7 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops):
                 # in channel pruning
                 gathered_weights = tf.transpose(gathered_weights,[2,0,1,3])
                 gathered_weights = tf.gather(gathered_weights, tf.range(cnn_hyps[op]['weights'][2]))
-                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])
+                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
@@ -217,7 +217,7 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops):
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
                 bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['weights'][3]))
+                gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['weights'][3]))/tf_prune_factor
 
                 reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
 
@@ -247,7 +247,7 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops):
                 gathered_weights = tf.transpose(gathered_weights)
 
                 # In pruning
-                gathered_weights = tf.gather(gathered_weights, tf.range(cnn_hyps[op]['in']))
+                gathered_weights = tf.gather(gathered_weights, tf.range(cnn_hyps[op]['in']))/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
@@ -276,7 +276,7 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops):
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
                 bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['out']))
+                gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['out']))/tf_prune_factor
                 reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
 
                 with tf.variable_scope(TF_BIAS):
@@ -292,7 +292,7 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops):
     return reset_ops
 
 
-def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids):
+def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_factor):
     '''
     Keep the values of the weights but prune the size of the network
     We keep the very first set of indices as the indices are a representation of the age of the filer
@@ -318,7 +318,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids):
                 # in channel pruning
                 gathered_weights = tf.transpose(gathered_weights,[2,0,1,3])
                 gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])
-                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])
+                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
@@ -351,7 +351,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids):
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
                 bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])
+                gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])/tf_prune_factor
 
                 reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
 
@@ -376,7 +376,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids):
                 gathered_weights = tf.transpose(gathered_weights)
 
                 # In pruning
-                gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])
+                gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
@@ -405,7 +405,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids):
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
                 bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])
+                gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])/tf_prune_factor
                 reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
 
                 with tf.variable_scope(TF_BIAS):

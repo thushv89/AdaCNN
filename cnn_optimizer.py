@@ -15,15 +15,18 @@ TF_SCOPE_DIVIDER = constants.TF_SCOPE_DIVIDER
 
 research_parameters = None
 model_parameters = None
-
+add_amout, add_fulcon_amount = None,None
 logging_level, logging_format = None, None
 logger = None
 
 cnn_ops = None
 def set_from_main(research_params, model_params, logging_level, logging_format, ops):
-    global research_parameters, model_parameters,logger, cnn_ops
+    global research_parameters, model_parameters,logger, cnn_ops, add_amout, add_fulcon_amount
     research_parameters = research_params
     model_parameters = model_params
+    add_amout = model_parameters['add_amount']
+    add_fulcon_amount = model_parameters['add_fulcon_amount']
+
     cnn_ops = ops
 
     logger = logging.getLogger('cnn_optimizer_logger')
@@ -177,6 +180,172 @@ def optimize_with_momentum(optimizer, loss, global_step, learning_rate):
     return grad_update_ops, vel_update_ops
 
 
+def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_replace, op, avg_grad_and_vars,
+                                      tf_cnn_hyperparameters, learning_rate, global_step):
+    global cnn_ops, cnn_hyperparameters
+
+    decay_lr = model_parameters['decay_learning_rate']
+    # decay_lr = False
+
+    # Define the learning rate decay
+    if decay_lr:
+        learning_rate = tf.maximum(model_parameters['min_learning_rate'],
+                                   tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
+                                                              decay_rate=model_parameters['adapt_decay_rate'],
+                                                              staircase=True))
+    else:
+        learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')
+
+    vel_update_ops = [] # ops that contain velocity updates
+    grad_ops = [] # ops that contain actual gradients
+
+    mask_grads_w, mask_grads_b = {}, {}
+
+    filter_indices_to_replace = tf.reshape(filter_indices_to_replace, [-1, 1])
+    replace_amnt = tf.shape(filter_indices_to_replace)[0]
+
+    print(op)
+    for tmp_op in cnn_ops:
+        print('\t',tmp_op)
+        if 'conv' in tmp_op:
+            with tf.variable_scope(tmp_op, reuse=True) as scope:
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
+                for (g, v) in avg_grad_and_vars:
+                    if v.name == w.name:
+                        grads_w = g
+                    if v.name == b.name:
+                        grads_b = g
+
+                transposed_shape = [tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3],
+                                    tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][0],
+                                    tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][1],
+                                    tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][2]]
+
+                logger.debug('Applying gradients for %s', tmp_op)
+                logger.debug('\tAnd filter IDs: %s', filter_indices_to_replace)
+
+                if tmp_op==op:
+                    mask_grads_w[tmp_op] = tf.scatter_nd(
+                        filter_indices_to_replace,
+                        tf.ones(shape=[replace_amnt, transposed_shape[1], transposed_shape[2], transposed_shape[3]],
+                                dtype=tf.float32),
+                        shape=transposed_shape
+                    )
+                else:
+                    mask_grads_w[tmp_op] = tf.scatter_nd(
+                        tf.random_shuffle(tf.range(0,tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]))[:add_amout],
+                        tf.ones(shape=[add_amout, transposed_shape[1], transposed_shape[2], transposed_shape[3]],
+                                dtype=tf.float32),
+                        shape=transposed_shape
+                    )
+
+                mask_grads_w[tmp_op] = tf.transpose(mask_grads_w[tmp_op], [1, 2, 3, 0])
+
+                mask_grads_b[tmp_op] = tf.scatter_nd(
+                    filter_indices_to_replace,
+                    tf.ones([replace_amnt], dtype=tf.float32),
+                    shape=[tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]]
+                )
+
+                grads_w *= mask_grads_w[tmp_op]
+                grads_b *= mask_grads_b[tmp_op]
+
+                with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                with tf.variable_scope(TF_BIAS) as child_scope:
+                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+                vel_update_ops.append(
+                    tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
+                vel_update_ops.append(
+                    tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+
+                grad_ops.append(
+                    optimizer.apply_gradients([(w_vel * learning_rate  * mask_grads_w[tmp_op], w),
+                                               (b_vel * learning_rate * mask_grads_b[tmp_op], b)]))
+
+        elif 'fulcon' in tmp_op and tmp_op!='fulcon_out':
+
+            with tf.variable_scope(tmp_op, reuse=True) as scope:
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                for (g, v) in avg_grad_and_vars:
+                    if v.name == w.name:
+                        grads_w = g
+                    if v.name == b.name:
+                        grads_b = g
+
+                transposed_shape = [tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR],
+                                    tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_IN_STR],
+                                    ]
+
+                logger.debug('Applying gradients for %s', tmp_op)
+                logger.debug('\tAnd filter IDs: %s', filter_indices_to_replace)
+
+                if tmp_op==op:
+                    mask_grads_w[tmp_op] = tf.scatter_nd(
+                        filter_indices_to_replace,
+                        tf.ones(shape=[replace_amnt, transposed_shape[1]],
+                                dtype=tf.float32),
+                        shape=transposed_shape
+                    )
+                else:
+                    mask_grads_w[tmp_op] = tf.scatter_nd(
+                        tf.random_shuffle(tf.range(0, tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]))[:add_fulcon_amount],
+                        tf.ones(shape=[add_fulcon_amount, transposed_shape[1]],
+                                dtype=tf.float32),
+                        shape=transposed_shape
+                    )
+                mask_grads_w[tmp_op] = tf.transpose(mask_grads_w[tmp_op], [1, 0])
+
+                mask_grads_b[tmp_op] = tf.scatter_nd(
+                    filter_indices_to_replace,
+                    tf.ones([replace_amnt], dtype=tf.float32),
+                    shape=[tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]]
+                )
+
+                grads_w = grads_w * mask_grads_w[tmp_op]
+                grads_b = grads_b * mask_grads_b[tmp_op]
+
+                with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                with tf.variable_scope(TF_BIAS) as child_scope:
+                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+                vel_update_ops.append(
+                    tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
+                vel_update_ops.append(
+                    tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+
+                grad_ops.append(optimizer.apply_gradients(
+                    [(w_vel * learning_rate * mask_grads_w[tmp_op], w), (b_vel * learning_rate * mask_grads_b[tmp_op], b)]))
+
+        elif tmp_op=='fulcon_out':
+
+            with tf.variable_scope(tmp_op, reuse=True) as scope:
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                for (g, v) in avg_grad_and_vars:
+                    if v.name == w.name:
+                        grads_w = g
+                    if v.name == b.name:
+                        grads_b = g
+
+                with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                with tf.variable_scope(TF_BIAS) as child_scope:
+                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+                vel_update_ops.append(
+                    tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
+                vel_update_ops.append(
+                    tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+
+                grad_ops.append(optimizer.apply_gradients(
+                    [(w_vel * learning_rate, w), (b_vel * learning_rate, b)]))
+
+    return grad_ops, vel_update_ops
+
+
 def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, avg_grad_and_vars,
                                       tf_cnn_hyperparameters, learning_rate, global_step):
     '''
@@ -255,7 +424,7 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
             vel_update_ops.append(
                 tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
 
-            grad_ops.append(optimizer.apply_gradients([(w_vel * learning_rate, w), (b_vel * learning_rate, b)]))
+            grad_ops.append(optimizer.apply_gradients([(w_vel * learning_rate * mask_grads_w[op], w), (b_vel * learning_rate * mask_grads_b[op], b)]))
 
     next_op = None
     for tmp_op in cnn_ops[cnn_ops.index(op) + 1:]:
@@ -295,7 +464,7 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
             vel_update_ops.append(
                 tf.assign(pool_w_vel, research_parameters['pool_momentum'] * pool_w_vel + grads_w))
 
-            grad_ops.append(optimizer.apply_gradients([(pool_w_vel * learning_rate, w)]))
+            grad_ops.append(optimizer.apply_gradients([(pool_w_vel * learning_rate * mask_grads_w[next_op], w)]))
 
     elif 'fulcon' in next_op:
         with tf.variable_scope(next_op, reuse=True) as scope:
@@ -324,7 +493,7 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
                 tf.assign(pool_w_vel,
                           research_parameters['pool_momentum'] * pool_w_vel + grads_w))
 
-            grad_ops.append(optimizer.apply_gradients([(pool_w_vel * learning_rate, w)]))
+            grad_ops.append(optimizer.apply_gradients([(pool_w_vel * learning_rate * mask_grads_w[next_op], w)]))
 
     return grad_ops, vel_update_ops
 
@@ -406,7 +575,7 @@ def optimize_masked_momentum_gradient_for_fulcon(optimizer, filter_indices_to_re
             vel_update_ops.append(
                 tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
 
-            grad_ops.append(optimizer.apply_gradients([(w_vel * learning_rate, w), (b_vel * learning_rate, b)]))
+            grad_ops.append(optimizer.apply_gradients([(w_vel * learning_rate *mask_grads_w[op], w), (b_vel * learning_rate * mask_grads_b[op], b)]))
 
     next_op = cnn_ops[cnn_ops.index(op) + 1]
 
@@ -438,7 +607,7 @@ def optimize_masked_momentum_gradient_for_fulcon(optimizer, filter_indices_to_re
             tf.assign(pool_w_vel,
                       research_parameters['pool_momentum'] * pool_w_vel + grads_w))
 
-        grad_ops.append(optimizer.apply_gradients([(pool_w_vel * learning_rate, w)]))
+        grad_ops.append(optimizer.apply_gradients([(pool_w_vel * learning_rate * mask_grads_w[next_op], w)]))
 
     return grad_ops, vel_update_ops
 
