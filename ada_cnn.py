@@ -755,7 +755,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                                                      tf_wvelocity_this, tf_bvelocity_this,
                                                                      tf_wvelocity_next,tf_replicative_factor_vec)
 
-                        tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
+                        tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
                             tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                             tf.constant(start_lr, dtype=tf.float32), global_step
@@ -774,7 +774,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             )
 
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
-                                tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
+                                tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
                                 optimizer, tf_indices,
                                 tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                                 tf.constant(start_lr, dtype=tf.float32), global_step
@@ -926,26 +926,26 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             next_weights_shape = next_weights.shape
 
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
-            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
+            #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
-            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
-            #ind_counter = Counter(all_indices_plus_rand.tolist())
-            #sorted_keys = sorted(ind_counter.keys())
-            #normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
+            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel()])
+            ind_counter = Counter(all_indices_plus_rand.tolist())
+            sorted_keys = sorted(ind_counter.keys())
+            normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
             #print(normalize_factor)
-            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-            #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])#*normalize_factor
-            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  # * normalize_factor
+            count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+            count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
+            #count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  # * normalize_factor
 
             print('count vec',count_vec.shape)
             print(count_vec)
-            new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
+            new_curr_weights = curr_weights[:,:,:,rand_indices_1]
             curr_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_curr_weights.shape).astype(np.float32)
             new_curr_weights *= curr_binomial
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             if last_conv_id != current_op:
-                new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
+                new_next_weights = next_weights[:,:,rand_indices_1,:]
                 next_binomial = np.random.normal(scale=scale_for_rand/10.0,size=new_next_weights.shape).astype(np.float32)
                 new_next_weights *= next_binomial
                 #new_next_weights = next_weights[:, :, rand_indices, :]
@@ -956,13 +956,13 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 all_indices_1 = [np.arange(l,u) for (l,u) in low_up_bounds_1]
                 all_indices_1 = np.stack(all_indices_1).ravel()
 
-                low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
-                upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
-                low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
-                all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
-                all_indices_2 = np.stack(all_indices_2).ravel()
+                #low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
+                #upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
+                #low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
+                #all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
+                #all_indices_2 = np.stack(all_indices_2).ravel()
 
-                new_next_weights = (next_weights[all_indices_1,:] + next_weights[all_indices_2,:])/2.0
+                new_next_weights = next_weights[all_indices_1,:]
                 new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         # Random initialization
@@ -984,7 +984,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
 
             normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
-            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)# * normalize_factor
+            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32) #* normalize_factor
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
@@ -1181,26 +1181,26 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             next_weights_shape = next_weights.shape
 
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
-            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
+            #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
-            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel()])
             #print('allindices plus rand',all_indices_plus_rand.shape)
-            #ind_counter = Counter(all_indices_plus_rand.tolist())
-            #sorted_keys = np.asarray(sorted(ind_counter.keys()))
-            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+            ind_counter = Counter(all_indices_plus_rand.tolist())
+            sorted_keys = np.asarray(sorted(ind_counter.keys()))
+            count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
 
             normalize_factor = 1.0*(curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
             print(normalize_factor)
-            #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])#*normalize_factor
-            count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  # *normalize_factor
+            count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
+            #count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  # *normalize_factor
             print('count vec',count_vec.shape)
             print(count_vec)
-            new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
+            new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices_1],-1),-1)
             new_curr_binomial = np.random.normal(scale=scale_for_rand/10.0,size=new_curr_weights.shape)
             new_curr_weights *= new_curr_binomial
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
-            new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
+            new_next_weights = next_weights[rand_indices_1,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
             new_next_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_next_weights.shape)
             new_next_weights *= new_next_binomial
@@ -1213,7 +1213,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             new_next_weights = np.random.normal(scale=scale_for_rand,size=(amount_to_add,next_weights_shape[1],1,1))
 
             normalize_factor = (curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
-            count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)#*normalize_factor
+            count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32) #* normalize_factor
 
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
