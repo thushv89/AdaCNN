@@ -419,8 +419,7 @@ def accuracy(predictions, labels):
 def setup_loggers(adapt_structure):
     '''
     Setting up loggers
-    logger: Main Logger
-    error_logger: Log Train loss, Validation Accuracy, Test Accuracy
+    logger: Main Loggerrun
     perf_logger: Logging time
     hyp_logger: Log hyperparameters
     :param adapt_structure:
@@ -893,6 +892,32 @@ def fintune_with_pool_ft(hard_pool_ft):
                                    feed_dict=pool_feed_dict)
 
 
+def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
+    if np.random.random() < 0.1:
+        new_curr_weights = np.flip(new_curr_weights, axis=np.random.choice([0, 1]))
+    if np.random.random() < 0.1:
+        new_curr_weights = np.swapaxes(new_curr_weights, 0, 1)
+    if np.random.random() < 0.8:
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((translate_amout, 0), (0, 0), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[:curr_weight_shape[0], :, :, :]
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((0, translate_amout), (0, 0), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[translate_amout:, :, :, :]
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((0, 0), (translate_amout, 0), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[:, :curr_weight_shape[1], :, :]
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((0, 0), (0, translate_amout), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[:, translate_amout:, :, :]
+
+    return new_curr_weights
+
+
 def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft, epoch):
     '''
     Run the add operation using the given Session
@@ -954,17 +979,14 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = curr_weights[:,:,:,rand_indices_1]
-            if np.random.random()<0.5:
-                new_curr_weights = np.flip(new_curr_weights,axis=np.random.choice([0,1]))
-            if np.random.random()<0.5:
-                new_curr_weights = np.swapaxes(new_curr_weights,0,1)
+            new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
 
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             if last_conv_id != current_op:
                 new_next_weights = next_weights[:,:,rand_indices_1,:]
-                next_binomial = np.random.normal(scale=scale_for_rand/10.0,size=new_next_weights.shape).astype(np.float32)
-                new_next_weights *= next_binomial
+                new_next_weights = get_new_distorted_weights(new_next_weights,next_weights_shape)
+
                 #new_next_weights = next_weights[:, :, rand_indices, :]
             else:
                 low_bound_1 = (rand_indices_1*final_2d_width*final_2d_width).tolist()
