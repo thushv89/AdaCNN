@@ -189,8 +189,9 @@ tf_dropout_rate = None
 valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
 
 # Adaptation related
-tf_slice_optimize = {}
-tf_slice_vel_update = {}
+tf_slice_optimize, tf_training_slice_optimize = {},{}
+tf_slice_vel_update, tf_training_slice_vel_update = {},{}
+
 tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
 tf_indices, tf_indices_size, tf_replicative_factor_vec = None,None,None
 tf_update_hyp_ops = {}
@@ -532,7 +533,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
     global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
-    global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
+    global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops
+    global tf_slice_optimize, tf_slice_vel_update, tf_training_slice_optimize, tf_trainign_slice_vel_update
     global tf_indices, tf_indices_size, tf_replicative_factor_vec, tf_weight_mean_ops, tf_retain_id_placeholders
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
@@ -736,7 +738,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                     tf_prune_cnn_hyperparameters,cnn_ops,tf_prune_factor
                 )
 
-                '''for op in cnn_ops:
+                for op in cnn_ops:
                     if 'pool' in op:
                         continue
                     else:
@@ -744,7 +746,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_retain_id_placeholders[op]['in'] = tf.placeholder(dtype=tf.int32,shape=[None],name='retain_id_placeholder_in_'+op)
                         tf_retain_id_placeholders[op]['out'] = tf.placeholder(dtype=tf.int32, shape=[None],
                                                                             name='retain_id_placeholder_out_' + op)
-                tf_reset_cnn_custom = cnn_intializer.reset_cnn_preserve_weights_custom(tf_prune_cnn_hyperparameters,cnn_ops,tf_retain_id_placeholders)'''
+                tf_reset_cnn_custom = cnn_intializer.reset_cnn_preserve_weights_custom(tf_prune_cnn_hyperparameters,cnn_ops,tf_retain_id_placeholders,tf_prune_factor)
 
                 for tmp_op in cnn_ops:
                     # Convolution related adaptation operations
@@ -760,7 +762,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                             tf.constant(start_lr, dtype=tf.float32), global_step
                         )
-
+                        tf_training_slice_optimize[tmp_op], tf_training_slice_vel_update[tmp_op] =\
+                            cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
+                            optimizer, tf_indices,
+                            tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
+                            tf.constant(start_lr, dtype=tf.float32), global_step
+                        )
 
                     # Fully connected realted adaptation operations
                     elif 'fulcon' in tmp_op:
@@ -779,6 +786,13 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
                                 tf.constant(start_lr, dtype=tf.float32), global_step
                             )
+
+                            tf_training_slice_optimize[tmp_op], tf_training_slice_vel_update[tmp_op] = \
+                                cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
+                                    optimizer, tf_indices,
+                                    tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
+                                    tf.constant(start_lr, dtype=tf.float32), global_step
+                                )
 
 
 def check_several_conditions_with_assert(num_gpus):
@@ -891,10 +905,10 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     '''
     global current_adaptive_dropout
     amount_to_add = ai[1]
-    scale_for_rand = 0.00001
+    scale_for_rand = 0.001
 
-    min_rand_threshold = 0.005
-    max_rand_threshold = 0.5
+    min_rand_threshold = 0.01
+    max_rand_threshold = 0.75
 
     #if epoch==-1:
     rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
@@ -928,20 +942,23 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
-            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel()])
-            ind_counter = Counter(all_indices_plus_rand.tolist())
-            sorted_keys = sorted(ind_counter.keys())
+            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel()])
+            #ind_counter = Counter(all_indices_plus_rand.tolist())
+            #sorted_keys = sorted(ind_counter.keys())
             normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
             #print(normalize_factor)
-            count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-            count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
-            #count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  # * normalize_factor
+            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+            #count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
+            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  # * normalize_factor
 
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = curr_weights[:,:,:,rand_indices_1]
-            curr_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_curr_weights.shape).astype(np.float32)
-            new_curr_weights *= curr_binomial
+            if np.random.random()<0.5:
+                new_curr_weights = np.flip(new_curr_weights,axis=np.random.choice([0,1]))
+            if np.random.random()<0.5:
+                new_curr_weights = np.swapaxes(new_curr_weights,0,1)
+
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             if last_conv_id != current_op:
@@ -971,16 +988,16 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
             if last_conv_id != current_op:
-                new_curr_weights = np.random.normal(scale=scale_for_rand, size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
+                new_curr_weights = np.random.normal(scale=np.sqrt(2.0/(curr_weight_shape[0]*curr_weight_shape[1]*curr_weight_shape[2])), size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
                 new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
-                new_next_weights = np.random.normal(scale=scale_for_rand,
+                new_next_weights = np.random.normal(scale=np.sqrt(2.0/(next_weights_shape[0]*next_weights_shape[1]*next_weights_shape[2])),
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
             else:
-                new_curr_weights = np.random.normal(scale=scale_for_rand,
+                new_curr_weights = np.random.normal(scale=np.sqrt(2.0/(curr_weight_shape[0]*curr_weight_shape[1]*curr_weight_shape[2])),
                                                      size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
                                                      )
                 new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
-                new_next_weights = np.random.normal(scale=scale_for_rand,
+                new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
 
             normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
@@ -1089,7 +1106,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     pbatch_train_count = 0
 
     # Train only with half of the batch
-    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+    '''for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
         if np.random.random() < research_parameters['finetune_rate']:
             pbatch_data, pbatch_labels = [], []
 
@@ -1109,7 +1126,14 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
-                               feed_dict=pool_feed_dict)
+                               feed_dict=pool_feed_dict)'''
+
+    train_feed_dict[tf_dropout_rate] = 0.0
+    train_feed_dict.update({tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
+                                                  cnn_hyperparameters[current_op]['weights'][3])})
+
+    _, _ = session.run([tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
+                       feed_dict=train_feed_dict)
 
     if hard_pool_ft.get_size() > batch_size:
         pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
@@ -1147,10 +1171,10 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     global current_adaptive_dropout
     amount_to_add = ai[1]
 
-    scale_for_rand = 0.00001
+    scale_for_rand = 0.001
 
-    min_rand_threshold = 0.005
-    max_rand_threshold = 0.5
+    min_rand_threshold = 0.01
+    max_rand_threshold = 0.75
 
     #if epoch==-1:
     rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
@@ -1183,21 +1207,22 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
-            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel()])
+            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel()])
             #print('allindices plus rand',all_indices_plus_rand.shape)
-            ind_counter = Counter(all_indices_plus_rand.tolist())
-            sorted_keys = np.asarray(sorted(ind_counter.keys()))
-            count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+            #ind_counter = Counter(all_indices_plus_rand.tolist())
+            #sorted_keys = np.asarray(sorted(ind_counter.keys()))
+            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
 
             normalize_factor = 1.0*(curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
             print(normalize_factor)
-            count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
-            #count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  # *normalize_factor
+            #count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
+            count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  # *normalize_factor
             print('count vec',count_vec.shape)
             print(count_vec)
-            new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices_1],-1),-1)
-            new_curr_binomial = np.random.normal(scale=scale_for_rand/10.0,size=new_curr_weights.shape)
-            new_curr_weights *= new_curr_binomial
+
+            new_curr_weights = curr_weights[:, rand_indices_1]
+            new_curr_weights = np.expand_dims(np.expand_dims(new_curr_weights,-1),-1)
+
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             new_next_weights = next_weights[rand_indices_1,:]
@@ -1208,9 +1233,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             print('Random Initialization')
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
-            new_curr_weights = np.random.normal(scale=scale_for_rand,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_weights = np.random.normal(scale=np.sqrt(2.0/curr_weight_shape[0]),size=(curr_weight_shape[0],amount_to_add,1,1))
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
-            new_next_weights = np.random.normal(scale=scale_for_rand,size=(amount_to_add,next_weights_shape[1],1,1))
+            new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),size=(amount_to_add,next_weights_shape[1],1,1))
 
             normalize_factor = (curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
             count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32) #* normalize_factor
@@ -1285,7 +1310,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     pbatch_train_count = 0
 
     # Train only newly added parameters
-    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+    '''for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
         if np.random.random() < research_parameters['finetune_rate']:
             pbatch_data, pbatch_labels = [], []
 
@@ -1306,8 +1331,12 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
-            pbatch_train_count += 1
+            pbatch_train_count += 1'''
+    train_feed_dict[tf_dropout_rate] = 0.0
+    train_feed_dict.update({tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
+                                                  cnn_hyperparameters[current_op]['out'])})
 
+    _, _ = session.run([tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]], feed_dict=train_feed_dict)
 
     # Optimize full network
     if hard_pool_ft.get_size() > batch_size:
@@ -2569,12 +2598,18 @@ if __name__ == '__main__':
 
                     # =========================================================
                     # # Training Phase (Optimization)
-                    if (not adapt_structure) or current_action_type != adapter.get_donothing_action_type():
+                    if (not adapt_structure):
                         for _ in range(iterations_per_batch):
                             #print('training on current batch (action type: ', current_action_type, ')')
                             _, _ = session.run(
                                 [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
                             )
+                    else:
+                        if current_action_type != adapter.get_donothing_action_type():
+                            _, _ = session.run(
+                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                            )
+
 
                 t1_train = time.clock()
 
