@@ -338,7 +338,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
     for op in cnn_ops:
 
         if 'conv' in op:
-            with tf.variable_scope(op):
+            with tf.variable_scope(op, reuse=True):
                 weights = tf.get_variable(name=TF_WEIGHTS)
                 # Out channel pruning
                 tr_weights = tf.transpose(weights,[3,0,1,2])
@@ -352,7 +352,32 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
 
-                with tf.variable_scope(TF_WEIGHTS):
+                with tf.variable_scope(constants.TF_BN_SCOPE,reuse=True):
+                    mu = tf.get_variable(name=constants.TF_BN_POP_MU_STR)
+                    sigma = tf.get_variable(name=constants.TF_BN_POP_SIGMA_STR)
+                    gamma = tf.get_variable(name=constants.TF_BN_GAMMA_STR)
+                    beta = tf.get_variable(name=constants.TF_BN_BETA_STR)
+
+                    tr_mu = tf.transpose(mu, [2, 0, 1])
+                    gathered_mu = tf.gather(tr_mu, tf_prune_ids[op]['out'])
+                    gathered_mu = tf.transpose(gathered_mu, [1, 2, 0])
+
+                    reset_ops.append(tf.assign(mu, gathered_mu, validate_shape=False))
+
+                    tr_sigma = tf.transpose(sigma, [2, 0, 1])
+                    gathered_sigma = tf.gather(tr_sigma, tf_prune_ids[op]['out'])
+                    gathered_sigma = tf.transpose(gathered_sigma, [1, 2, 0])
+
+                    reset_ops.append(tf.assign(sigma, gathered_sigma, validate_shape=False))
+
+                    gathered_gamma = tf.gather(gamma, tf_prune_ids[op]['out'])
+                    reset_ops.append(tf.assign(gamma, gathered_gamma, validate_shape=False))
+
+                    gathered_beta = tf.gather(beta, tf_prune_ids[op]['out'])
+                    reset_ops.append(tf.assign(beta, gathered_beta, validate_shape=False))
+
+
+                with tf.variable_scope(TF_WEIGHTS,reuse=True):
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
                     # out channel pruning
@@ -394,6 +419,25 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                 gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
+
+                if op != 'fulcon_out':
+                    with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                        mu = tf.get_variable(name=constants.TF_BN_POP_MU_STR)
+                        sigma = tf.get_variable(name=constants.TF_BN_POP_SIGMA_STR)
+                        gamma = tf.get_variable(name=constants.TF_BN_GAMMA_STR)
+                        beta = tf.get_variable(name=constants.TF_BN_BETA_STR)
+
+                        gathered_mu = tf.gather(mu, tf_prune_ids[op]['out'])
+                        reset_ops.append(tf.assign(mu, gathered_mu, validate_shape=False))
+
+                        gathered_sigma = tf.gather(sigma, tf_prune_ids[op]['out'])
+                        reset_ops.append(tf.assign(sigma, gathered_sigma, validate_shape=False))
+
+                        gathered_gamma = tf.gather(gamma, tf_prune_ids[op]['out'])
+                        reset_ops.append(tf.assign(gamma, gathered_gamma, validate_shape=False))
+
+                        gathered_beta = tf.gather(beta, tf_prune_ids[op]['out'])
+                        reset_ops.append(tf.assign(beta, gathered_beta, validate_shape=False))
 
                 with tf.variable_scope(TF_WEIGHTS):
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)

@@ -274,8 +274,6 @@ def inference(dataset, tf_cnn_hyperparameters, training):
 
                 x = utils.lrelu(x, name=scope.name + '/top')
 
-
-
         if 'pool' in op:
             logger.debug('\tPooling (%s) with Kernel:%s Stride:%s' % (
                 op, cnn_hyperparameters[op]['kernel'], cnn_hyperparameters[op]['stride']))
@@ -289,9 +287,6 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                                    padding=cnn_hyperparameters[op]['padding'])
             if datatype!='imagenet-250' and training and use_dropout:
                 x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
-
-            if use_loc_res_norm and 'pool_global' != op:
-                x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha, beta=lrn_beta)
 
         if 'fulcon' in op:
             with tf.variable_scope(op, reuse=True) as scope:
@@ -647,8 +642,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 # Training data opearations
                 logger.info('\tDefining logit operations')
-                tower_logit_op = inference(tf_train_data_batch[-1],
-                                                                    tf_cnn_hyperparameters, True)
+                tower_logit_op = inference(tf_train_data_batch[-1], tf_cnn_hyperparameters, True)
                 tower_logits.append(tower_logit_op)
 
 
@@ -2048,11 +2042,16 @@ def get_pruned_ids_feed_dict_by_gamma(cnn_hyps,pruned_cnn_hyps):
             amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
             logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
             amout_to_prune = amount_before_prune - amount_to_retain_out_ch
-            with tf.variable_scope(op, reuse=True):
-                with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
-                    gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
 
-            op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+            if amout_to_prune>0:
+                with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
+                    with tf.variable_scope(op, reuse=True):
+                        with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                            gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
+
+                op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+            else:
+                op_retain_ids_out = np.arange(pruned_cnn_hyps[op]['weights'][3])
 
             logger.info('\tAmount of filers to retain for %s: %d (out)',op,amount_to_retain_out_ch)
 
@@ -2081,11 +2080,15 @@ def get_pruned_ids_feed_dict_by_gamma(cnn_hyps,pruned_cnn_hyps):
             logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
             amout_to_prune = amount_before_prune - amount_to_retain_out_ch
 
-            with tf.variable_scope(op, reuse=True):
-                with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
-                    gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
+            if amout_to_prune>0:
+                with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
+                    with tf.variable_scope(op, reuse=True):
+                        with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                            gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
 
-            op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+                op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+            else:
+                op_retain_ids_out = np.arange(pruned_cnn_hyps[op]['out'])
 
             retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:np.asarray(op_retain_ids_out)})
 
@@ -2187,13 +2190,13 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     # weight_mean_ops = session.run(tf_weight_mean_ops)
     pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
     pruned_feed_dict.update({tf_prune_factor:1.0})
-    #prune_ids_feed_dict = get_pruned_ids_feed_dict(cnn_hyperparameters,pruned_hyps)
-    #full_prune_feed_dict = dict(pruned_feed_dict)
-    #full_prune_feed_dict.update(prune_ids_feed_dict)
+    prune_ids_feed_dict = get_pruned_ids_feed_dict_by_gamma(cnn_hyperparameters,pruned_hyps)
+    full_prune_feed_dict = dict(pruned_feed_dict)
+    full_prune_feed_dict.update(prune_ids_feed_dict)
 
-    #session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
+    session.run(tf_reset_cnn_custom,feed_dict=full_prune_feed_dict)
 
-    session.run(tf_reset_cnn, feed_dict=pruned_feed_dict)
+    #session.run(tf_reset_cnn, feed_dict=pruned_feed_dict)
 
     for tmp_op in cnn_ops:
         if 'conv' in tmp_op:
@@ -2216,8 +2219,9 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
                 logger.info(tmp_op)
                 logger.info('Weight Shape')
                 logger.info(tf.get_variable(TF_WEIGHTS).eval().shape)
-                logger.info('Bias Shape')
-                logger.info(tf.get_variable(TF_BIAS).eval().shape)
+                if tmp_op=='fulcon_out':
+                    logger.info('Bias Shape')
+                    logger.info(tf.get_variable(TF_BIAS).eval().shape)
     logger.info('=' * 80)
     print(session.run(tf_cnn_hyperparameters))
 
@@ -2235,7 +2239,6 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     prune_reward_experience.append((task_id, prune_factor, prune_reward))
     prune_logger.info('%d,%.5f,%.5f,%.5f,%.5f,%.5f,%s', task_id, prune_factor, p_accuracy_after_prune, p_accuracy_before_prune,
                       (p_accuracy_after_prune - p_accuracy_before_prune) / 100.0, prune_reward,type)
-
 
 
 def get_batch_of_prune_reward_exp(batch_size):
@@ -2262,7 +2265,7 @@ if __name__ == '__main__':
 
     # Various run-time arguments specified
     #
-    allow_growth = False
+    allow_growth = True
     fake_tasks = False
     noise_label_rate = None
     noise_image_rate = None

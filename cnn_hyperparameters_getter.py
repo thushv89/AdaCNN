@@ -121,7 +121,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['start_lr'] = 0.01
     model_hyperparameters['include_l2_loss'] = True
-    model_hyperparameters['beta'] = 0.0005
+    model_hyperparameters['beta'] = 0.0001
     model_hyperparameters['use_loc_res_norm'] = False
 
     model_hyperparameters['top_k_accuracy'] = 1.0
