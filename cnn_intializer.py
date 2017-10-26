@@ -77,12 +77,12 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps, in_h, in_w):
 
                     tf.get_variable(
                         name=constants.TF_BN_POP_MU_STR,
-                        initializer=tf.zeros(shape=[current_feat_map_h,current_feat_map_w,cnn_hyps[op]['weights'][3]], dtype=tf.float32),
+                        initializer=tf.zeros(shape=[1,current_feat_map_h,current_feat_map_w,cnn_hyps[op]['weights'][3]], dtype=tf.float32),
                         validate_shape=False, dtype=tf.float32, trainable=False)
 
                     tf.get_variable(
                         name=constants.TF_BN_POP_SIGMA_STR,
-                        initializer=tf.ones(shape=[current_feat_map_h, current_feat_map_w, cnn_hyps[op]['weights'][3]], dtype=tf.float32),
+                        initializer=tf.ones(shape=[1,current_feat_map_h, current_feat_map_w, cnn_hyps[op]['weights'][3]], dtype=tf.float32),
                         validate_shape=False, dtype=tf.float32, trainable=False)
 
                 tf.get_variable(
@@ -358,15 +358,15 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                     gamma = tf.get_variable(name=constants.TF_BN_GAMMA_STR)
                     beta = tf.get_variable(name=constants.TF_BN_BETA_STR)
 
-                    tr_mu = tf.transpose(mu, [2, 0, 1])
+                    tr_mu = tf.transpose(mu, [3, 0, 1, 2])
                     gathered_mu = tf.gather(tr_mu, tf_prune_ids[op]['out'])
-                    gathered_mu = tf.transpose(gathered_mu, [1, 2, 0])
+                    gathered_mu = tf.transpose(gathered_mu, [1, 2, 3, 0])
 
                     reset_ops.append(tf.assign(mu, gathered_mu, validate_shape=False))
 
-                    tr_sigma = tf.transpose(sigma, [2, 0, 1])
+                    tr_sigma = tf.transpose(sigma, [3, 0, 1, 2])
                     gathered_sigma = tf.gather(tr_sigma, tf_prune_ids[op]['out'])
-                    gathered_sigma = tf.transpose(gathered_sigma, [1, 2, 0])
+                    gathered_sigma = tf.transpose(gathered_sigma, [1, 2, 3, 0])
 
                     reset_ops.append(tf.assign(sigma, gathered_sigma, validate_shape=False))
 

@@ -39,7 +39,8 @@ def set_from_main(research_params,final_2d_w,ops,hyps, logging_level, logging_fo
 def add_with_action(
         op, tf_action_info, tf_weights_this, tf_bias_this,
         tf_weights_next, tf_wvelocity_this,
-        tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec, layer_feature_map_sizes
+        tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec, layer_feature_map_sizes,
+        tf_pop_mu_this, tf_pop_sigma_this, tf_gamma_this, tf_beta_this
 ):
     global cnn_hyperparameters, cnn_ops
     global logger
@@ -88,7 +89,7 @@ def add_with_action(
         update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
 
         # Batch normalization, mu sigma gamma and beta updates
-        update_ops.append(
+        '''update_ops.append(
             tf.assign(mu, tf.concat(
                 values=[mu, tf.zeros(shape=[layer_feature_map_sizes[op],layer_feature_map_sizes[op],amount_to_add],
                                      dtype=tf.float32)],axis=2),
@@ -111,6 +112,28 @@ def add_with_action(
                 values=[beta, tf.zeros(shape=[amount_to_add],
                                      dtype=tf.float32)], axis=0),
                       validate_shape=False)
+        )'''
+
+        update_ops.append(
+        tf.assign(mu, tf.concat(
+            values=[mu, tf_pop_mu_this], axis=3),
+                  validate_shape=False)
+        )
+        update_ops.append(
+        tf.assign(sigma, tf.concat(
+            values=[sigma, tf_pop_sigma_this], axis=3),
+                  validate_shape=False)
+        )
+
+        update_ops.append(
+        tf.assign(gamma, tf.concat(
+            values=[gamma, tf_gamma_this], axis=0),
+                  validate_shape=False)
+        )
+        update_ops.append(
+        tf.assign(beta, tf.concat(
+            values=[beta, tf_beta_this], axis=0),
+                  validate_shape=False)
         )
 
     # ================ Changes to next_op ===============
@@ -174,7 +197,8 @@ def add_with_action(
 def add_to_fulcon_with_action(
         op, tf_action_info, tf_fulcon_weights_this, tf_fulcon_bias_this,
         tf_fulcon_weights_next, tf_fulcon_wvelocity_this,
-        tf_fulcon_bvelocity_this, tf_fulcon_wvelocity_next, tf_replicative_factor_vec
+        tf_fulcon_bvelocity_this, tf_fulcon_wvelocity_next, tf_replicative_factor_vec,
+        tf_pop_mu_this, tf_pop_sigma_this, tf_gamma_this, tf_beta_this
 ):
     global cnn_hyperparameters, cnn_ops
     global logger
@@ -239,7 +263,7 @@ def add_to_fulcon_with_action(
 
 
         # Batch normalization, mu sigma gamma and beta updates
-        update_ops.append(
+        '''update_ops.append(
             tf.assign(mu, tf.concat(
                 values=[mu, tf.zeros(shape=[amount_to_add],
                                      dtype=tf.float32)], axis=0),
@@ -261,6 +285,27 @@ def add_to_fulcon_with_action(
             tf.assign(beta, tf.concat(
                 values=[beta, tf.zeros(shape=[amount_to_add],
                                        dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )'''
+
+        update_ops.append(
+            tf.assign(mu, tf.concat(
+                values=[mu, tf.squeeze(tf_pop_mu_this)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(sigma, tf.concat(
+                values=[sigma, tf.squeeze(tf_pop_sigma_this)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(gamma, tf.concat(
+                values=[gamma, tf.squeeze(tf_gamma_this)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(beta, tf.concat(
+                values=[beta, tf.squeeze(tf_beta_this)], axis=0),
                       validate_shape=False)
         )
 

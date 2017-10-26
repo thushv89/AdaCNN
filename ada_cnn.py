@@ -204,6 +204,8 @@ tf_weight_mean_ops = None
 tf_retain_id_placeholders = {}
 
 # Implement Batch Normalization
+tf_mu_this, tf_sigma_this, tf_gamma_this, tf_beta_this = None, None, None, None
+
 layer_feature_map_size = {}
 adapt_period = None
 
@@ -216,7 +218,7 @@ tf_reset_cnn, tf_reset_cnn_custom = None, None
 tf_prune_factor = None
 prune_reward_experience = []
 
-mean_var_decay = 0.9
+mean_var_decay = 0.99
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -268,7 +270,8 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                                                                                 mean_var_decay * tf.get_variable(constants.TF_BN_POP_SIGMA_STR) + (
                                                                                 1 - mean_var_decay) * x_var))
                     else:
-                        x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR), tf.get_variable(constants.TF_BN_POP_SIGMA_STR), None, None, 1e-5,
+                        x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR), tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
+                                                      tf.get_variable(constants.TF_BN_BETA_STR), tf.get_variable(constants.TF_BN_GAMMA_STR), 1e-5,
                                                       name='op_bn_' + op)
 
 
@@ -323,7 +326,8 @@ def inference(dataset, tf_cnn_hyperparameters, training):
 
                             x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR),
                                                           tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
-                                                          None, None, 1e-5, name='op_bn_' + op)
+                                                          tf.get_variable(constants.TF_BN_BETA_STR),
+                                                          tf.get_variable(constants.TF_BN_GAMMA_STR), 1e-5, name='op_bn_' + op)
 
                     x = utils.lrelu(x, name=scope.name + '/top')
                     if training and use_dropout:
@@ -359,7 +363,8 @@ def inference(dataset, tf_cnn_hyperparameters, training):
 
                             x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR),
                                                           tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
-                                                          None, None, 1e-5, name='op_bn_' + op)
+                                                          tf.get_variable(constants.TF_BN_BETA_STR),
+                                                          tf.get_variable(constants.TF_BN_GAMMA_STR), 1e-5, name='op_bn_' + op)
                     x = utils.lrelu(x)
 
                     if training and use_dropout:
@@ -581,6 +586,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops
     global tf_slice_optimize, tf_slice_vel_update, tf_training_slice_optimize, tf_trainign_slice_vel_update
     global tf_indices, tf_indices_size, tf_replicative_factor_vec, tf_weight_mean_ops, tf_retain_id_placeholders
+    global tf_mu_this, tf_sigma_this, tf_gamma_this, tf_beta_this
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
@@ -770,6 +776,14 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_wvelocity_next = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
                                                    name='new_weights_velocity_next')
 
+                # Batch normalization related placeholders
+                tf_mu_this = tf.placeholder(shape=[1,None, None, None], dtype=tf.float32,
+                                                 name='new_pop_mean_current')
+                tf_sigma_this = tf.placeholder(shape=[1,None, None, None], dtype=tf.float32,
+                                                name='new_pop_var_current')
+                tf_gamma_this = tf.placeholder(shape=(None), dtype=tf.float32, name='new_gamma_current')
+                tf_beta_this = tf.placeholder(shape=(None), dtype=tf.float32, name='new_beta_current')
+
                 logger.info('Defining weight shapes for setting shapes after adaptations')
                 tf_weight_shape = tf.placeholder(shape=[4], dtype=tf.int32, name='weight_shape')
                 tf_in_size = tf.placeholder(dtype=tf.int32, name='fulcon_input_size')
@@ -799,7 +813,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
                                                                      tf_bias_this, tf_weights_next,
                                                                      tf_wvelocity_this, tf_bvelocity_this,
-                                                                     tf_wvelocity_next,tf_replicative_factor_vec, layer_feature_map_size)
+                                                                     tf_wvelocity_next,tf_replicative_factor_vec, layer_feature_map_size,
+                                                                                     tf_mu_this, tf_sigma_this, tf_gamma_this, tf_beta_this)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
@@ -821,7 +836,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         if tmp_op!='fulcon_out':
                             tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
                                 tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
-                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec
+                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec,
+                                tf_mu_this, tf_sigma_this, tf_gamma_this, tf_beta_this
                             )
 
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
@@ -973,7 +989,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     :param hard_pool_ft:
     :return:
     '''
-    global current_adaptive_dropout
+    global current_adaptive_dropout, tf_mu_this, tf_sigma_this, tf_gamma_this, tf_beta_this
     amount_to_add = ai[1]
     scale_for_rand = 0.001
 
@@ -994,6 +1010,11 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
         with tf.variable_scope(current_op,reuse=True):
             curr_weights = tf.get_variable(TF_WEIGHTS).eval()
+            with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                curr_pop_mu = tf.get_variable(constants.TF_BN_POP_MU_STR).eval()
+                curr_pop_sigma = tf.get_variable(constants.TF_BN_POP_SIGMA_STR).eval()
+                curr_gamma = tf.get_variable(constants.TF_BN_GAMMA_STR).eval()
+                curr_beta = tf.get_variable(constants.TF_BN_BETA_STR).eval()
 
         if current_op != last_conv_id:
             with tf.variable_scope(next_conv_op, reuse=True):
@@ -1025,6 +1046,10 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             print(count_vec)
             new_curr_weights = curr_weights[:,:,:,rand_indices_1]
             new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
+            new_curr_mu = curr_pop_mu[:,:,:,rand_indices_1]
+            new_curr_sigma = curr_pop_sigma[:,:,:,rand_indices_1]
+            new_curr_gamma = curr_gamma[rand_indices_1]
+            new_curr_beta = curr_beta[rand_indices_1]
 
             if last_conv_id != current_op:
                 new_next_weights = next_weights[:,:,rand_indices_1,:]
@@ -1052,14 +1077,23 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             print('Random Initialization')
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
+
+            new_curr_mu = np.zeros(
+                shape=(1,layer_feature_map_size[current_op], layer_feature_map_size[current_op], amount_to_add),
+                dtype=np.float32)
+            new_curr_sigma = np.ones(
+                shape=(1,layer_feature_map_size[current_op], layer_feature_map_size[current_op], amount_to_add),
+                dtype=np.float32)
+            new_curr_gamma = np.ones(shape=(amount_to_add), dtype=np.float32)
+            new_curr_beta = np.zeros(shape=(amount_to_add), dtype=np.float32)
+
+            new_curr_weights = np.random.normal(
+                scale=np.sqrt(2.0 / (curr_weight_shape[0] * curr_weight_shape[1] * curr_weight_shape[2])),
+                size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
             if last_conv_id != current_op:
-                new_curr_weights = np.random.normal(scale=np.sqrt(2.0/(curr_weight_shape[0]*curr_weight_shape[1]*curr_weight_shape[2])), size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
                 new_next_weights = np.random.normal(scale=np.sqrt(2.0/(next_weights_shape[0]*next_weights_shape[1]*next_weights_shape[2])),
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
             else:
-                new_curr_weights = np.random.normal(scale=np.sqrt(2.0/(curr_weight_shape[0]*curr_weight_shape[1]*curr_weight_shape[2])),
-                                                     size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
-                                                     )
                 new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
 
@@ -1083,6 +1117,10 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                             amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32) if last_conv_id != current_op else
                         np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
                                         cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32),
+                        tf_mu_this: new_curr_mu,
+                        tf_sigma_this: new_curr_sigma,
+                        tf_gamma_this: new_curr_gamma,
+                        tf_beta_this: new_curr_beta
                     })
 
     # change both weights and biase in the current op
@@ -1215,9 +1253,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                    _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                       feed_dict=pool_feed_dict)
+                #with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                   feed_dict=pool_feed_dict)
 
 
 def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, epoch):
@@ -1230,7 +1268,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     :param hard_pool_ft:
     :return:
     '''
-    global current_adaptive_dropout
+    global current_adaptive_dropout, tf_mu_this, tf_sigma_this, tf_gamma_this, tf_beta_this
     amount_to_add = ai[1]
 
     scale_for_rand = 0.001
@@ -1255,6 +1293,12 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         with tf.variable_scope(current_op,reuse=True):
             curr_weights = tf.get_variable(TF_WEIGHTS).eval()
 
+            with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                curr_pop_mu = tf.get_variable(constants.TF_BN_POP_MU_STR).eval()
+                curr_pop_sigma = tf.get_variable(constants.TF_BN_POP_SIGMA_STR).eval()
+                curr_gamma = tf.get_variable(constants.TF_BN_GAMMA_STR).eval()
+                curr_beta = tf.get_variable(constants.TF_BN_BETA_STR).eval()
+
 
         with tf.variable_scope(next_fulcon_op, reuse=True):
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
@@ -1265,7 +1309,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             print('Net2Net Initialization')
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
-
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -1285,6 +1328,11 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             new_curr_weights = curr_weights[:, rand_indices_1]
             new_curr_weights = np.expand_dims(np.expand_dims(new_curr_weights,-1),-1)
 
+            new_curr_mu = np.reshape(curr_pop_mu[rand_indices_1],(1,-1,1,1))
+            new_curr_sigma = np.reshape(curr_pop_sigma[rand_indices_1],(1,-1,1,1))
+            new_curr_gamma = curr_gamma[rand_indices_1]
+            new_curr_beta = curr_beta[rand_indices_1]
+
             new_next_weights = next_weights[rand_indices_1,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
             new_next_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_next_weights.shape)
@@ -1294,6 +1342,12 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
             new_curr_weights = np.random.normal(scale=np.sqrt(2.0/curr_weight_shape[0]),size=(curr_weight_shape[0],amount_to_add,1,1))
+
+            new_curr_mu = np.reshape(np.zeros(shape=(amount_to_add),dtype=np.float32),(1,-1,1,1))
+            new_curr_sigma = np.reshape(np.ones(shape=(amount_to_add),dtype=np.float32),(1,-1,1,1))
+            new_curr_gamma = np.ones(shape=(amount_to_add), dtype=np.float32)
+            new_curr_beta = np.zeros(shape=(amount_to_add), dtype=np.float32)
+
             new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),size=(amount_to_add,next_weights_shape[1],1,1))
 
             normalize_factor = (curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
@@ -1311,7 +1365,11 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                         tf_bvelocity_this: np.zeros(shape=(amount_to_add),dtype=np.float32),
                         tf_wvelocity_next: np.zeros(shape=(
                             amount_to_add,
-                            cnn_hyperparameters[next_fulcon_op]['out'],1,1),dtype=np.float32)
+                            cnn_hyperparameters[next_fulcon_op]['out'],1,1),dtype=np.float32),
+                        tf_mu_this: new_curr_mu,
+                        tf_sigma_this: new_curr_sigma,
+                        tf_gamma_this: new_curr_gamma,
+                        tf_beta_this: new_curr_beta
                     })
 
     # change both weights and biase in the current op
@@ -1416,9 +1474,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                    _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                       feed_dict=pool_feed_dict)
+                #with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                   feed_dict=pool_feed_dict)
 
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
@@ -2049,7 +2107,7 @@ def get_pruned_ids_feed_dict_by_gamma(cnn_hyps,pruned_cnn_hyps):
                         with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
                             gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
 
-                op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+                op_retain_ids_out = np.argsort(session.run(gamma)**2,axis=0).ravel()[amout_to_prune:]
             else:
                 op_retain_ids_out = np.arange(pruned_cnn_hyps[op]['weights'][3])
 
@@ -2086,7 +2144,7 @@ def get_pruned_ids_feed_dict_by_gamma(cnn_hyps,pruned_cnn_hyps):
                         with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
                             gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
 
-                op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+                op_retain_ids_out = np.argsort(session.run(gamma)**2,axis=0).ravel()[amout_to_prune:]
             else:
                 op_retain_ids_out = np.arange(pruned_cnn_hyps[op]['out'])
 
