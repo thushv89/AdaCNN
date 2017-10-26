@@ -315,12 +315,17 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                 gathered_weights = tf.gather(tr_weights,tf_prune_ids[op]['out'])
                 gathered_weights = tf.transpose(gathered_weights,[1,2,3,0])
 
+                #Activation vector prune
+                act = tf.get_variable(name=constants.TF_ACTIVAIONS_STR)
+                gathered_act = tf.gather(act,tf_prune_ids[op]['out'])
+
                 # in channel pruning
                 gathered_weights = tf.transpose(gathered_weights,[2,0,1,3])
                 gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])
                 gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
+                reset_ops.append(tf.assign(act, gathered_act, validate_shape=False))
 
                 with tf.variable_scope(TF_WEIGHTS):
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
@@ -375,10 +380,15 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                 gathered_weights = tf.gather(tr_weights, tf_prune_ids[op]['out'])
                 gathered_weights = tf.transpose(gathered_weights)
 
+                # Activation vector prune
+                act = tf.get_variable(name=constants.TF_ACTIVAIONS_STR)
+                gathered_act = tf.gather(act, tf_prune_ids[op]['out'])
+
                 # In pruning
                 gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
+                reset_ops.append(tf.assign(act, gathered_act, validate_shape=False))
 
                 with tf.variable_scope(TF_WEIGHTS):
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
