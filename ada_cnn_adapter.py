@@ -39,7 +39,8 @@ def set_from_main(research_params,final_2d_w,ops,hyps, logging_level, logging_fo
 def add_with_action(
         op, tf_action_info, tf_weights_this, tf_bias_this,
         tf_weights_next, tf_wvelocity_this,
-        tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec
+        tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec,
+        tf_act_this
 ):
     global cnn_hyperparameters, cnn_ops
     global logger
@@ -61,6 +62,8 @@ def add_with_action(
     # updating velocity vectors
     with tf.variable_scope(op) as scope:
         w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        act = tf.get_variable(constants.TF_ACTIVAIONS_STR)
+
         with tf.variable_scope(TF_WEIGHTS) as child_scope:
             w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
             pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -72,6 +75,7 @@ def add_with_action(
         tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, 1, 1, -1])
         tf_new_weights = tf.div(tf.concat(axis=3, values=[w, tf_weights_this]),tf_reshaped_replicative_factor_vec)
         tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_bias_this]),tf_replicative_factor_vec)
+        tf_new_act = tf.concat(axis=0, values=[act,tf_act_this])
 
         if research_parameters['optimizer'] == 'Momentum':
             new_weight_vel = tf.concat(axis=3, values=[w_vel, tf_wvelocity_this])
@@ -86,6 +90,7 @@ def add_with_action(
 
         update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
         update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+        update_ops.append(tf.assign(act, tf_new_act, validate_shape=False))
 
     # ================ Changes to next_op ===============
     # Very last convolutional layer
@@ -148,7 +153,8 @@ def add_with_action(
 def add_to_fulcon_with_action(
         op, tf_action_info, tf_fulcon_weights_this, tf_fulcon_bias_this,
         tf_fulcon_weights_next, tf_fulcon_wvelocity_this,
-        tf_fulcon_bvelocity_this, tf_fulcon_wvelocity_next, tf_replicative_factor_vec
+        tf_fulcon_bvelocity_this, tf_fulcon_wvelocity_next, tf_replicative_factor_vec,
+        tf_act_this
 ):
     global cnn_hyperparameters, cnn_ops
     global logger
@@ -172,6 +178,8 @@ def add_to_fulcon_with_action(
     # updating velocity vectors
     with tf.variable_scope(op) as scope:
         w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        act = tf.get_variable(constants.TF_ACTIVAIONS_STR)
+
         with tf.variable_scope(TF_WEIGHTS) as child_scope:
             w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
             pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -183,7 +191,7 @@ def add_to_fulcon_with_action(
         tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, -1])
         tf_new_weights = tf.div(tf.concat(axis=1, values=[w, tf.squeeze(tf_fulcon_weights_this)]),tf_reshaped_replicative_factor_vec)
         tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_fulcon_bias_this]),tf_replicative_factor_vec)
-
+        tf_new_act = tf.concat(axis=0, values=[act,tf_act_this])
 
         if research_parameters['optimizer'] == 'Momentum':
             new_weight_vel = tf.concat(axis=1, values=[w_vel, tf.squeeze(tf_fulcon_wvelocity_this)])
@@ -198,6 +206,7 @@ def add_to_fulcon_with_action(
 
         update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
         update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+        update_ops.append(tf.assign(act, tf_new_act, validate_shape=False))
 
     # ================ Changes to next_op ===============
     # change FC layer
