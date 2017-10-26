@@ -3,6 +3,8 @@ import constants
 import logging
 import numpy as np
 import sys
+from math import ceil
+
 
 TF_WEIGHTS = constants.TF_WEIGHTS
 TF_BIAS = constants.TF_BIAS
@@ -33,7 +35,7 @@ def set_from_main(research_params,logging_level, logging_format):
     init_logger.addHandler(console)
 
 
-def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
+def initialize_cnn_with_ops(cnn_ops, cnn_hyps, in_h, in_w):
     '''
     Initialize the variables of the CNN (convolution filters fully-connected filters
     :param cnn_ops:
@@ -41,22 +43,47 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
     :return:
     '''
 
+    feature_map_sizes = {}
     init_logger.info('CNN Hyperparameters')
     init_logger.info('%s\n', cnn_hyps)
 
     init_logger.info('Initializing the iConvNet (conv_global,pool_global,classifier)...\n')
+
+    current_feat_map_h, current_feat_map_w = in_h, in_w
+
     for op in cnn_ops:
 
         if 'conv' in op:
+            if cnn_hyps[op]['stride'][1] > 1 and cnn_hyps[op]['stride'][2] > 1:
+                current_feat_map_h = ceil(float(current_feat_map_h)/float(cnn_hyps[op]['stride'][1]))
+                current_feat_map_w = ceil(float(current_feat_map_w) / float(cnn_hyps[op]['stride'][2]))
+            feature_map_sizes[op] = current_feat_map_h
+
             with tf.variable_scope(op, reuse=False) as scope:
                 tf.get_variable(
                     name=TF_WEIGHTS, shape=cnn_hyps[op]['weights'],
                     initializer=tf.contrib.layers.xavier_initializer_conv2d(),
                     validate_shape=False, dtype=tf.float32)
-                tf.get_variable(
-                    name=TF_BIAS,
-                    initializer=tf.random_uniform(shape=[cnn_hyps[op]['weights'][3]],minval=-0.01, maxval=0.01),
-                    validate_shape=False, dtype=tf.float32)
+                with tf.variable_scope(constants.TF_BN_SCOPE, reuse=False):
+                    tf.get_variable(
+                        name=constants.TF_BN_GAMMA_STR,
+                        initializer=tf.ones(shape=[cnn_hyps[op]['weights'][3]],dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32)
+
+                    tf.get_variable(
+                        name=constants.TF_BN_BETA_STR,
+                        initializer=tf.zeros(shape=[cnn_hyps[op]['weights'][3]], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32)
+
+                    tf.get_variable(
+                        name=constants.TF_BN_POP_MU_STR,
+                        initializer=tf.zeros(shape=[current_feat_map_h,current_feat_map_w,cnn_hyps[op]['weights'][3]], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32, trainable=False)
+
+                    tf.get_variable(
+                        name=constants.TF_BN_POP_SIGMA_STR,
+                        initializer=tf.ones(shape=[current_feat_map_h, current_feat_map_w, cnn_hyps[op]['weights'][3]], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32, trainable=False)
 
                 tf.get_variable(
                     name=TF_ACTIVAIONS_STR,
@@ -67,16 +94,45 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                 init_logger.debug('Weights for %s initialized with size %s', op, str(cnn_hyps[op]['weights']))
                 init_logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['weights'][3])
 
+        if 'pool' in op:
+            if cnn_hyps[op]['stride'][1] > 1 and cnn_hyps[op]['stride'][2] > 1:
+                current_feat_map_h = ceil(float(current_feat_map_h)/float(cnn_hyps[op]['stride'][1]))
+                current_feat_map_w = ceil(float(current_feat_map_w) / float(cnn_hyps[op]['stride'][2]))
+            feature_map_sizes[op] = current_feat_map_h
+
         if 'fulcon' in op:
             with tf.variable_scope(op, reuse=False) as scope:
                 tf.get_variable(
                     name=TF_WEIGHTS, shape=[cnn_hyps[op]['in'], cnn_hyps[op]['out']],
                     initializer=tf.contrib.layers.xavier_initializer(),
                     validate_shape=False, dtype=tf.float32)
-                tf.get_variable(
-                    name=TF_BIAS,
-                    initializer=tf.random_uniform(shape=[cnn_hyps[op]['out']], minval=-0.01, maxval=0.01),
-                    validate_shape=False, dtype=tf.float32)
+
+                if op != 'fulcon_out':
+                    with tf.variable_scope(constants.TF_BN_SCOPE, reuse=False):
+                        tf.get_variable(
+                            name=constants.TF_BN_GAMMA_STR,
+                            initializer=tf.ones(shape=[cnn_hyps[op]['out']],dtype=tf.float32),
+                            validate_shape=False, dtype=tf.float32)
+
+                        tf.get_variable(
+                            name=constants.TF_BN_BETA_STR,
+                            initializer=tf.zeros(shape=[cnn_hyps[op]['out']], dtype=tf.float32),
+                            validate_shape=False, dtype=tf.float32)
+
+                        tf.get_variable(
+                            name=constants.TF_BN_POP_MU_STR,
+                            initializer=tf.zeros(shape=[cnn_hyps[op]['out']], dtype=tf.float32),
+                            validate_shape=False, dtype=tf.float32, trainable=False)
+
+                        tf.get_variable(
+                            name=constants.TF_BN_POP_SIGMA_STR,
+                            initializer=tf.ones(shape=[cnn_hyps[op]['out']], dtype=tf.float32),
+                            validate_shape=False, dtype=tf.float32,trainable=False)
+                else:
+                    tf.get_variable(
+                        name=TF_BIAS, shape=[cnn_hyps[op]['out']],
+                        initializer=tf.constant_initializer(0.0),
+                        validate_shape=False, dtype=tf.float32)
 
                 tf.get_variable(
                     name=TF_ACTIVAIONS_STR,
@@ -88,7 +144,7 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                              op, cnn_hyps[op]['in'], cnn_hyps[op]['out'])
                 init_logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['out'])
 
-
+    return feature_map_sizes
 
 def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
     # if using momentum
@@ -112,18 +168,6 @@ def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
                                                                  dtype=tf.float32),
                                             dtype=tf.float32, trainable=False))
 
-                    with tf.variable_scope(TF_BIAS) as scope:
-                        vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
-                                                            initializer=tf.zeros(
-                                                                shape=cnn_hyperparameters[tmp_op]['weights'][3],
-                                                                dtype=tf.float32),
-                                                            dtype=tf.float32, trainable=False))
-
-                        vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
-                                                            initializer=tf.zeros(
-                                                                shape=[cnn_hyperparameters[tmp_op]['weights'][3]],
-                                                                dtype=tf.float32),
-                                                            dtype=tf.float32, trainable=False))
 
             elif 'fulcon' in tmp_op:
                 with tf.variable_scope(tmp_op):
@@ -141,19 +185,19 @@ def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):
                                                                        cnn_hyperparameters[tmp_op]['out']],
                                                                 dtype=tf.float32),
                                                             dtype=tf.float32, trainable=False))
+                    if tmp_op =='fulcon_out':
+                        with tf.variable_scope(TF_BIAS) as scope:
+                            vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
+                                                                initializer=tf.zeros(
+                                                                    shape=[cnn_hyperparameters[tmp_op]['out']],
+                                                                    dtype=tf.float32),
+                                                                dtype=tf.float32, trainable=False))
 
-                    with tf.variable_scope(TF_BIAS) as scope:
-                        vel_var_list.append(tf.get_variable(name=TF_TRAIN_MOMENTUM,
-                                                            initializer=tf.zeros(
-                                                                shape=[cnn_hyperparameters[tmp_op]['out']],
-                                                                dtype=tf.float32),
-                                                            dtype=tf.float32, trainable=False))
-
-                        vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
-                                                            initializer=tf.zeros(
-                                                                shape=[cnn_hyperparameters[tmp_op]['out']],
-                                                                dtype=tf.float32),
-                                                            dtype=tf.float32, trainable=False))
+                            vel_var_list.append(tf.get_variable(name=TF_POOL_MOMENTUM,
+                                                                initializer=tf.zeros(
+                                                                    shape=[cnn_hyperparameters[tmp_op]['out']],
+                                                                    dtype=tf.float32),
+                                                                dtype=tf.float32, trainable=False))
 
     return vel_var_list
 
@@ -216,21 +260,6 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops, tf_prune_factor):
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
-                bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['weights'][3]))/tf_prune_factor
-
-                reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
-
-                with tf.variable_scope(TF_BIAS):
-                    b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_b_vel = tf.gather(b_vel,tf.range(cnn_hyps[op]['weights'][3]))
-
-                    pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_b_vel = tf.gather(pool_b_vel, tf.range(cnn_hyps[op]['weights'][3]))
-
-                    reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
-                    reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
-
                 act_var = tf.get_variable(name=TF_ACTIVAIONS_STR)
                 new_act_var = tf.zeros(shape=[cnn_hyps[op]['weights'][3]],
                                        dtype=tf.float32)
@@ -275,19 +304,20 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops, tf_prune_factor):
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
-                bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['out']))/tf_prune_factor
-                reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
+                if op=='fulcon_out':
+                    bias = tf.get_variable(name=TF_BIAS)
+                    gathered_bias = tf.gather(bias,tf.range(cnn_hyps[op]['out']))/tf_prune_factor
+                    reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
 
-                with tf.variable_scope(TF_BIAS):
-                    b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_b_vel = tf.gather(b_vel, tf.range(cnn_hyps[op]['out']))
+                    with tf.variable_scope(TF_BIAS):
+                        b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                        gathered_b_vel = tf.gather(b_vel, tf.range(cnn_hyps[op]['out']))
 
-                    pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_b_vel = tf.gather(pool_b_vel, tf.range(cnn_hyps[op]['out']))
+                        pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                        gathered_pool_b_vel = tf.gather(pool_b_vel, tf.range(cnn_hyps[op]['out']))
 
-                    reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
-                    reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
+                        reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
+                        reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
 
     return reset_ops
 
@@ -350,21 +380,6 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
-                bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])/tf_prune_factor
-
-                reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
-
-                with tf.variable_scope(TF_BIAS):
-                    b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_b_vel = tf.gather(b_vel,tf_prune_ids[op]['out'])
-
-                    pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
-
-                    reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
-                    reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
-
         if 'fulcon' in op:
 
             with tf.variable_scope(op):
@@ -404,19 +419,20 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
 
-                bias = tf.get_variable(name=TF_BIAS)
-                gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])/tf_prune_factor
-                reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
+                if op=='fulcon_out':
+                    bias = tf.get_variable(name=TF_BIAS)
+                    gathered_bias = tf.gather(bias,tf_prune_ids[op]['out'])/tf_prune_factor
+                    reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
 
-                with tf.variable_scope(TF_BIAS):
-                    b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_b_vel = tf.gather(b_vel, tf_prune_ids[op]['out'])
+                    with tf.variable_scope(TF_BIAS):
+                        b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                        gathered_b_vel = tf.gather(b_vel, tf_prune_ids[op]['out'])
 
-                    pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
+                        pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                        gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
 
-                    reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
-                    reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
+                        reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
+                        reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
 
     return reset_ops
 

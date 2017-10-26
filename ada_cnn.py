@@ -203,6 +203,8 @@ increment_global_step_op = None
 tf_weight_mean_ops = None
 tf_retain_id_placeholders = {}
 
+# Implement Batch Normalization
+layer_feature_map_size = {}
 adapt_period = None
 
 # Loggers
@@ -214,6 +216,7 @@ tf_reset_cnn, tf_reset_cnn_custom = None, None
 tf_prune_factor = None
 prune_reward_experience = []
 
+mean_var_decay = 0.9
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops
@@ -248,15 +251,30 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 logger.debug('\tConvolving (%s) With Weights:%s Stride:%s' % (
                     op, cnn_hyperparameters[op]['weights'], cnn_hyperparameters[op]['stride']))
                 logger.debug('\t\tWeights: %s', tf.shape(tf.get_variable(TF_WEIGHTS)).eval())
-                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                w = tf.get_variable(TF_WEIGHTS)
 
                 x = tf.nn.conv2d(x, w, cnn_hyperparameters[op]['stride'],
                                  padding=cnn_hyperparameters[op]['padding'])
-                x = utils.lrelu(x + b, name=scope.name + '/top')
+                x_mean,x_var = tf.nn.moments(x,axes=[0],keep_dims=True)
+                with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                    if training:
+                        x = tf.nn.batch_normalization(x,x_mean,x_var,tf.get_variable(constants.TF_BN_BETA_STR),
+                                                      tf.get_variable(constants.TF_BN_GAMMA_STR),1e-5,name='op_bn_'+op)
 
-                if use_loc_res_norm and op == last_conv_id:
-                    x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha,
-                                                           beta=lrn_beta)  # hyperparameters from tensorflow cifar10 tutorial
+                        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, tf.assign(tf.get_variable(constants.TF_BN_POP_MU_STR),
+                                                                                mean_var_decay * tf.get_variable(constants.TF_BN_POP_MU_STR) + (
+                                                                                1 - mean_var_decay) * x_mean))
+                        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, tf.assign(tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
+                                                                                mean_var_decay * tf.get_variable(constants.TF_BN_POP_SIGMA_STR) + (
+                                                                                1 - mean_var_decay) * x_var))
+                    else:
+                        x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR), tf.get_variable(constants.TF_BN_POP_SIGMA_STR), None, None, 1e-5,
+                                                      name='op_bn_' + op)
+
+
+                x = utils.lrelu(x, name=scope.name + '/top')
+
+
 
         if 'pool' in op:
             logger.debug('\tPooling (%s) with Kernel:%s Stride:%s' % (
@@ -277,7 +295,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
 
         if 'fulcon' in op:
             with tf.variable_scope(op, reuse=True) as scope:
-                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                w = tf.get_variable(TF_WEIGHTS)
 
                 if first_fc == op:
                     # we need to reshape the output of last subsampling layer to
@@ -289,38 +307,71 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     # This help us to do adaptations more easily
                     x = tf.transpose(x, [0, 3, 1, 2])
                     x = tf.reshape(x, [batch_size, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]])
-                    x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
+                    x = tf.matmul(x, w)
+                    x_mean, x_var = tf.nn.moments(x, axes=[0],keep_dims=False)
+
+                    with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                        if training:
+                            x = tf.nn.batch_normalization(x, x_mean, x_var, tf.get_variable(constants.TF_BN_BETA_STR),
+                                                          tf.get_variable(constants.TF_BN_GAMMA_STR), 1e-5,
+                                                          name='op_bn_' + op)
+
+                            tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, tf.assign(tf.get_variable(constants.TF_BN_POP_MU_STR),
+                                                                                    mean_var_decay * tf.get_variable(
+                                                                                        constants.TF_BN_POP_MU_STR) + (
+                                                                                        1 - mean_var_decay) * x_mean))
+                            tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
+                                                 tf.assign(tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
+                                                           mean_var_decay * tf.get_variable(constants.TF_BN_POP_SIGMA_STR) + (
+                                                               1 - mean_var_decay) * x_var))
+                        else:
+
+                            x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR),
+                                                          tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
+                                                          None, None, 1e-5, name='op_bn_' + op)
+
+                    x = utils.lrelu(x, name=scope.name + '/top')
                     if training and use_dropout:
                         x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
                 elif 'fulcon_out' == op:
+                    b = tf.get_variable(TF_BIAS)
                     x = tf.matmul(x, w) + b
 
                 else:
-                    x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
+                    x = tf.matmul(x, w)
+
+                    x_mean, x_var = tf.nn.moments(x, axes=[0],keep_dims=False)
+
+                    with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                        if training:
+                            x = tf.nn.batch_normalization(x, x_mean, x_var, tf.get_variable(constants.TF_BN_BETA_STR),
+                                                          tf.get_variable(constants.TF_BN_GAMMA_STR), 1e-5,
+                                                          name='op_bn_' + op)
+
+                            tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
+                                                 tf.assign(tf.get_variable(constants.TF_BN_POP_MU_STR),
+                                                           mean_var_decay * tf.get_variable(
+                                                               constants.TF_BN_POP_MU_STR) + (
+                                                               1 - mean_var_decay) * x_mean))
+                            tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
+                                                 tf.assign(tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
+                                                           mean_var_decay * tf.get_variable(
+                                                               constants.TF_BN_POP_SIGMA_STR) + (
+                                                               1 - mean_var_decay) * x_var))
+
+                        else:
+
+                            x = tf.nn.batch_normalization(x, tf.get_variable(constants.TF_BN_POP_MU_STR),
+                                                          tf.get_variable(constants.TF_BN_POP_SIGMA_STR),
+                                                          None, None, 1e-5, name='op_bn_' + op)
+                    x = utils.lrelu(x)
+
                     if training and use_dropout:
                         x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
 
     return x
 
-
-def get_weights_mean_for_pruning():
-    weight_mean_ops = {}
-
-    for op in cnn_ops:
-        if 'conv' in op:
-            with tf.variable_scope(op, reuse=True) as scope:
-                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
-                weight_mean_ops[op] = tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(w, [0, 1, 2]),
-                              validate_shape=False)
-
-        if 'fulcon' in op:
-            with tf.variable_scope(op, reuse=True) as scope:
-                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
-                weight_mean_ops[op] = tf.assign(tf.get_variable(TF_ACTIVAIONS_STR), tf.reduce_mean(w, [1]),
-                              validate_shape=False)
-
-    return weight_mean_ops
 
 
 def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameters):
@@ -669,7 +720,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         mean_pool_loss = tf.reduce_mean(tower_pool_losses)
 
         # Weight mean calculation for pruning
-        tf_weight_mean_ops = get_weights_mean_for_pruning()
+        # tf_weight_mean_ops = get_weights_mean_for_pruning()
 
     with tf.device('/gpu:0'):
 
@@ -754,7 +805,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
                                                                      tf_bias_this, tf_weights_next,
                                                                      tf_wvelocity_this, tf_bvelocity_this,
-                                                                     tf_wvelocity_next,tf_replicative_factor_vec)
+                                                                     tf_wvelocity_next,tf_replicative_factor_vec, layer_feature_map_size)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
@@ -949,7 +1000,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
         with tf.variable_scope(current_op,reuse=True):
             curr_weights = tf.get_variable(TF_WEIGHTS).eval()
-            curr_bias = tf.get_variable(TF_BIAS).eval()
+
         if current_op != last_conv_id:
             with tf.variable_scope(next_conv_op, reuse=True):
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
@@ -981,8 +1032,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             new_curr_weights = curr_weights[:,:,:,rand_indices_1]
             new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
 
-            new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
-
             if last_conv_id != current_op:
                 new_next_weights = next_weights[:,:,rand_indices_1,:]
                 new_next_weights = get_new_distorted_weights(new_next_weights,next_weights_shape)
@@ -1011,14 +1060,12 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             next_weights_shape = next_weights.shape
             if last_conv_id != current_op:
                 new_curr_weights = np.random.normal(scale=np.sqrt(2.0/(curr_weight_shape[0]*curr_weight_shape[1]*curr_weight_shape[2])), size=(curr_weight_shape[0],curr_weight_shape[1],curr_weight_shape[2], amount_to_add))
-                new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
                 new_next_weights = np.random.normal(scale=np.sqrt(2.0/(next_weights_shape[0]*next_weights_shape[1]*next_weights_shape[2])),
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
             else:
                 new_curr_weights = np.random.normal(scale=np.sqrt(2.0/(curr_weight_shape[0]*curr_weight_shape[1]*curr_weight_shape[2])),
                                                      size=(curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add)
                                                      )
-                new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
                 new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
 
@@ -1029,8 +1076,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
                         tf_weights_this: new_curr_weights,
-                        tf_bias_this: new_curr_bias,
-
                         tf_weights_next: new_next_weights,
                         tf_replicative_factor_vec: count_vec,
                         tf_wvelocity_this: np.zeros(shape=(
@@ -1176,8 +1221,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                       feed_dict=pool_feed_dict)
 
 
 def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, epoch):
@@ -1214,7 +1260,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
         with tf.variable_scope(current_op,reuse=True):
             curr_weights = tf.get_variable(TF_WEIGHTS).eval()
-            curr_bias = tf.get_variable(TF_BIAS).eval()
+
 
         with tf.variable_scope(next_fulcon_op, reuse=True):
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
@@ -1245,8 +1291,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             new_curr_weights = curr_weights[:, rand_indices_1]
             new_curr_weights = np.expand_dims(np.expand_dims(new_curr_weights,-1),-1)
 
-            new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
-
             new_next_weights = next_weights[rand_indices_1,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
             new_next_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_next_weights.shape)
@@ -1256,7 +1300,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
             new_curr_weights = np.random.normal(scale=np.sqrt(2.0/curr_weight_shape[0]),size=(curr_weight_shape[0],amount_to_add,1,1))
-            new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
             new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),size=(amount_to_add,next_weights_shape[1],1,1))
 
             normalize_factor = (curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
@@ -1266,7 +1309,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, ai[1]]),
                         tf_weights_this: new_curr_weights,
-                        tf_bias_this: new_curr_bias,
                         tf_replicative_factor_vec: count_vec,
                         tf_weights_next: new_next_weights,
                         tf_wvelocity_this: np.zeros(shape=(
@@ -1380,8 +1422,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                       feed_dict=pool_feed_dict)
 
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
@@ -1522,8 +1565,9 @@ def run_actual_finetune_operation(hard_pool_ft):
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
+                                       feed_dict=pool_feed_dict)
 
 
 def top_n_accuracy(predictions,labels,n):
@@ -1904,7 +1948,7 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
     return pruned_cnn_hyps
 
 
-def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps):
+def get_pruned_ids_feed_dict_by_slicing(cnn_hyps,pruned_cnn_hyps):
     global tf_retain_id_placeholders, cnn_ops,num_channels,final_2d_width,first_fc
 
     retain_ids_feed_dict = {}
@@ -1963,6 +2007,85 @@ def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps):
                     op_prune_ids_out.append(np.random.choice(slice,replace=False))
 
             op_retain_ids_out = np.asarray(list(set(np.arange(amount_before_prune).tolist()) - set(op_prune_ids_out)))
+
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:np.asarray(op_retain_ids_out)})
+
+            # In Pruning
+            if op==first_fc:
+                amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
+                logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
+                op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
+                #op_retain_ids_in = np.asarray(op_retain_ids_out)
+                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, len(op_retain_ids_in))
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: np.asarray(op_retain_ids_in)})
+
+            else:
+                amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
+                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
+                op_retain_ids_in = np.asarray(prev_retain_in_ch)
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+
+            prev_retain_in_ch = np.asarray(op_retain_ids_out)
+            prev_op = op
+
+    return retain_ids_feed_dict
+
+
+def get_pruned_ids_feed_dict_by_gamma(cnn_hyps,pruned_cnn_hyps):
+    global tf_retain_id_placeholders, cnn_ops,num_channels,final_2d_width,first_fc
+
+    retain_ids_feed_dict = {}
+    prev_op = None
+    for op in cnn_ops:
+        logger.info('Calculating prune ids for %s (op) %s (prev_op)',op,prev_op)
+        if 'pool' in op:
+            continue
+        elif 'conv' in op:
+
+            # Out pruning
+            amount_before_prune = cnn_hyps[op]['weights'][3]
+            logger.info('\tCurrent amout: %d', amount_before_prune)
+            amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
+            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
+            amout_to_prune = amount_before_prune - amount_to_retain_out_ch
+            with tf.variable_scope(op, reuse=True):
+                with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                    gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
+
+            op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
+
+            logger.info('\tAmount of filers to retain for %s: %d (out)',op,amount_to_retain_out_ch)
+
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: np.asarray(op_retain_ids_out)})
+
+            # In pruning (For layers other than closest to input)
+            if prev_op is not None:
+                assert pruned_cnn_hyps[op]['weights'][2] == pruned_cnn_hyps[prev_op]['weights'][3]
+                amount_to_retain_in_ch = pruned_cnn_hyps[op]['weights'][2]
+                #op_retain_ids_in = np.repeat(np.asarray(op_retain_ids_out),final_2d_width*final_2d_width)
+                op_retain_ids_in = prev_retain_in_ch
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+                logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
+            else:
+                op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+
+            prev_retain_in_ch = np.asarray(op_retain_ids_out)
+            prev_op = op
+
+        elif 'fulcon' in op:
+            # Out pruning
+            amount_before_prune = cnn_hyps[op]['out']
+            logger.info('\tCurrent amout: %d',amount_before_prune)
+            amount_to_retain_out_ch = pruned_cnn_hyps[op]['out']
+            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
+            amout_to_prune = amount_before_prune - amount_to_retain_out_ch
+
+            with tf.variable_scope(op, reuse=True):
+                with tf.variable_scope(constants.TF_BN_SCOPE, reuse=True):
+                    gamma = tf.get_variable(constants.TF_BN_GAMMA_STR)
+
+            op_retain_ids_out = np.argsort(session.run(gamma),axis=0).ravel()[amout_to_prune:]
 
             retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:np.asarray(op_retain_ids_out)})
 
@@ -2322,7 +2445,7 @@ if __name__ == '__main__':
         logger.info('Defining TF Hyperparameters')
         tf_cnn_hyperparameters = cnn_intializer.init_tf_hyperparameters(cnn_ops, cnn_hyperparameters)
         logger.info('Defining Weights and Bias for CNN operations')
-        _ = cnn_intializer.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
+        layer_feature_map_size = cnn_intializer.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters,dataset_info['image_size'],dataset_info['image_size'])
         logger.info('Following parameters defined')
         logger.info([v.name for v in tf.trainable_variables()])
         logger.info('='*80)
@@ -2623,14 +2746,16 @@ if __name__ == '__main__':
                     if (not adapt_structure):
                         for _ in range(iterations_per_batch):
                             #print('training on current batch (action type: ', current_action_type, ')')
-                            _, _ = session.run(
-                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                            )
+                            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                                _, _ = session.run(
+                                    [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                                )
                     else:
                         if current_action_type != adapter.get_donothing_action_type():
-                            _, _ = session.run(
-                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                            )
+                            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                                _, _ = session.run(
+                                    [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
+                                )
 
 
                 t1_train = time.clock()

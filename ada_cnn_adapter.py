@@ -39,7 +39,7 @@ def set_from_main(research_params,final_2d_w,ops,hyps, logging_level, logging_fo
 def add_with_action(
         op, tf_action_info, tf_weights_this, tf_bias_this,
         tf_weights_next, tf_wvelocity_this,
-        tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec
+        tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec, layer_feature_map_sizes
 ):
     global cnn_hyperparameters, cnn_ops
     global logger
@@ -60,32 +60,58 @@ def add_with_action(
 
     # updating velocity vectors
     with tf.variable_scope(op) as scope:
-        w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        w = tf.get_variable(TF_WEIGHTS)
+
+        with tf.variable_scope(constants.TF_BN_SCOPE):
+            mu, sigma = tf.get_variable(constants.TF_BN_POP_MU_STR), tf.get_variable(constants.TF_BN_POP_SIGMA_STR)
+            gamma, beta = tf.get_variable(constants.TF_BN_GAMMA_STR), tf.get_variable(constants.TF_BN_BETA_STR)
+
         with tf.variable_scope(TF_WEIGHTS) as child_scope:
             w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
             pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
-        with tf.variable_scope(TF_BIAS) as child_scope:
-            b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-            pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
         # calculating new weights
         tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, 1, 1, -1])
         tf_new_weights = tf.div(tf.concat(axis=3, values=[w, tf_weights_this]),tf_reshaped_replicative_factor_vec)
-        tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_bias_this]),tf_replicative_factor_vec)
 
         if research_parameters['optimizer'] == 'Momentum':
             new_weight_vel = tf.concat(axis=3, values=[w_vel, tf_wvelocity_this])
-            new_bias_vel = tf.concat(axis=0, values=[b_vel, tf_bvelocity_this])
+
             new_pool_w_vel = tf.concat(axis=3, values=[pool_w_vel, tf_wvelocity_this])
-            new_pool_b_vel = tf.concat(axis=0, values=[pool_b_vel, tf_bvelocity_this])
+
 
             update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
-            update_ops.append(tf.assign(b_vel, new_bias_vel, validate_shape=False))
+
             update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
-            update_ops.append(tf.assign(pool_b_vel, new_pool_b_vel, validate_shape=False))
+
 
         update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
-        update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+
+        # Batch normalization, mu sigma gamma and beta updates
+        update_ops.append(
+            tf.assign(mu, tf.concat(
+                values=[mu, tf.zeros(shape=[layer_feature_map_sizes[op],layer_feature_map_sizes[op],amount_to_add],
+                                     dtype=tf.float32)],axis=2),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(sigma, tf.concat(
+                values=[sigma, tf.ones(shape=[layer_feature_map_sizes[op], layer_feature_map_sizes[op], amount_to_add],
+                                     dtype=tf.float32)], axis=2),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(gamma, tf.concat(
+                values=[gamma, tf.ones(shape=[amount_to_add],
+                                     dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(beta, tf.concat(
+                values=[beta, tf.zeros(shape=[amount_to_add],
+                                     dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )
 
     # ================ Changes to next_op ===============
     # Very last convolutional layer
@@ -95,7 +121,7 @@ def add_with_action(
         # change FC layer
         # the reshaping is required because our placeholder for weights_next is Rank 4
         with tf.variable_scope(first_fc) as scope:
-            w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+            w = tf.get_variable(TF_WEIGHTS)
             with tf.variable_scope(TF_WEIGHTS) as child_scope:
                 w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                 pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -126,7 +152,7 @@ def add_with_action(
 
         # change only the weights in next conv_op
         with tf.variable_scope(next_conv_op) as scope:
-            w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+            w = tf.get_variable(TF_WEIGHTS)
             with tf.variable_scope(TF_WEIGHTS) as child_scope:
                 w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                 pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -171,39 +197,78 @@ def add_to_fulcon_with_action(
 
     # updating velocity vectors
     with tf.variable_scope(op) as scope:
-        w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        w = tf.get_variable(TF_WEIGHTS)
+
+        with tf.variable_scope(constants.TF_BN_SCOPE):
+            mu, sigma = tf.get_variable(constants.TF_BN_POP_MU_STR), tf.get_variable(constants.TF_BN_POP_SIGMA_STR)
+            gamma, beta = tf.get_variable(constants.TF_BN_GAMMA_STR), tf.get_variable(constants.TF_BN_BETA_STR)
+
         with tf.variable_scope(TF_WEIGHTS) as child_scope:
             w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
             pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
-        with tf.variable_scope(TF_BIAS) as child_scope:
-            b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-            pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
         # calculating new weights
         tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, -1])
         tf_new_weights = tf.div(tf.concat(axis=1, values=[w, tf.squeeze(tf_fulcon_weights_this)]),tf_reshaped_replicative_factor_vec)
-        tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_fulcon_bias_this]),tf_replicative_factor_vec)
+        if op=='fulcon_out':
+            with tf.variable_scope(TF_BIAS) as child_scope:
+                b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+            b = tf.get_variable(TF_BIAS)
+            tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_fulcon_bias_this]),tf_replicative_factor_vec)
 
 
         if research_parameters['optimizer'] == 'Momentum':
             new_weight_vel = tf.concat(axis=1, values=[w_vel, tf.squeeze(tf_fulcon_wvelocity_this)])
-            new_bias_vel = tf.concat(axis=0, values=[b_vel, tf_fulcon_bvelocity_this])
             new_pool_w_vel = tf.concat(axis=1, values=[pool_w_vel, tf.squeeze(tf_fulcon_wvelocity_this)])
-            new_pool_b_vel = tf.concat(axis=0, values=[pool_b_vel, tf_fulcon_bvelocity_this])
+            if op == 'fulcon_out':
+                new_bias_vel = tf.concat(axis=0, values=[b_vel, tf_fulcon_bvelocity_this])
+                new_pool_b_vel = tf.concat(axis=0, values=[pool_b_vel, tf_fulcon_bvelocity_this])
 
             update_ops.append(tf.assign(w_vel, new_weight_vel, validate_shape=False))
-            update_ops.append(tf.assign(b_vel, new_bias_vel, validate_shape=False))
             update_ops.append(tf.assign(pool_w_vel, new_pool_w_vel, validate_shape=False))
-            update_ops.append(tf.assign(pool_b_vel, new_pool_b_vel, validate_shape=False))
+
+            if op == 'fulcon_out':
+                update_ops.append(tf.assign(b_vel, new_bias_vel, validate_shape=False))
+                update_ops.append(tf.assign(pool_b_vel, new_pool_b_vel, validate_shape=False))
+
+                update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
 
         update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
-        update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+
+
+        # Batch normalization, mu sigma gamma and beta updates
+        update_ops.append(
+            tf.assign(mu, tf.concat(
+                values=[mu, tf.zeros(shape=[amount_to_add],
+                                     dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(sigma, tf.concat(
+                values=[sigma, tf.ones(shape=[amount_to_add],
+                                       dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(gamma, tf.concat(
+                values=[gamma, tf.ones(shape=[amount_to_add],
+                                        dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )
+        update_ops.append(
+            tf.assign(beta, tf.concat(
+                values=[beta, tf.zeros(shape=[amount_to_add],
+                                       dtype=tf.float32)], axis=0),
+                      validate_shape=False)
+        )
 
     # ================ Changes to next_op ===============
     # change FC layer
     # the reshaping is required because our placeholder for weights_next is Rank 4
     with tf.variable_scope(next_fulcon_id) as scope:
-        w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+        w = tf.get_variable(TF_WEIGHTS)
         with tf.variable_scope(TF_WEIGHTS) as child_scope:
             w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
             pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
