@@ -541,6 +541,23 @@ def setup_loggers(adapt_structure):
            cnn_structure_logger, q_logger, class_dist_logger, \
            pool_dist_logger, pool_ft_dist_logger, hyp_logger, error_logger, prune_logger
 
+def setup_activation_vector_logger():
+    global cnn_ops
+    act_vector_logger_dict = {}
+    if not os.path.exists(output_dir + os.sep + 'activations'):
+        os.mkdir(output_dir + os.sep + 'activations')
+
+    for op in cnn_ops:
+        act_vector_logger_dict[op] = logging.getLogger('activation_logger_' + op)
+        act_vector_logger_dict[op].propagate = False
+        act_vector_logger_dict[op].setLevel(logging.INFO)
+        handler = logging.FileHandler(output_dir + os.sep + "activations" + os.sep + 'activations_ ' + op + '.log',
+                                      mode='w')
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        act_vector_logger_dict[op].addHandler(handler)
+
+    return act_vector_logger_dict
+
 
 def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
     current_activations = {}
@@ -2040,7 +2057,7 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
 
             # Out pruning
             amount_before_prune = cnn_hyps[op]['weights'][3]
-            logger.info('\tCurrent amout: %d', amount_before_prune)
+            logger.info('\tCurrent amount: %d', amount_before_prune)
             amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
             logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
             amout_to_prune = amount_before_prune - amount_to_retain_out_ch
@@ -2049,7 +2066,8 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
             with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
                 with tf.variable_scope(op, reuse=True):
                     op_retain_ids_out = np.argsort(tf.get_variable(TF_ACTIVAIONS_STR).eval())[amout_to_prune:]
-
+            logger.info('\tPrune IDs')
+            logger.info(op_retain_ids_out)
             retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: op_retain_ids_out})
 
             # In pruning (For layers other than closest to input)
@@ -2060,9 +2078,13 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
                 op_retain_ids_in = prev_retain_in_ch
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
                 logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
+                logger.info('\tPrune IDs')
+                logger.info(op_retain_ids_in)
             else:
                 op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+                logger.info('\tPrune IDs')
+                logger.info(op_retain_ids_in)
 
             prev_retain_in_ch = np.asarray(op_retain_ids_out)
             prev_op = op
@@ -2080,21 +2102,32 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
                 with tf.variable_scope(op, reuse=True):
                     op_retain_ids_out = np.argsort(tf.get_variable(TF_ACTIVAIONS_STR).eval())[amout_to_prune:]
 
+            logger.info('\tPrune IDs')
+            logger.info(op_retain_ids_out)
+
             retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:op_retain_ids_out})
 
             # In Pruning
             if op==first_fc:
                 amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
                 logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
-                op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
-                #op_retain_ids_in = np.asarray(op_retain_ids_out)
-                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, op_retain_ids_in.shape)
+                op_retain_ids_in = []
+                for ret_i in prev_retain_in_ch:
+                    op_retain_ids_in.extend(list(range(ret_i*final_2d_width*final_2d_width,(ret_i+1)*final_2d_width*final_2d_width)))
+                #op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
+                op_retain_ids_in = np.asarray(op_retain_ids_in)
+                logger.info('\tAmount of filers to retain for %s: %s (in ids)', op, op_retain_ids_in.shape)
+
+                logger.info('\tPrune IDs')
+                logger.info(op_retain_ids_in)
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
 
             else:
                 amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
                 logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
                 op_retain_ids_in = np.asarray(prev_retain_in_ch)
+                logger.info('\tPrune IDs')
+                logger.info(op_retain_ids_in)
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
 
             prev_retain_in_ch = op_retain_ids_out
@@ -2345,6 +2378,13 @@ if __name__ == '__main__':
     logger.info('Creating CNN hyperparameters and operations in the correct format')
     # Getting hyperparameters
     cnn_ops, cnn_hyperparameters, final_2d_width = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+
+    act_vector_logger_dict = setup_activation_vector_logger()
+    activation_vec_ops = []
+    for op in cnn_ops:
+        if ('conv' in op or 'fulcon' in op) and op!='fulcon_out':
+            activation_vec_ops.append(op)
+
     init_cnn_ops, init_cnn_hyperparameters, final_2d_width = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
 
     logger.info('Created CNN hyperparameters and operations in the correct format successfully\n')
@@ -2505,7 +2545,9 @@ if __name__ == '__main__':
     if datatype=='cifar-10':
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='cifar-100':
-        labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
+        #labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
+        labels_per_task = 100
+        labels_of_each_task = [list(range(100)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
         # override settings
         n_tasks = 2
@@ -2750,6 +2792,10 @@ if __name__ == '__main__':
                                     [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
                                 )
 
+                            #if batch_id % 25 == 0:
+                                #act_vectors = session.run([tf.get_variable(tmp_op) for tmp_op in activation_vec_ops])
+                                #for act_i, tmp_op in enumerate(activation_vec_ops):
+                                #    act_vector_logger_dict[tmp_op].info(act_vectors[act_i])
 
                 t1_train = time.clock()
 
