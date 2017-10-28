@@ -171,7 +171,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
                          "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,64,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 110]
+            start_filter_vector = [32, 32,   32,  32, 0,  64,  64,  64,  64, 0, 128, 128, 64]
+            filter_vector =       [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 110]
             add_amount, remove_amount, add_fulcon_amount = 8, 4, 24
             filter_min_threshold = 24
             fulcon_min_threshold = 48
@@ -200,7 +201,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#P,2,2,0#C,3,1,48#C,3,1,48" \
                          "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,125,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 64, 0, 128, 128, 0, 256, 256, 0, 256, 256, 0, 256, 256, 0, 2048, 2048,250]
+            start_filter_vector = [48, 48, 0,  48,  48, 0,  48,  48, 0,  48,  48, 0,  48,  48, 0,  128,  128, 125]
+            filter_vector =       [64, 64, 0, 128, 128, 0, 256, 256, 0, 256, 256, 0, 256, 256, 0, 2048, 2048, 250]
             filter_min_threshold = 32
             fulcon_min_threshold = 100
             add_amount, remove_amount, add_fulcon_amount = 8, 4, 24
@@ -233,6 +235,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     if adapt_structure:
         model_hyperparameters['filter_vector'] = filter_vector
+        model_hyperparameters['start_filter_vector'] = start_filter_vector
         model_hyperparameters['add_amount'] = add_amount
         model_hyperparameters['add_fulcon_amount'] = add_fulcon_amount
         model_hyperparameters['remove_amount'] = remove_amount

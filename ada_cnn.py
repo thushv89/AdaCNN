@@ -218,6 +218,7 @@ tf_reset_cnn, tf_reset_cnn_custom = None, None
 tf_prune_factor = None
 prune_reward_experience = []
 
+tf_scale_parameter = None
 
 def inference(dataset, tf_cnn_hyperparameters, training):
     global logger,cnn_ops, act_decay
@@ -586,6 +587,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_weight_shape,tf_in_size, tf_out_size
     global increment_global_step_op,tf_learning_rate
     global tf_act_this
+    global tf_scale_parameter
     global logger
 
     # custom momentum optimizing we calculate momentum manually
@@ -778,6 +780,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 init_tf_prune_cnn_hyperparameters()
                 tf_prune_factor = tf.placeholder(shape=None, dtype=tf.float32,name='prune_factor')
+                tf_scale_parameter = tf.placeholder(shape=[None], dtype=tf.float32, name='grad_scal_factor')
                 tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(
                     tf_prune_cnn_hyperparameters,cnn_ops,tf_prune_factor
                 )
@@ -810,7 +813,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
                             optimizer, tf_indices,
                             tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
-                            tf.constant(start_lr, dtype=tf.float32), global_step, False
+                            tf.constant(start_lr, dtype=tf.float32), global_step, False, tf_scale_parameter
                         )
 
                     # Fully connected realted adaptation operations
@@ -835,7 +838,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
                                     optimizer, tf_indices,
                                     tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
-                                    tf.constant(start_lr, dtype=tf.float32), global_step, False
+                                    tf.constant(start_lr, dtype=tf.float32), global_step, False, tf_scale_parameter
                                 )
 
 
@@ -2472,7 +2475,7 @@ if __name__ == '__main__':
     logger.info('Created CNN hyperparameters and operations in the correct format successfully\n')
 
     ada_cnn_adapter.set_from_main(research_parameters, final_2d_width,cnn_ops, cnn_hyperparameters, logging_level, logging_format)
-    cnn_optimizer.set_from_main(research_parameters,model_hyperparameters,logging_level,logging_format,cnn_ops)
+    cnn_optimizer.set_from_main(research_parameters,model_hyperparameters,logging_level,logging_format,cnn_ops, final_2d_width)
 
     logger.info('Creating loggers\n')
     logger.info('=' * 80 + '\n')
@@ -2541,13 +2544,21 @@ if __name__ == '__main__':
     # ids of the convolution ops
     convolution_op_ids = []
     fulcon_op_ids = []
+    add_amout_filter_vec = []
     for op_i, op in enumerate(cnn_ops):
         if 'conv' in op:
             convolution_op_ids.append(op_i)
+            add_amout_filter_vec.append(model_hyperparameters['add_amount'])
         # Do not put the fulcon_out in the fulcon_ids we do not adapt the output layer
         # it already has the total number  of classes
         if 'fulcon' in op and op!='fulcon_out':
             fulcon_op_ids.append(op_i)
+            add_amout_filter_vec.append(model_hyperparameters['add_fulcon_amount'])
+
+        if 'pool' in op:
+            add_amout_filter_vec.append(1)
+
+    add_amout_filter_vec = np.asarray(add_amout_filter_vec)
 
     logger.info('Found all convolution opeartion ids')
 
@@ -2674,6 +2685,7 @@ if __name__ == '__main__':
             rolling_ativation_means[op] = np.zeros([cnn_hyperparameters[op]['weights'][3]])
 
     current_state, current_action,curr_adaptation_status = None, None,None
+    curr_layer_sizes = model_hyperparameters['start_filter_vector']
     prev_unseen_valid_accuracy = 0
     pool_acc_queue = []
     valid_acc_queue = []
@@ -2895,6 +2907,8 @@ if __name__ == '__main__':
                                         {tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
                                                                cnn_hyperparameters[current_op]['out'])})
 
+                                #print(curr_layer_sizes/add_amout_filter_vec)
+                                train_feed_dict.update({tf_scale_parameter: curr_layer_sizes/add_amout_filter_vec})
                                 _, _ = session.run(
                                     [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
                                     feed_dict=train_feed_dict)
@@ -2907,6 +2921,8 @@ if __name__ == '__main__':
                                                                   size=model_hyperparameters['add_amount'])}
                                 )
 
+                                #print(curr_layer_sizes/add_amout_filter_vec)
+                                train_feed_dict.update({tf_scale_parameter: curr_layer_sizes/add_amout_filter_vec})
                                 _, _ = session.run(
                                     [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
                                     feed_dict=train_feed_dict)
@@ -3130,6 +3146,7 @@ if __name__ == '__main__':
                                     next_state.append(current_state[li])
 
                             next_state = tuple(next_state)
+                            curr_layer_sizes = np.asarray(next_state)
 
                             logger.info(('=' * 40) + ' Update Summary ' + ('=' * 40))
                             logger.info('\tState (prev): %s', str(current_state))
