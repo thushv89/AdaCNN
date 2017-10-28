@@ -2716,7 +2716,7 @@ if __name__ == '__main__':
             # Because in my opinion, pool accuracy treats each task differently
             # max_pool_accuracy = 0.0
             #if np.random.random()<0.6:
-            research_parameters['momentum']=0.2
+            research_parameters['momentum']=0.9
             research_parameters['pool_momentum']=0.9**(epoch+1)
             #else:
             #    research_parameters['momentum']=0.0
