@@ -810,7 +810,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
                             optimizer, tf_indices,
                             tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
-                            tf.constant(start_lr, dtype=tf.float32), global_step
+                            tf.constant(start_lr, dtype=tf.float32), global_step, False
                         )
 
                     # Fully connected realted adaptation operations
@@ -835,7 +835,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
                                     optimizer, tf_indices,
                                     tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
-                                    tf.constant(start_lr, dtype=tf.float32), global_step
+                                    tf.constant(start_lr, dtype=tf.float32), global_step, False
                                 )
 
 

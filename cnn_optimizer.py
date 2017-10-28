@@ -67,7 +67,7 @@ def update_train_momentum_velocity(grads_and_vars):
 
             vel_update_ops.append(
                 tf.assign(vel,
-                          research_parameters['momentum'] * vel + g)
+                          research_parameters['momentum'] * vel + (1.0 - research_parameters['momentum']) * g)
             )
 
     return vel_update_ops
@@ -182,7 +182,7 @@ def optimize_with_momentum(optimizer, loss, global_step, learning_rate):
 
 
 def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_replace, op, avg_grad_and_vars,
-                                      tf_cnn_hyperparameters, learning_rate, global_step):
+                                      tf_cnn_hyperparameters, learning_rate, global_step, use_pool_momentum):
     global cnn_ops, cnn_hyperparameters
 
     decay_lr = model_parameters['decay_learning_rate']
@@ -252,15 +252,27 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                 grads_w *= mask_grads_w[tmp_op]
                 grads_b *= mask_grads_b[tmp_op]
 
-                with tf.variable_scope(TF_WEIGHTS) as child_scope:
-                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                with tf.variable_scope(TF_BIAS) as child_scope:
-                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                if use_pool_momentum:
+                    with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                        w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    with tf.variable_scope(TF_BIAS) as child_scope:
+                        b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
-                vel_update_ops.append(
-                    tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
-                vel_update_ops.append(
-                    tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+
+                    vel_update_ops.append(
+                        tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
+                    vel_update_ops.append(
+                        tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+                else:
+                    with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                        w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                    with tf.variable_scope(TF_BIAS) as child_scope:
+                        b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+
+                    vel_update_ops.append(
+                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + (1.0 - research_parameters['momentum']) * grads_w))
+                    vel_update_ops.append(
+                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum']) * grads_b))
 
                 grad_ops.append(
                     optimizer.apply_gradients([(w_vel * learning_rate  * mask_grads_w[tmp_op], w),
@@ -308,15 +320,27 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                 grads_w = grads_w * mask_grads_w[tmp_op]
                 grads_b = grads_b * mask_grads_b[tmp_op]
 
-                with tf.variable_scope(TF_WEIGHTS) as child_scope:
-                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                with tf.variable_scope(TF_BIAS) as child_scope:
-                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                if use_pool_momentum:
+                    with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                        w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    with tf.variable_scope(TF_BIAS) as child_scope:
+                        b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
-                vel_update_ops.append(
-                    tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
-                vel_update_ops.append(
-                    tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+                    vel_update_ops.append(
+                        tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
+                    vel_update_ops.append(
+                        tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+                else:
+
+                    with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                        w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                    with tf.variable_scope(TF_BIAS) as child_scope:
+                        b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+
+                    vel_update_ops.append(
+                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + (1.0 - research_parameters['momentum'])* grads_w))
+                    vel_update_ops.append(
+                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum'])*grads_b))
 
                 grad_ops.append(optimizer.apply_gradients(
                     [(w_vel * learning_rate * mask_grads_w[tmp_op], w), (b_vel * learning_rate * mask_grads_b[tmp_op], b)]))
@@ -331,15 +355,27 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                     if v.name == b.name:
                         grads_b = g
 
-                with tf.variable_scope(TF_WEIGHTS) as child_scope:
-                    w_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                with tf.variable_scope(TF_BIAS) as child_scope:
-                    b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                if use_pool_momentum:
+                    with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                        w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    with tf.variable_scope(TF_BIAS) as child_scope:
+                        b_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
-                vel_update_ops.append(
-                    tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
-                vel_update_ops.append(
-                    tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+                    vel_update_ops.append(
+                        tf.assign(w_vel, research_parameters['pool_momentum'] * w_vel + grads_w))
+                    vel_update_ops.append(
+                        tf.assign(b_vel, research_parameters['pool_momentum'] * b_vel + grads_b))
+                else:
+
+                    with tf.variable_scope(TF_WEIGHTS) as child_scope:
+                        w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                    with tf.variable_scope(TF_BIAS) as child_scope:
+                        b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+
+                    vel_update_ops.append(
+                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + (1.0 - research_parameters['momentum'])*grads_w))
+                    vel_update_ops.append(
+                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum'])*grads_b))
 
                 grad_ops.append(optimizer.apply_gradients(
                     [(w_vel * learning_rate, w), (b_vel * learning_rate, b)]))
