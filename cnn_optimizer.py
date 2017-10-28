@@ -67,7 +67,7 @@ def update_train_momentum_velocity(grads_and_vars):
 
             vel_update_ops.append(
                 tf.assign(vel,
-                          research_parameters['momentum'] * vel + (1.0 - research_parameters['momentum']) * g)
+                          research_parameters['momentum'] * vel + g)
             )
 
     return vel_update_ops
@@ -270,9 +270,9 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                         b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
                     vel_update_ops.append(
-                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + (1.0 - research_parameters['momentum']) * grads_w))
+                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + grads_w))
                     vel_update_ops.append(
-                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum']) * grads_b))
+                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + grads_b))
 
                 grad_ops.append(
                     optimizer.apply_gradients([(w_vel * learning_rate  * mask_grads_w[tmp_op], w),
@@ -338,9 +338,9 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                         b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
                     vel_update_ops.append(
-                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + (1.0 - research_parameters['momentum'])* grads_w))
+                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + grads_w))
                     vel_update_ops.append(
-                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum'])*grads_b))
+                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + grads_b))
 
                 grad_ops.append(optimizer.apply_gradients(
                     [(w_vel * learning_rate * mask_grads_w[tmp_op], w), (b_vel * learning_rate * mask_grads_b[tmp_op], b)]))
@@ -373,9 +373,9 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                         b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
                     vel_update_ops.append(
-                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + (1.0 - research_parameters['momentum'])*grads_w))
+                        tf.assign(w_vel, research_parameters['momentum'] * w_vel + grads_w))
                     vel_update_ops.append(
-                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum'])*grads_b))
+                        tf.assign(b_vel, research_parameters['momentum'] * b_vel + grads_b))
 
                 grad_ops.append(optimizer.apply_gradients(
                     [(w_vel * learning_rate, w), (b_vel * learning_rate, b)]))
