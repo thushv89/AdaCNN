@@ -292,6 +292,132 @@ def reset_cnn_preserve_weights_only_old(cnn_hyps, cnn_ops, tf_prune_factor):
     return reset_ops
 
 
+def reset_cnn_preserve_weights_average(cnn_hyps, cnn_ops, tf_prune_factor, cnn_old_hyps):
+    '''
+    Keep the values of the weights but prune the size of the network
+    We keep the very first set of indices as the indices are a representation of the age of the filer
+    :param cnn_hyps:
+    :param cnn_ops:
+    :return:
+    '''
+    reset_ops = []
+
+    init_logger.info('CNN Hyperparameters')
+    init_logger.info('%s\n', cnn_hyps)
+
+    for op in cnn_ops:
+
+        if 'conv' in op:
+            with tf.variable_scope(op):
+                weights = tf.get_variable(name=TF_WEIGHTS)
+                #weights.set_shape(cnn_old_hyps[op][TF_CONV_WEIGHT_SHAPE_STR])
+                # Out channel pruning
+                tr_weights = tf.transpose(weights,[3,0,1,2])
+                weight_slices = tf.split(tr_weights, cnn_hyps[op]['weights'][3], axis=0)
+                avgd_weights = tf.map_fn(lambda x: tf.reduce_mean(x,axis=[0],keep_dims=True),weight_slices, tf.float32)
+                gathered_weights = tf.transpose(tf.stack(avgd_weights,axis=0),[1,2,3,0])
+
+                # in channel pruning
+                gathered_weights = tf.transpose(gathered_weights,[2,0,1,3])
+                weight_slices = tf.split(gathered_weights, cnn_hyps[op]['weights'][2], axis=0)
+                avgd_weights = tf.map_fn(lambda x: tf.reduce_mean(x, axis=[0], keep_dims=True), weight_slices,
+                                         tf.float32)
+                gathered_weights = tf.transpose(tf.stack(avgd_weights,axis=0), [1, 2, 0, 3])
+
+                reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
+
+                with tf.variable_scope(TF_WEIGHTS):
+                    w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+
+                    # out channel pruning
+                    gathered_w_vel = tf.zeros(shape=cnn_hyps[op]['weights'],dtype=tf.float32)
+
+                    pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+                    gathered_pool_w_vel = tf.zeros(shape=cnn_hyps[op]['weights'],dtype=tf.float32)
+
+                    reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
+                    reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
+
+                bias = tf.get_variable(name=TF_BIAS)
+                #bias.set_shape(cnn_old_hyps[op][TF_CONV_WEIGHT_SHAPE_STR][3])
+                bias_slices = tf.split(bias, cnn_hyps[op]['weights'][3], axis=0)
+                avgd_bias = tf.map_fn(lambda x: tf.reduce_mean(x, axis=[0], keep_dims=True), bias_slices,
+                                         tf.float32)
+                gathered_bias = tf.stack(avgd_bias,axis=0)
+                reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
+
+                with tf.variable_scope(TF_BIAS):
+                    b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                    gathered_b_vel = tf.zeros(shape=cnn_hyps[op]['weights'][3],dtype=tf.float32)
+
+                    pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    gathered_pool_b_vel = tf.zeros(shape=cnn_hyps[op]['weights'][3], dtype=tf.float32)
+
+                    reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
+                    reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
+
+                act_var = tf.get_variable(name=TF_ACTIVAIONS_STR)
+                new_act_var = tf.zeros(shape=[cnn_hyps[op]['weights'][3]],
+                                       dtype=tf.float32)
+                reset_ops.append(tf.assign(act_var, new_act_var, validate_shape=False))
+
+        if 'fulcon' in op:
+
+            with tf.variable_scope(op):
+                weights = tf.get_variable(name=TF_WEIGHTS)
+                #weights.set_shape([cnn_old_hyps[op][TF_FC_WEIGHT_IN_STR],cnn_old_hyps[op][TF_FC_WEIGHT_OUT_STR]])
+                # Out channel pruning
+                tr_weights = tf.transpose(weights)
+                weight_slices = tf.split(tr_weights, cnn_hyps[op]['out'], axis=0)
+                avgd_weights = tf.map_fn(lambda x: tf.reduce_mean(x, axis=[0], keep_dims=True), weight_slices,
+                                         tf.float32)
+                gathered_weights = tf.transpose(tf.stack(avgd_weights, axis=0))
+
+                # in channel pruning
+                gathered_weights = tf.transpose(gathered_weights)
+                weight_slices = tf.split(gathered_weights, cnn_hyps[op]['out'], axis=0)
+                avgd_weights = tf.map_fn(lambda x: tf.reduce_mean(x, axis=[0], keep_dims=True), weight_slices,
+                                         tf.float32)
+                gathered_weights = tf.transpose(tf.stack(avgd_weights, axis=0))
+
+                reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
+
+                with tf.variable_scope(TF_WEIGHTS):
+                    w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+
+                    # Out pruning
+                    gathered_w_vel = tf.zeros(shape=[cnn_hyps[op]['in'],cnn_hyps[op]['out']], dtype=tf.float32)
+
+                    pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
+
+                    # Out pruning
+                    gathered_pool_w_vel = tf.zeros(shape=[cnn_hyps[op]['in'],cnn_hyps[op]['out']], dtype=tf.float32)
+
+                    reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
+                    reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
+
+                bias = tf.get_variable(name=TF_BIAS)
+                #bias.set_shape([cnn_old_hyps[op][TF_FC_WEIGHT_OUT_STR]])
+                bias_slices = tf.split(bias, cnn_hyps[op]['out'], axis=0)
+                avgd_bias = tf.map_fn(lambda x: tf.reduce_mean(x, axis=[0], keep_dims=True), bias_slices,
+                                      tf.float32)
+                gathered_bias = tf.stack(avgd_bias, axis=0)
+                reset_ops.append(tf.assign(bias, gathered_bias, validate_shape=False))
+
+                with tf.variable_scope(TF_BIAS):
+                    b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
+                    gathered_b_vel = tf.zeros(shape=[cnn_hyps[op]['out']], dtype=tf.float32)
+
+                    pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
+                    gathered_pool_b_vel = tf.zeros(shape=[cnn_hyps[op]['out']], dtype=tf.float32)
+
+                    reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
+                    reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
+
+    return reset_ops
+
+
 def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_factor):
     '''
     Keep the values of the weights but prune the size of the network
@@ -322,7 +448,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                 # in channel pruning
                 gathered_weights = tf.transpose(gathered_weights,[2,0,1,3])
                 gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])
-                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])/tf_prune_factor
+                gathered_weights = tf.transpose(gathered_weights, [1, 2, 0, 3])#/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
                 reset_ops.append(tf.assign(act, gathered_act, validate_shape=False))
@@ -385,7 +511,7 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                 gathered_act = tf.gather(act, tf_prune_ids[op]['out'])
 
                 # In pruning
-                gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])/tf_prune_factor
+                gathered_weights = tf.gather(gathered_weights, tf_prune_ids[op]['in'])#/tf_prune_factor
 
                 reset_ops.append(tf.assign(weights, gathered_weights, validate_shape=False))
                 reset_ops.append(tf.assign(act, gathered_act, validate_shape=False))

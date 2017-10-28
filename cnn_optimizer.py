@@ -24,8 +24,9 @@ def set_from_main(research_params, model_params, logging_level, logging_format, 
     global research_parameters, model_parameters,logger, cnn_ops, add_amout, add_fulcon_amount
     research_parameters = research_params
     model_parameters = model_params
-    add_amout = model_parameters['add_amount']
-    add_fulcon_amount = model_parameters['add_fulcon_amount']
+    if model_parameters['adapt_structure']:
+        add_amout = model_parameters['add_amount']
+        add_fulcon_amount = model_parameters['add_fulcon_amount']
 
     cnn_ops = ops
 

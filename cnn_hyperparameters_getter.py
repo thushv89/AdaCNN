@@ -87,8 +87,8 @@ def get_interval_related_hyperparameters(dataset_name):
 def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, use_fse_capacity, num_labels):
 
     model_hyperparameters = {}
-
-    model_hyperparameters['batch_size'] = 128  # number of datapoints in a single batch
+    model_hyperparameters['adapt_structure'] = adapt_structure
+    model_hyperparameters['batch_size'] = 64  # number of datapoints in a single batch
     model_hyperparameters['start_lr'] = 0.01
     model_hyperparameters['min_learning_rate'] = 0.0001
     model_hyperparameters['decay_learning_rate'] = True
@@ -118,9 +118,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-
-    model_hyperparameters['start_lr'] = 0.01
-    model_hyperparameters['include_l2_loss'] = True
+    model_hyperparameters['include_l2_loss'] = False
     model_hyperparameters['beta'] = 0.0005
     model_hyperparameters['use_loc_res_norm'] = False
 
@@ -157,7 +155,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     if dataset_name == 'cifar-100':
 
-        pool_size = model_hyperparameters['batch_size'] * 1* num_labels
+        pool_size = model_hyperparameters['batch_size'] * 2* num_labels
 
         if not adapt_structure:
             if not use_fse_capacity:
@@ -174,21 +172,21 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                          "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,64,0,0#Terminate,0,0,0"
 
             filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 110]
-            add_amount, remove_amount, add_fulcon_amount = 12, 6, 48
+            add_amount, remove_amount, add_fulcon_amount = 8, 4, 24
             filter_min_threshold = 24
             fulcon_min_threshold = 48
 
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['n_tasks'] = 4
         model_hyperparameters['binned_data_dist_length'] = 10
-        model_hyperparameters['prune_min_bound'] = 0.5
-        model_hyperparameters['prune_max_bound'] = 0.75
+        model_hyperparameters['prune_min_bound'] = 0.75 # used to be 0.5
+        model_hyperparameters['prune_max_bound'] = 0.9 # used to be 0.75
 
     elif dataset_name== 'imagenet-250':
         model_hyperparameters['top_k_accuracy'] = 5.0
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['epochs'] = 8
-        pool_size = int(model_hyperparameters['batch_size'] * 0.75 * num_labels)
+        pool_size = int(model_hyperparameters['batch_size'] * 1 * num_labels)
 
         if not adapt_structure:
             cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128#C,3,1,128#P,2,2,0" \
@@ -205,13 +203,13 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_vector = [64, 64, 0, 128, 128, 0, 256, 256, 0, 256, 256, 0, 256, 256, 0, 2048, 2048,250]
             filter_min_threshold = 32
             fulcon_min_threshold = 100
-            add_amount, remove_amount, add_fulcon_amount = 16, 8, 64
+            add_amount, remove_amount, add_fulcon_amount = 8, 4, 24
 
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
 
-        model_hyperparameters['prune_min_bound'] = 0.5
-        model_hyperparameters['prune_max_bound'] = 0.75
+        model_hyperparameters['prune_min_bound'] = 0.75
+        model_hyperparameters['prune_max_bound'] = 0.9
 
 
     elif dataset_name=='svhn-10':

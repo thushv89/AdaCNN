@@ -259,7 +259,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
 
                 tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
                                      tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
-                                               act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (1-act_decay)* tf.reduce_mean(x,axis=[0,1,2])))
+                                               act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (1-act_decay)* tf.reduce_mean(tf.abs(w),axis=[0,1,2])))
                 x = utils.lrelu(x + b, name=scope.name + '/top')
 
                 if use_loc_res_norm and op == last_conv_id:
@@ -302,7 +302,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
                                          tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
                                                    act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (
-                                                   1 - act_decay) * tf.reduce_mean(x, axis=[0])))
+                                                   1 - act_decay) * tf.reduce_mean(tf.abs(w), axis=[0])))
 
                     x = utils.lrelu(x, name=scope.name + '/top')
 
@@ -318,7 +318,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
                                          tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
                                                    act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (
-                                                       1 - act_decay) * tf.reduce_mean(x, axis=[0])))
+                                                       1 - act_decay) * tf.reduce_mean(tf.abs(w), axis=[0])))
                     x = utils.lrelu(x, name=scope.name + '/top')
 
                     if training and use_dropout:
@@ -938,9 +938,9 @@ def fintune_with_pool_ft(hard_pool_ft):
 
 
 def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
-    if np.random.random() < 0.1:
+    if np.random.random() < 0.25:
         new_curr_weights = np.flip(new_curr_weights, axis=np.random.choice([0, 1]))
-    if np.random.random() < 0.1:
+    if np.random.random() < 0.25:
         new_curr_weights = np.swapaxes(new_curr_weights, 0, 1)
     if np.random.random() < 0.8:
         if np.random.random() < 0.5:
@@ -981,9 +981,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     max_rand_threshold = 0.75
 
     #if epoch==-1:
-    rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
+    #rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
     #else:
-    #rand_thresh_for_layer = 0.0
+    rand_thresh_for_layer = 0.5
 
     print('Rand thresh for layer: ',rand_thresh_for_layer)
     if current_op != last_conv_id:
@@ -1011,8 +1011,13 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
 
-            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
+            #rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
+            if np.random.random()<0.5:
+                rand_indices_1 = np.argsort(curr_act).ravel()[-amount_to_add:]
+            else:
+                rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add,
+                                                  replace=True)
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel()])
             #ind_counter = Counter(all_indices_plus_rand.tolist())
@@ -1179,14 +1184,14 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     pbatch_train_count = 0
 
     # Train only with half of the batch
-    '''for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
         if np.random.random() < research_parameters['finetune_rate']:
             pbatch_data, pbatch_labels = [], []
 
             pool_feed_dict = {
                 tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
                                       cnn_hyperparameters[current_op]['weights'][3])}
-            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+            pool_feed_dict.update({tf_dropout_rate:0.0})
 
             for gpu_id in range(num_gpus):
                 pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
@@ -1199,36 +1204,16 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
-                               feed_dict=pool_feed_dict)'''
+                               feed_dict=pool_feed_dict)
 
-    train_feed_dict[tf_dropout_rate] = 0.0
+    '''train_feed_dict[tf_dropout_rate] = 0.0
     train_feed_dict.update({tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
                                                   cnn_hyperparameters[current_op]['weights'][3])})
 
     _, _ = session.run([tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
-                       feed_dict=train_feed_dict)
+                       feed_dict=train_feed_dict)'''
 
-    if hard_pool_ft.get_size() > batch_size:
-        pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-
-        # Train with hard_pool_ft
-        for pool_id in range(0,
-                             (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
-                pool_feed_dict = {}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-                for gpu_id in range(num_gpus):
-                    pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                   pool_id + gpu_id + 1) * batch_size,
-                                  :, :, :]
-                    pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                    pool_id + gpu_id + 1) * batch_size,
-                                    :]
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
-
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+    run_actual_finetune_operation(hard_pool_ft)
 
 
 def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, epoch):
@@ -1250,9 +1235,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     max_rand_threshold = 0.75
 
     #if epoch==-1:
-    rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
+    #rand_thresh_for_layer = max([min_rand_threshold, max_rand_threshold * (1.0 / (li+1.0)**0.5)])
     #else:
-    #rand_thresh_for_layer = 0.0
+    rand_thresh_for_layer = 0.5
 
     print('Rand thresh for layer: ', rand_thresh_for_layer)
 
@@ -1278,8 +1263,14 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
 
-            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
+            #rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
+            if np.random.random()<0.5:
+                rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add,
+                                                  replace=True)
+            else:
+                rand_indices_1 = np.argsort(curr_act).ravel()[-amount_to_add:]
+
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel()])
             #print('allindices plus rand',all_indices_plus_rand.shape)
@@ -1302,8 +1293,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             new_next_weights = next_weights[rand_indices_1,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
-            new_next_binomial = np.random.normal(scale=scale_for_rand/10.0, size=new_next_weights.shape)
-            new_next_weights *= new_next_binomial
+
         else:
             print('Random Initialization')
             curr_weight_shape = curr_weights.shape
@@ -1388,14 +1378,14 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     pbatch_train_count = 0
 
     # Train only newly added parameters
-    '''for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
         if np.random.random() < research_parameters['finetune_rate']:
             pbatch_data, pbatch_labels = [], []
 
             pool_feed_dict = {
                 tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
                                       cnn_hyperparameters[current_op]['out'])}
-            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+            pool_feed_dict.update({tf_dropout_rate:0.0})
 
             for gpu_id in range(num_gpus):
                 pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
@@ -1409,35 +1399,15 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
-            pbatch_train_count += 1'''
-    train_feed_dict[tf_dropout_rate] = 0.0
+
+    '''train_feed_dict[tf_dropout_rate] = 0.0
     train_feed_dict.update({tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
                                                   cnn_hyperparameters[current_op]['out'])})
 
-    _, _ = session.run([tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]], feed_dict=train_feed_dict)
+    _, _ = session.run([tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]], feed_dict=train_feed_dict)'''
 
     # Optimize full network
-    if hard_pool_ft.get_size() > batch_size:
-        pool_dataset, pool_labels = hard_pool_ft.get_pool_data(True)
-
-        # Train with latter half of the data
-        for pool_id in range(0,
-                             (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
-                pool_feed_dict = {}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-                for gpu_id in range(num_gpus):
-                    pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                   pool_id + gpu_id + 1) * batch_size,
-                                  :, :, :]
-                    pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                    pool_id + gpu_id + 1) * batch_size,
-                                    :]
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
-
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+    run_actual_finetune_operation(hard_pool_ft)
 
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft):
@@ -1549,7 +1519,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
                                    feed_dict=pool_feed_dict)
 
-def run_actual_finetune_operation(hard_pool_ft):
+def run_actual_finetune_operation(hard_pool_ft,overried_finetune_rate=False):
     '''
     Run the finetune opeartion in the default session
     :param hard_pool_ft:
@@ -1564,7 +1534,7 @@ def run_actual_finetune_operation(hard_pool_ft):
         # Train with latter half of the data
 
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
+            if np.random.random() < research_parameters['finetune_rate'] or overried_finetune_rate:
                 #print('fintuning network (pool_id: ',pool_id,')')
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
@@ -1929,8 +1899,11 @@ def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
                                        'stride': list(current_cnn_hyperparams[op]['stride']),
                                        'padding': 'SAME'}
                 pruned_cnn_hyps[op]['weights'][2] = pruned_cnn_hyps[prev_op]['weights'][3]
+
                 pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
                                                          int(pruned_cnn_hyps[op]['weights'][3] * prune_factor)])
+
+
             prev_op = op
 
         if 'fulcon' in op:
@@ -2026,7 +1999,14 @@ def get_pruned_ids_feed_dict_by_slice(cnn_hyps,pruned_cnn_hyps):
             if op==first_fc:
                 amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
                 logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
-                op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
+
+                op_retain_ids_in = []
+                for ret_i in prev_retain_in_ch:
+                    op_retain_ids_in.extend(list(
+                        range(ret_i * final_2d_width * final_2d_width, (ret_i + 1) * final_2d_width * final_2d_width)))
+                # op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
+                op_retain_ids_in = np.asarray(op_retain_ids_in)
+
                 #op_retain_ids_in = np.asarray(op_retain_ids_out)
                 logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, len(op_retain_ids_in))
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: np.asarray(op_retain_ids_in)})
@@ -2062,10 +2042,16 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
             logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
             amout_to_prune = amount_before_prune - amount_to_retain_out_ch
 
+
             op_retain_ids_out = None
             with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
                 with tf.variable_scope(op, reuse=True):
-                    op_retain_ids_out = np.argsort(tf.get_variable(TF_ACTIVAIONS_STR).eval())[amout_to_prune:]
+                    act_var = tf.get_variable(TF_ACTIVAIONS_STR).eval()
+                    assert act_var.shape[0] == cnn_hyps[op]['weights'][3], \
+                        'Size incompatible (act_var: %d) and (cnn_hyps: %d)'%(act_var.shape[0], cnn_hyps[op]['weights'][3])
+                    op_retain_ids_out = np.argsort(act_var)[amout_to_prune:]
+
+
             logger.info('\tPrune IDs')
             logger.info(op_retain_ids_out)
             retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: op_retain_ids_out})
@@ -2078,12 +2064,12 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
                 op_retain_ids_in = prev_retain_in_ch
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
                 logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
-                logger.info('\tPrune IDs')
+                logger.info('\tRetain IDs')
                 logger.info(op_retain_ids_in)
             else:
                 op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
-                logger.info('\tPrune IDs')
+                logger.info('\tRetain IDs')
                 logger.info(op_retain_ids_in)
 
             prev_retain_in_ch = np.asarray(op_retain_ids_out)
@@ -2100,7 +2086,10 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
             op_retain_ids_out = None
             with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
                 with tf.variable_scope(op, reuse=True):
-                    op_retain_ids_out = np.argsort(tf.get_variable(TF_ACTIVAIONS_STR).eval())[amout_to_prune:]
+                    act_var = tf.get_variable(TF_ACTIVAIONS_STR).eval()
+                    assert cnn_hyps[op]['out'] == act_var.shape[0],\
+                        'Size incompatible (act_var: %d) and (cnn_hyps: %d)'%(act_var.shape[0], cnn_hyps[op]['out'])
+                    op_retain_ids_out = np.argsort(act_var)[amout_to_prune:]
 
             logger.info('\tPrune IDs')
             logger.info(op_retain_ids_out)
@@ -2118,7 +2107,7 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
                 op_retain_ids_in = np.asarray(op_retain_ids_in)
                 logger.info('\tAmount of filers to retain for %s: %s (in ids)', op, op_retain_ids_in.shape)
 
-                logger.info('\tPrune IDs')
+                logger.info('\tRetain IDs')
                 logger.info(op_retain_ids_in)
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
 
@@ -2126,7 +2115,95 @@ def get_pruned_ids_feed_dict_by_activation(cnn_hyps,pruned_cnn_hyps):
                 amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
                 logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
                 op_retain_ids_in = np.asarray(prev_retain_in_ch)
-                logger.info('\tPrune IDs')
+                logger.info('\tRetain IDs')
+                logger.info(op_retain_ids_in)
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+
+            prev_retain_in_ch = op_retain_ids_out
+            prev_op = op
+
+    return retain_ids_feed_dict
+
+
+def get_pruned_ids_feed_dict_by_age(cnn_hyps,pruned_cnn_hyps):
+    global tf_retain_id_placeholders, cnn_ops,num_channels,final_2d_width,first_fc
+
+    retain_ids_feed_dict = {}
+    prev_op = None
+    op_retain_ids_out = None
+    for op in cnn_ops:
+        logger.info('Calculating prune ids for %s (op) %s (prev_op)',op,prev_op)
+        if 'pool' in op:
+            continue
+        elif 'conv' in op:
+
+            # Out pruning
+            amount_before_prune = cnn_hyps[op]['weights'][3]
+            logger.info('\tCurrent amount: %d', amount_before_prune)
+            amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
+            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
+            amout_to_prune = amount_before_prune - amount_to_retain_out_ch
+
+            op_retain_ids_out = np.arange(amout_to_prune,amount_before_prune)
+
+            logger.info('\tPrune IDs')
+            logger.info(op_retain_ids_out)
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: op_retain_ids_out})
+
+            # In pruning (For layers other than closest to input)
+            if prev_op is not None:
+                assert pruned_cnn_hyps[op]['weights'][2] == pruned_cnn_hyps[prev_op]['weights'][3]
+                amount_to_retain_in_ch = pruned_cnn_hyps[op]['weights'][2]
+                #op_retain_ids_in = np.repeat(np.asarray(op_retain_ids_out),final_2d_width*final_2d_width)
+                op_retain_ids_in = prev_retain_in_ch
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+                logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
+                logger.info('\tRetain IDs')
+                logger.info(op_retain_ids_in)
+            else:
+                op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+                logger.info('\tRetain IDs')
+                logger.info(op_retain_ids_in)
+
+            prev_retain_in_ch = np.asarray(op_retain_ids_out)
+            prev_op = op
+
+        elif 'fulcon' in op:
+            # Out pruning
+            amount_before_prune = cnn_hyps[op]['out']
+            logger.info('\tCurrent amout: %d',amount_before_prune)
+            amount_to_retain_out_ch = pruned_cnn_hyps[op]['out']
+            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
+            amout_to_prune = amount_before_prune - amount_to_retain_out_ch
+
+            op_retain_ids_out = np.arange(amout_to_prune, amount_before_prune)
+
+            logger.info('\tPrune IDs')
+            logger.info(op_retain_ids_out)
+
+            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:op_retain_ids_out})
+
+            # In Pruning
+            if op==first_fc:
+                amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
+                logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
+                op_retain_ids_in = []
+                for ret_i in prev_retain_in_ch:
+                    op_retain_ids_in.extend(list(range(ret_i*final_2d_width*final_2d_width,(ret_i+1)*final_2d_width*final_2d_width)))
+                #op_retain_ids_in = np.repeat(prev_retain_in_ch,final_2d_width*final_2d_width)
+                op_retain_ids_in = np.asarray(op_retain_ids_in)
+                logger.info('\tAmount of filers to retain for %s: %s (in ids)', op, op_retain_ids_in.shape)
+
+                logger.info('\tRetain IDs')
+                logger.info(op_retain_ids_in)
+                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
+
+            else:
+                amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
+                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
+                op_retain_ids_in = np.asarray(prev_retain_in_ch)
+                logger.info('\tRetain IDs')
                 logger.info(op_retain_ids_in)
                 retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
 
@@ -2214,7 +2291,7 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     pruned_feed_dict = get_pruned_cnn_hyp_feed_dict(pruned_hyps)
     pruned_feed_dict.update({tf_prune_factor:1.0})
 
-    prune_ids_feed_dict = get_pruned_ids_feed_dict_by_activation(cnn_hyperparameters,pruned_hyps)
+    prune_ids_feed_dict = get_pruned_ids_feed_dict_by_slice(cnn_hyperparameters,pruned_hyps)
     full_prune_feed_dict = dict(pruned_feed_dict)
     full_prune_feed_dict.update(prune_ids_feed_dict)
 
@@ -2249,6 +2326,8 @@ def prune_the_network(rew_reg, task_id, type, prune_logger):
     print(session.run(tf_cnn_hyperparameters))
 
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
+
+    run_actual_finetune_operation(hard_pool_ft, True)
 
     p_accuracy_after_prune = calculate_pool_accuracy(hard_pool_valid)
 
@@ -2296,13 +2375,14 @@ if __name__ == '__main__':
     adapt_randomly = False
     use_fse_capacity = False
     inter_op_threads, intra_op_threads = 0,0
-
+    data_overlap = False
     try:
         opts, args = getopt.getopt(
             sys.argv[1:], "", ["output_dir=", "num_gpus=", "memory=", "intra_op_threads=", "inter_op_threads=",'allow_growth=',
                                'dataset_type=', 'dataset_behavior=',
                                'adapt_structure=', 'rigid_pooling=','rigid_pool_type=',
-                               'all_labels_included=','noise_labels=','noise_images=','adapt_randomly=','use_fse_capacity='])
+                               'all_labels_included=','noise_labels=','noise_images=','adapt_randomly=','use_fse_capacity=',
+                               'class_overlap='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory=')
@@ -2341,6 +2421,8 @@ if __name__ == '__main__':
                 intra_op_threads = int(arg)
             if opt=='--inter_op_threads':
                 inter_op_threads = int(arg)
+            if opt=='--class_overlap':
+                data_overlap = bool(int(arg))
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -2545,14 +2627,24 @@ if __name__ == '__main__':
     if datatype=='cifar-10':
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='cifar-100':
-        #labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
-        labels_per_task = 100
-        labels_of_each_task = [list(range(100)) for i in range(n_tasks)]
+        if data_overlap:
+            n_tasks = 4
+            labels_per_task = 50
+            labels_of_each_task = [list(range(0,50)),list(range(25,75)),list(range(50,100)),list(range(75,100))+list(range(0,25))]
+        else:
+            n_tasks = 4
+            labels_per_task = 25
+            labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
         # override settings
-        n_tasks = 2
-        labels_per_task = 125
-        labels_of_each_task = [list(range(0, 125)),list(range(125, 250))]
+        if data_overlap:
+            n_tasks = 2
+            labels_per_task = 150
+            labels_of_each_task = [list(range(0, 150)), list(range(150, 250))+list(range(0,50))]
+        else:
+            n_tasks = 2
+            labels_per_task = 125
+            labels_of_each_task = [list(range(0, 125)),list(range(125, 250))]
 
     if behavior=='non-stationary':
         data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
@@ -2623,12 +2715,12 @@ if __name__ == '__main__':
             # We set the max pool accuracy to zero at the begining of each task.
             # Because in my opinion, pool accuracy treats each task differently
             # max_pool_accuracy = 0.0
-            if np.random.random()<0.6:
-                research_parameters['momentum']=0.9
-                research_parameters['pool_momentum']=0.0
-            else:
-                research_parameters['momentum']=0.0
-                research_parameters['pool_momentum']=0.9
+            #if np.random.random()<0.6:
+            research_parameters['momentum']=0.2
+            research_parameters['pool_momentum']=0.9**(epoch+1)
+            #else:
+            #    research_parameters['momentum']=0.0
+            #    research_parameters['pool_momentum']=0.9
 
             cnn_optimizer.update_hyperparameters(research_parameters)
 
@@ -2786,11 +2878,39 @@ if __name__ == '__main__':
                                 [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
                             )
                     else:
-                        if current_action_type != adapter.get_donothing_action_type():
-                            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                            if current_action_type == adapter.get_naivetrain_action_type():
+
                                 _, _ = session.run(
                                     [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
                                 )
+                            elif current_action_type == adapter.get_add_action_type():
+                                train_feed_dict[tf_dropout_rate] = 0.0
+                                if 'conv' in current_op:
+                                    train_feed_dict.update(
+                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
+                                                               cnn_hyperparameters[current_op]['weights'][3])})
+                                elif 'fulcon' in current_op:
+                                    train_feed_dict.update(
+                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
+                                                               cnn_hyperparameters[current_op]['out'])})
+
+                                _, _ = session.run(
+                                    [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
+                                    feed_dict=train_feed_dict)
+
+                            elif current_action_type == adapter.get_finetune_action_type():
+
+                                train_feed_dict[tf_dropout_rate] = 0.0
+                                train_feed_dict.update(
+                                    {tf_indices: np.random.choice(np.arange(cnn_hyperparameters['conv_0']['weights'][3]).tolist(),replace=False,
+                                                                  size=model_hyperparameters['add_amount'])}
+                                )
+
+                                _, _ = session.run(
+                                    [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
+                                    feed_dict=train_feed_dict)
+
 
                             #if batch_id % 25 == 0:
                                 #act_vectors = session.run([tf.get_variable(tmp_op) for tmp_op in activation_vec_ops])
@@ -3131,7 +3251,7 @@ if __name__ == '__main__':
             # We prune netowork at the end of each task
             if adapt_structure and curr_adaptation_status:
                 # always prune the structure randomly if adapt-random
-                if adapt_randomly or epoch<1:
+                if adapt_randomly or epoch<2:
                     prune_the_network(prune_reward_reg, task,'random',prune_logger)
                 else:
                     if np.random.random()<0.5:
