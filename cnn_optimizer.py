@@ -19,7 +19,7 @@ final_2d_width = None
 add_amout, add_fulcon_amount = None,None
 logging_level, logging_format = None, None
 logger = None
-rms_epsilon = 1e-8
+rms_epsilon = 1e-5
 
 cnn_ops = None
 def set_from_main(research_params, model_params, logging_level, logging_format, ops, final_2d_w):
