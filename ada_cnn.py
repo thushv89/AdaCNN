@@ -700,16 +700,14 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # Train data operations
         # avg_grad_and_vars = [(avggrad0,var0),(avggrad1,var1),...]
         tf_avg_grad_and_vars = average_gradients(tower_grads)
-        apply_grads_op = cnn_optimizer.apply_gradient_with_momentum(optimizer, start_lr, global_step)
+        apply_grads_op, update_train_velocity_op = cnn_optimizer.apply_gradient_with_rmsprop(optimizer, start_lr, global_step, tf_avg_grad_and_vars)
         concat_loss_vec_op = concat_loss_vector_towers(tower_loss_vectors)
-        update_train_velocity_op = cnn_optimizer.update_train_momentum_velocity(tf_avg_grad_and_vars)
         mean_loss_op = tf.reduce_mean(tower_losses)
 
         logger.info('Tower averaging for Gradients for Pool data')
         # Pool data operations
         tf_pool_avg_gradvars = average_gradients(tower_pool_grads)
-        apply_pool_grads_op = cnn_optimizer.apply_gradient_with_pool_momentum(optimizer, start_lr, global_step)
-        update_pool_velocity_ops = cnn_optimizer.update_pool_momentum_velocity(tf_pool_avg_gradvars)
+        apply_pool_grads_op, update_pool_velocity_ops = cnn_optimizer.apply_pool_gradient_with_rmsprop(optimizer, start_lr, global_step, tf_pool_avg_gradvars)
         mean_pool_loss = tf.reduce_mean(tower_pool_losses)
 
         # Weight mean calculation for pruning
@@ -1074,10 +1072,10 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             new_act_this = np.zeros(shape=(amount_to_add),dtype=np.float32)
 
             if last_conv_id != current_op:
-                new_next_weights = np.random.normal(scale=np.sqrt(2.0/(next_weights_shape[0]*next_weights_shape[1]*next_weights_shape[2])),
+                new_next_weights = np.random.normal(scale=np.sqrt(0.1/(next_weights_shape[0]*next_weights_shape[1]*next_weights_shape[2])),
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
             else:
-                new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),
+                new_next_weights = np.random.normal(scale=np.sqrt(0.1/next_weights_shape[0]),
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
 
             normalize_factor = 1.0*(curr_weight_shape[3] + amount_to_add) / curr_weight_shape[3]
@@ -1301,11 +1299,11 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             print('Random Initialization')
             curr_weight_shape = curr_weights.shape
             next_weights_shape = next_weights.shape
-            new_curr_weights = np.random.normal(scale=np.sqrt(2.0/curr_weight_shape[0]),size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_weights = np.random.normal(scale=np.sqrt(0.1/curr_weight_shape[0]),size=(curr_weight_shape[0],amount_to_add,1,1))
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
             new_curr_act = np.zeros(shape=(amount_to_add),dtype=np.float32)
 
-            new_next_weights = np.random.normal(scale=np.sqrt(2.0/next_weights_shape[0]),size=(amount_to_add,next_weights_shape[1],1,1))
+            new_next_weights = np.random.normal(scale=np.sqrt(0.1/next_weights_shape[0]),size=(amount_to_add,next_weights_shape[1],1,1))
 
             normalize_factor = (curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
             count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32) #* normalize_factor
@@ -2544,21 +2542,22 @@ if __name__ == '__main__':
     # ids of the convolution ops
     convolution_op_ids = []
     fulcon_op_ids = []
-    add_amout_filter_vec = []
-    for op_i, op in enumerate(cnn_ops):
-        if 'conv' in op:
-            convolution_op_ids.append(op_i)
-            add_amout_filter_vec.append(model_hyperparameters['add_amount'])
-        # Do not put the fulcon_out in the fulcon_ids we do not adapt the output layer
-        # it already has the total number  of classes
-        if 'fulcon' in op and op!='fulcon_out':
-            fulcon_op_ids.append(op_i)
-            add_amout_filter_vec.append(model_hyperparameters['add_fulcon_amount'])
+    if adapt_structure:
+        add_amout_filter_vec = []
+        for op_i, op in enumerate(cnn_ops):
+            if 'conv' in op:
+                convolution_op_ids.append(op_i)
+                add_amout_filter_vec.append(model_hyperparameters['add_amount'])
+            # Do not put the fulcon_out in the fulcon_ids we do not adapt the output layer
+            # it already has the total number  of classes
+            if 'fulcon' in op and op!='fulcon_out':
+                fulcon_op_ids.append(op_i)
+                add_amout_filter_vec.append(model_hyperparameters['add_fulcon_amount'])
 
-        if 'pool' in op:
-            add_amout_filter_vec.append(1)
+            if 'pool' in op:
+                add_amout_filter_vec.append(1)
 
-    add_amout_filter_vec = np.asarray(add_amout_filter_vec)
+        add_amout_filter_vec = np.asarray(add_amout_filter_vec)
 
     logger.info('Found all convolution opeartion ids')
 
@@ -2685,7 +2684,7 @@ if __name__ == '__main__':
             rolling_ativation_means[op] = np.zeros([cnn_hyperparameters[op]['weights'][3]])
 
     current_state, current_action,curr_adaptation_status = None, None,None
-    curr_layer_sizes = model_hyperparameters['start_filter_vector']
+    curr_layer_sizes = model_hyperparameters['start_filter_vector'] if adapt_structure else None
     prev_unseen_valid_accuracy = 0
     pool_acc_queue = []
     valid_acc_queue = []
@@ -2729,7 +2728,7 @@ if __name__ == '__main__':
             # max_pool_accuracy = 0.0
             #if np.random.random()<0.6:
             research_parameters['momentum']=0.9
-            research_parameters['pool_momentum']=0.9**(epoch+1)
+            research_parameters['pool_momentum']=0.9 #0.9**(epoch+1)
             #else:
             #    research_parameters['momentum']=0.0
             #    research_parameters['pool_momentum']=0.9
@@ -2923,6 +2922,7 @@ if __name__ == '__main__':
 
                                 #print(curr_layer_sizes/add_amout_filter_vec)
                                 train_feed_dict.update({tf_scale_parameter: curr_layer_sizes/add_amout_filter_vec})
+
                                 _, _ = session.run(
                                     [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
                                     feed_dict=train_feed_dict)
