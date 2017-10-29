@@ -386,9 +386,9 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
 
                 if use_pool_momentum:
                     vel_update_ops.append(
-                        tf.assign(pool_w_vel, research_parameters['pool_momentum'] * pool_w_vel**2 + (1.0 - research_parameters['pool_momentum']) * grads_w**2))
+                        tf.assign(pool_w_vel, research_parameters['pool_momentum'] * pool_w_vel + (1.0 - research_parameters['pool_momentum']) * grads_w**2))
                     vel_update_ops.append(
-                        tf.assign(pool_b_vel, research_parameters['pool_momentum'] * pool_b_vel**2 + (1.0 - research_parameters['pool_momentum']) * grads_b**2))
+                        tf.assign(pool_b_vel, research_parameters['pool_momentum'] * pool_b_vel + (1.0 - research_parameters['pool_momentum']) * grads_b**2))
 
                     adaptive_w_lr = learning_rate / (tf.sqrt(pool_w_vel) + rms_epsilon)
                     adaptive_b_lr = learning_rate / (tf.sqrt(pool_b_vel) + rms_epsilon)
