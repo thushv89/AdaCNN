@@ -2924,38 +2924,37 @@ if __name__ == '__main__':
                                         [apply_grads_op], feed_dict=train_feed_dict
                                     )
                             elif current_action_type == adapter.get_add_action_type():
-                                '''train_feed_dict[tf_dropout_rate] = 0.0
+
                                 if 'conv' in current_op:
                                     train_feed_dict.update(
-                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
+                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - cnn_hyperparameters[current_op]['weights'][3]//2,
                                                                cnn_hyperparameters[current_op]['weights'][3])})
                                 elif 'fulcon' in current_op:
                                     train_feed_dict.update(
-                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - ai[1],
+                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - cnn_hyperparameters[current_op]['out']//2,
                                                                cnn_hyperparameters[current_op]['out'])})
 
                                 #print(curr_layer_sizes/add_amout_filter_vec)
-                                train_feed_dict.update({tf_scale_parameter: np.asarray(curr_layer_sizes)/add_amout_filter_vec})
+                                train_feed_dict.update({tf_scale_parameter: np.ones_like(curr_layer_sizes)*2.0})
                                 with tf.control_dependencies(tf_training_slice_vel_update[current_op]):
                                     _ = session.run(
                                         tf_training_slice_optimize[current_op],
-                                        feed_dict=train_feed_dict)'''
+                                        feed_dict=train_feed_dict)
 
-                                with tf.control_dependencies(update_train_velocity_op):
+                                '''with tf.control_dependencies(update_train_velocity_op):
                                     _ = session.run(
                                         [apply_grads_op], feed_dict=train_feed_dict
-                                    )
+                                    )'''
 
                             elif current_action_type == adapter.get_finetune_action_type():
 
-                                train_feed_dict[tf_dropout_rate] = 0.0
                                 train_feed_dict.update(
                                     {tf_indices: np.random.choice(np.arange(cnn_hyperparameters['conv_0']['weights'][3]).tolist(),replace=False,
-                                                                  size=model_hyperparameters['add_amount'])}
+                                                                  size=cnn_hyperparameters['conv_0']['weights'][3]//2)}
                                 )
 
                                 #print(curr_layer_sizes/add_amout_filter_vec)
-                                train_feed_dict.update({tf_scale_parameter: np.asarray(curr_layer_sizes)/add_amout_filter_vec})
+                                train_feed_dict.update({tf_scale_parameter: np.ones_like(curr_layer_sizes)*2.0})
 
                                 with tf.control_dependencies(tf_training_slice_vel_update[current_op]):
                                     _ = session.run(
