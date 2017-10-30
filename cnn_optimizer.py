@@ -161,7 +161,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
 
 
 def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_replace, adapted_op, avg_grad_and_vars,
-                                      tf_cnn_hyperparameters, learning_rate, global_step, use_pool_momentum,tf_scale_parameter):
+                                      tf_cnn_hyperparameters, learning_rate, global_step, use_pool_momentum,tf_scale_parameter, select_from_top):
     global cnn_ops, cnn_hyperparameters, add_amout, add_fulcon_amount
 
     assert add_amout>0 and add_fulcon_amount > 0
@@ -211,17 +211,24 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                 logger.debug('\tAnd filter IDs: %s', filter_indices_to_replace)
 
                 layer_ind_to_replace = None
-                if tmp_op==adapted_op:
+                '''if tmp_op==adapted_op:
                     layer_ind_to_replace = filter_indices_to_replace
+                else:'''
+                # this selects indices either from top or bottom filters
+                if select_from_top:
+                    layer_ind_to_replace = tf.range(tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2,
+                                                    tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3])
+                    adapt_amount = tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3] - tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2
+
                 else:
-                    layer_ind_to_replace = tf.random_shuffle(
-                        tf.range(0,tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]))\
-                    [:tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2]
+                    layer_ind_to_replace = tf.range(0,
+                                                    tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2)
+                    adapt_amount = tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2
 
                 # Out channel masking
                 mask_grads_w[tmp_op] = tf.scatter_nd(
                     layer_ind_to_replace,
-                    tf.ones(shape=[tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2,
+                    tf.ones(shape=[adapt_amount,
                                    transposed_shape[1], transposed_shape[2], transposed_shape[3]],
                             dtype=tf.float32),
                     shape=transposed_shape
@@ -230,7 +237,7 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                 grads_w *= mask_grads_w[tmp_op]
 
                 # In channel masking
-                if prev_op is not None:
+                '''if prev_op is not None:
                     mask_grads_w[tmp_op] = tf.scatter_nd(
                         prev_indices,
                         tf.ones(shape=[tf_cnn_hyperparameters[prev_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2, lyr_conv_shape[0], lyr_conv_shape[1], lyr_conv_shape[3]],
@@ -238,11 +245,11 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                         shape=[lyr_conv_shape[2], lyr_conv_shape[0], lyr_conv_shape[1], lyr_conv_shape[3]]
                     )
                     mask_grads_w[tmp_op] = tf.transpose(mask_grads_w[tmp_op], [1, 2, 0, 3])
-                    grads_w *= mask_grads_w[tmp_op]
+                    grads_w *= mask_grads_w[tmp_op]'''
 
                 mask_grads_b[tmp_op] = tf.scatter_nd(
                     layer_ind_to_replace,
-                    tf.ones([tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2], dtype=tf.float32),
+                    tf.ones([adapt_amount], dtype=tf.float32),
                     shape=[tf_cnn_hyperparameters[tmp_op][TF_CONV_WEIGHT_SHAPE_STR][3]]
                 )
 
@@ -303,17 +310,22 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                 logger.debug('\tAnd filter IDs: %s', filter_indices_to_replace)
 
                 layer_ind_to_replace = None
-                if tmp_op==adapted_op:
+                '''if tmp_op==adapted_op:
                     layer_ind_to_replace = filter_indices_to_replace
 
+                else:'''
+                if select_from_top:
+                    layer_ind_to_replace = tf.range(tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR] // 2,
+                                                    tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR])
+                    adapt_amount = tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR] - tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]//2
                 else:
-                    layer_ind_to_replace = tf.random_shuffle(tf.range(0, tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]))\
-                        [:tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]//2]
+                    layer_ind_to_replace = tf.range(0, tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]//2)
+                    adapt_amount = tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]//2
 
                 # Out channel masking
                 mask_grads_w[tmp_op] = tf.scatter_nd(
                     layer_ind_to_replace,
-                    tf.ones(shape=[tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]//2, transposed_shape[1]],
+                    tf.ones(shape=[adapt_amount, transposed_shape[1]],
                             dtype=tf.float32),
                     shape=transposed_shape
                 )
@@ -321,14 +333,14 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                 grads_w = grads_w * mask_grads_w[tmp_op]
 
                 # In channel masking
-                if 'conv' in prev_op:
+                '''if 'conv' in prev_op:
                     offset = tf.reshape(tf.range(0,final_2d_width*final_2d_width),[1,-1])
                     prev_fulcon_ind = tf.tile(tf.reshape(prev_indices,[-1,1]),[1,final_2d_width*final_2d_width]) + offset
                     prev_fulcon_ind = tf.reshape(prev_fulcon_ind,[-1])
 
                     mask_grads_w[tmp_op] = tf.scatter_nd(
                         prev_fulcon_ind,
-                        tf.ones(shape=[tf_cnn_hyperparameters[prev_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2*final_2d_width*final_2d_width, lyr_fulcon_shape[1]],
+                        tf.ones(shape=[(tf_cnn_hyperparameters[prev_op][TF_CONV_WEIGHT_SHAPE_STR][3]//2)*final_2d_width*final_2d_width, lyr_fulcon_shape[1]],
                                 dtype=tf.float32),
                         shape=lyr_fulcon_shape
                     )
@@ -340,11 +352,11 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                                 dtype=tf.float32),
                         shape=lyr_fulcon_shape
                     )
-                    grads_w = grads_w * mask_grads_w[tmp_op]
+                    grads_w = grads_w * mask_grads_w[tmp_op]'''
 
                 mask_grads_b[tmp_op] = tf.scatter_nd(
                     layer_ind_to_replace,
-                    tf.ones([tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]//2], dtype=tf.float32),
+                    tf.ones([adapt_amount], dtype=tf.float32),
                     shape=[tf_cnn_hyperparameters[tmp_op][TF_FC_WEIGHT_OUT_STR]]
                 )
 
@@ -440,7 +452,7 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
     #decay_lr = False
     if decay_lr:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
-                                   tf.train.exponential_decay(learning_rate/2.0, global_step, decay_steps=1,
+                                   tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
                                                               decay_rate=model_parameters['adapt_decay_rate'], staircase=True))
     else:
         learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')
@@ -602,7 +614,7 @@ def optimize_masked_momentum_gradient_for_fulcon(optimizer, filter_indices_to_re
     #decay_lr = False
     if decay_lr:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
-                                   tf.train.exponential_decay(learning_rate/2.0, global_step, decay_steps=1,
+                                   tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
                                                               decay_rate=model_parameters['adapt_decay_rate'], staircase=True))
     else:
         learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')

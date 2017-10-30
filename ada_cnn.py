@@ -191,8 +191,11 @@ tf_dropout_rate = None
 valid_loss_op,valid_predictions_op, test_predicitons_op = None,None,None
 
 # Adaptation related
-tf_slice_optimize, tf_training_slice_optimize = {},{}
+tf_slice_optimize, tf_training_slice_optimize_top, tf_training_slice_vel_update_top, \
+tf_training_slice_optimize_bottom, tf_training_slice_vel_update_bottom = {},{},{},{},{}
 tf_slice_vel_update, tf_training_slice_vel_update = {},{}
+tf_pool_slice_optimize_bottom, tf_pool_slice_vel_update_bottom = None, None
+tf_pool_slice_optimize_top, tf_pool_slice_vel_update_top = None, None
 
 tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops = {}, {}, {}
 tf_indices, tf_indices_size, tf_replicative_factor_vec = None,None,None
@@ -328,6 +331,185 @@ def inference(dataset, tf_cnn_hyperparameters, training):
     return x
 
 
+def inference_partial(dataset, tf_cnn_hyperparameters, training, select_from_top):
+    global logger,cnn_ops, act_decay
+
+    first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
+
+    last_conv_id = ''
+    for op in cnn_ops:
+        if 'conv' in op:
+            last_conv_id = op
+
+    logger.debug('Defining the logit calculation ...')
+    logger.debug('\tCurrent set of operations: %s' % cnn_ops)
+    activation_ops = []
+
+    x = dataset
+
+    if training and use_dropout:
+        x = tf.nn.dropout(x, keep_prob=1.0 - in_dropout_rate, name='input_dropped')
+
+    logger.debug('\tReceived data for X(%s)...' % x.get_shape().as_list())
+
+    # need to calculate the output according to the layers we have
+    for op in cnn_ops:
+        if 'conv' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                logger.debug('\tConvolving (%s) With Weights:%s Stride:%s' % (
+                    op, cnn_hyperparameters[op]['weights'], cnn_hyperparameters[op]['stride']))
+                logger.debug('\t\tWeights: %s', tf.shape(tf.get_variable(TF_WEIGHTS)).eval())
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
+                x = tf.nn.conv2d(x, w, cnn_hyperparameters[op]['stride'],
+                                 padding=cnn_hyperparameters[op]['padding'])
+
+                lyr_conv_shape = tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR]
+
+                # this selects indices either from top or bottom filters
+                if select_from_top:
+                    layer_ind_to_replace = tf.range(tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR][3] // 2,
+                                                    tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR][3])
+                    adapt_amount = tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR][3] - \
+                                   tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR][3] // 2
+
+                else:
+                    layer_ind_to_replace = tf.range(0,
+                                                    tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR][3] // 2)
+                    adapt_amount = tf_cnn_hyperparameters[op][constants.TF_CONV_WEIGHT_SHAPE_STR][3] // 2
+
+
+                # Out channel masking
+                mask_x = tf.scatter_nd(
+                    layer_ind_to_replace,
+                    tf.ones(shape=[adapt_amount,
+                                   1,1,1],
+                            dtype=tf.float32),
+                    shape=[lyr_conv_shape[3], 1,1,1]
+                )*2.0
+                mask_x = tf.transpose(mask_x, [1, 2, 3, 0])
+                x *= mask_x
+                x *= tf.reshape(
+                    tf.cast(tf.multinomial(tf.log([[10.**(tf_dropout_rate),
+                                            10.**(1.0-tf_dropout_rate)]]), lyr_conv_shape[3]),dtype=tf.float32),
+                    [1,1,1,-1])*(1.0/(1.0-tf_dropout_rate))
+
+                tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
+                                     tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
+                                               act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (1-act_decay)* tf.reduce_mean(tf.abs(w),axis=[0,1,2])))
+                x = utils.lrelu(x + b, name=scope.name + '/top')
+
+                if use_loc_res_norm and op == last_conv_id:
+                    x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha,
+                                                           beta=lrn_beta)  # hyperparameters from tensorflow cifar10 tutorial
+
+        if 'pool' in op:
+            logger.debug('\tPooling (%s) with Kernel:%s Stride:%s' % (
+                op, cnn_hyperparameters[op]['kernel'], cnn_hyperparameters[op]['stride']))
+            if cnn_hyperparameters[op]['type'] is 'max':
+                x = tf.nn.max_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
+                                   strides=cnn_hyperparameters[op]['stride'],
+                                   padding=cnn_hyperparameters[op]['padding'])
+            elif cnn_hyperparameters[op]['type'] is 'avg':
+                x = tf.nn.avg_pool(x, ksize=cnn_hyperparameters[op]['kernel'],
+                                   strides=cnn_hyperparameters[op]['stride'],
+                                   padding=cnn_hyperparameters[op]['padding'])
+            #if datatype!='imagenet-250' and training and use_dropout:
+            #    x = tf.nn.dropout(x, keep_prob=1.0 - tf_dropout_rate, name='dropout')
+
+            if use_loc_res_norm and 'pool_global' != op:
+                x = tf.nn.local_response_normalization(x, depth_radius=lrn_radius, alpha=lrn_alpha, beta=lrn_beta)
+
+        if 'fulcon' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
+                if first_fc == op:
+                    # we need to reshape the output of last subsampling layer to
+                    # convert 4D output to a 2D input to the hidden layer
+                    # e.g subsample layer output [batch_size,width,height,depth] -> [batch_size,width*height*depth]
+
+                    logger.debug('Input size of fulcon_out : %d', cnn_hyperparameters[op]['in'])
+                    # Transpose x (b,h,w,d) to (b,d,w,h)
+                    # This help us to do adaptations more easily
+                    x = tf.transpose(x, [0, 3, 1, 2])
+                    x = tf.reshape(x, [batch_size, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]])
+                    x = tf.matmul(x, w) + b
+
+                    lyr_fulcon_shape = [tf_cnn_hyperparameters[op][constants.TF_FC_WEIGHT_IN_STR],tf_cnn_hyperparameters[op][constants.TF_FC_WEIGHT_OUT_STR]]
+
+                    # this selects indices either from top or bottom filters
+                    if select_from_top:
+                        layer_ind_to_replace = tf.range(tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2,
+                                                        tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR])
+                        adapt_amount = tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] - \
+                                       tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2
+                    else:
+                        layer_ind_to_replace = tf.range(0, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2)
+                        adapt_amount = tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2
+
+                    # Out channel masking
+                    mask_x = tf.scatter_nd(
+                        layer_ind_to_replace,
+                        tf.ones(shape=[adapt_amount, 1],
+                                dtype=tf.float32),
+                        shape=[lyr_fulcon_shape[1],1]
+                    )*2.0
+                    mask_x = tf.transpose(mask_x, [1, 0])
+                    x = x * mask_x
+
+                    x *= tf.reshape(tf.cast(tf.multinomial(tf.log([[10. ** (tf_dropout_rate), 10. ** (1.0 - tf_dropout_rate)]]),
+                                                   lyr_fulcon_shape[1]),dtype=tf.float32), [1, -1]) * (1.0 / (1.0 - tf_dropout_rate))
+
+                    tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
+                                         tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
+                                                   act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (
+                                                   1 - act_decay) * tf.reduce_mean(tf.abs(w), axis=[0])))
+
+                    x = utils.lrelu(x, name=scope.name + '/top')
+
+                elif 'fulcon_out' == op:
+                    x = tf.matmul(x, w) + b
+
+                else:
+
+                    x = tf.matmul(x, w) + b
+
+                    lyr_fulcon_shape = [tf_cnn_hyperparameters[op][constants.TF_FC_WEIGHT_IN_STR],
+                                        tf_cnn_hyperparameters[op][constants.TF_FC_WEIGHT_OUT_STR]]
+
+                    # this selects indices either from top or bottom filters
+                    if select_from_top:
+                        layer_ind_to_replace = tf.range(tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2,
+                                                        tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR])
+                        adapt_amount = tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] - \
+                                       tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2
+                    else:
+                        layer_ind_to_replace = tf.range(0, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2)
+                        adapt_amount = tf_cnn_hyperparameters[op][TF_FC_WEIGHT_OUT_STR] // 2
+
+                    # Out channel masking
+                    mask_x = tf.scatter_nd(
+                        layer_ind_to_replace,
+                        tf.ones(shape=[adapt_amount, 1],
+                                dtype=tf.float32),
+                        shape=[lyr_fulcon_shape[1], 1]
+                    ) * 2.0
+                    mask_x = tf.transpose(mask_x, [1, 0])
+                    x = x * mask_x
+
+                    x *= tf.reshape(tf.cast(tf.multinomial(tf.log([[10. ** (tf_dropout_rate), 10. ** (1.0 - tf_dropout_rate)]]),
+                                                   lyr_fulcon_shape[1]),dtype=tf.float32), [1, -1]) * (1.0 / (1.0 - tf_dropout_rate))
+
+                    tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
+                                         tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
+                                                   act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (
+                                                       1 - act_decay) * tf.reduce_mean(tf.abs(w), axis=[0])))
+                    x = utils.lrelu(x, name=scope.name + '/top')
+
+    return x
+
+
 def get_weights_mean_for_pruning():
     weight_mean_ops = {}
 
@@ -347,9 +529,13 @@ def get_weights_mean_for_pruning():
     return weight_mean_ops
 
 
-def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameters):
+def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameters, use_partial, select_from_top):
     global cnn_ops
-    logits = inference(dataset, tf_cnn_hyperparameters, True)
+    if use_partial:
+        logits = inference_partial(dataset, tf_cnn_hyperparameters, True, select_from_top)
+    else:
+        logits = inference(dataset, tf_cnn_hyperparameters, True)
+
     # use weighted loss
     if weighted:
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels) * tf_data_weights)
@@ -575,7 +761,9 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
     global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops
-    global tf_slice_optimize, tf_slice_vel_update, tf_training_slice_optimize, tf_trainign_slice_vel_update
+    global tf_slice_optimize, tf_slice_vel_update
+    global tf_training_slice_optimize_top, tf_training_slice_vel_update_top, tf_training_slice_optimize_bottom, tf_training_slice_vel_update_bottom
+    global tf_pool_slice_optimize_top, tf_pool_slice_vel_update_top, tf_pool_slice_optimize_bottom, tf_pool_slice_vel_update_bottom
     global tf_indices, tf_indices_size, tf_replicative_factor_vec, tf_weight_mean_ops, tf_retain_id_placeholders
     global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
     global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
@@ -647,7 +835,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 logger.info('\tDefine Loss for each tower')
                 tf_tower_loss = tower_loss(tf_train_data_batch[-1], tf_train_label_batch[-1], True,
-                                           tf_data_weights[-1], tf_cnn_hyperparameters)
+                                           tf_data_weights[-1], tf_cnn_hyperparameters, False, None)
 
                 tower_losses.append(tf_tower_loss)
                 tf_tower_loss_vec = calc_loss_vector(scope, tf_train_data_batch[-1], tf_train_label_batch[-1],
@@ -687,7 +875,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                     #single_pool_logit_op = inference(tf_pool_data_batch[-1],tf_cnn_hyperparameters, True)
 
                     single_pool_loss = tower_loss(augmented_pool_data_batch[-1], augmented_pool_label_batch[-1], False, None,
-                                                  tf_cnn_hyperparameters)
+                                                  tf_cnn_hyperparameters, False, None)
                     tower_pool_losses.append(single_pool_loss)
                     single_pool_grad = cnn_optimizer.gradients(optimizer, single_pool_loss, global_step, start_lr)
                     tower_pool_grads.append(single_pool_grad)
@@ -737,7 +925,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
         tf_valid_label_batch = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='ValidLabels')
         # Tensorflow operations for validation data
-        valid_loss_op = tower_loss(tf_valid_data_batch, tf_valid_label_batch, False, None, tf_cnn_hyperparameters)
+        valid_loss_op = tower_loss(tf_valid_data_batch, tf_valid_label_batch, False, None, tf_cnn_hyperparameters, False, None)
         valid_predictions_op = predict_with_dataset(tf_valid_data_batch, tf_cnn_hyperparameters)
 
         test_predicitons_op = predict_with_dataset(tf_test_dataset, tf_cnn_hyperparameters)
@@ -794,6 +982,37 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                                                             name='retain_id_placeholder_out_' + op)
                 tf_reset_cnn_custom = cnn_intializer.reset_cnn_preserve_weights_custom(tf_prune_cnn_hyperparameters,cnn_ops,tf_retain_id_placeholders,tf_prune_factor)
 
+                #Partial Logits and Grads (TOP and BOTTOM)
+                partial_top_train_loss = tower_loss(tf_train_data_batch[-1], tf_train_label_batch[-1], True,
+                                           tf_data_weights[-1], tf_cnn_hyperparameters, True, True)
+                partial_top_grads = cnn_optimizer.gradients(optimizer, partial_top_train_loss, global_step, start_lr)
+
+                tf_training_slice_optimize_top, tf_training_slice_vel_update_top = \
+                    cnn_optimizer.apply_gradient_with_rmsprop(optimizer, start_lr, global_step, partial_top_grads)
+
+                partial_bottom_train_loss = tower_loss(tf_train_data_batch[-1], tf_train_label_batch[-1], True,
+                                                    tf_data_weights[-1], tf_cnn_hyperparameters, True, False)
+                partial_bottom_grads = cnn_optimizer.gradients(optimizer, partial_bottom_train_loss, global_step, start_lr)
+
+                tf_training_slice_optimize_bottom, tf_training_slice_vel_update_bottom = \
+                    cnn_optimizer.apply_gradient_with_rmsprop(optimizer, start_lr, global_step, partial_bottom_grads)
+
+
+                partial_top_pool_loss = tower_loss(tf_pool_data_batch[-1], tf_pool_label_batch[-1], False,
+                                                    None, tf_cnn_hyperparameters, True, True)
+                partial_pool_top_grads = cnn_optimizer.gradients(optimizer, partial_top_pool_loss, global_step, start_lr)
+
+                tf_pool_slice_optimize_top, tf_pool_slice_vel_update_top = \
+                    cnn_optimizer.apply_pool_gradient_with_rmsprop(optimizer, start_lr, global_step, partial_pool_top_grads)
+
+                partial_bottom_pool_loss = tower_loss(tf_pool_data_batch[-1], tf_pool_label_batch[-1], False,
+                                                       None, tf_cnn_hyperparameters, True, False)
+                partial_pool_bottom_grads = cnn_optimizer.gradients(optimizer, partial_bottom_pool_loss, global_step,
+                                                               start_lr)
+
+                tf_pool_slice_optimize_bottom, tf_pool_slice_vel_update_bottom = \
+                    cnn_optimizer.apply_pool_gradient_with_rmsprop(optimizer, start_lr, global_step, partial_pool_bottom_grads)
+
                 for tmp_op in cnn_ops:
                     # Convolution related adaptation operations
                     if 'conv' in tmp_op:
@@ -803,17 +1022,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                                                      tf_wvelocity_this, tf_bvelocity_this,
                                                                      tf_wvelocity_next,tf_replicative_factor_vec, tf_act_this)
 
-                        tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
-                            optimizer, tf_indices,
-                            tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
-                            tf.constant(start_lr, dtype=tf.float32), global_step
-                        )
-                        tf_training_slice_optimize[tmp_op], tf_training_slice_vel_update[tmp_op] =\
-                            cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
-                            optimizer, tf_indices,
-                            tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
-                            tf.constant(start_lr, dtype=tf.float32), global_step, False, tf_scale_parameter
-                        )
+
+
 
                     # Fully connected realted adaptation operations
                     elif 'fulcon' in tmp_op:
@@ -826,19 +1036,9 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec, tf_act_this
                             )
 
-                            tf_slice_optimize[tmp_op], tf_slice_vel_update[
-                                tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
-                                optimizer, tf_indices,
-                                tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
-                                tf.constant(start_lr, dtype=tf.float32), global_step
-                            )
 
-                            tf_training_slice_optimize[tmp_op], tf_training_slice_vel_update[tmp_op] = \
-                                cnn_optimizer.optimize_masked_momentum_gradient_end_to_end(
-                                    optimizer, tf_indices,
-                                    tmp_op, tf_avg_grad_and_vars, tf_cnn_hyperparameters,
-                                    tf.constant(start_lr, dtype=tf.float32), global_step, False, tf_scale_parameter
-                                )
+
+
 
 
 def check_several_conditions_with_assert(num_gpus):
@@ -914,30 +1114,6 @@ def get_adaptive_dropout():
 
     return dropout_rate*(dropout_factor**2)
 
-
-def fintune_with_pool_ft(hard_pool_ft):
-    global apply_pool_grads_op, update_pool_velocity_ops,current_adaptive_dropout
-
-    if hard_pool_ft.get_size() > batch_size:
-        # Randomize data in the batch
-
-        for pool_id in range(0,
-                             (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
-                pool_feed_dict = {}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-
-                for gpu_id in range(num_gpus):
-                    pbatch_data = pool_dataset[
-                                  (pool_id + gpu_id) * batch_size:(pool_id + gpu_id + 1) * batch_size, :, :,
-                                  :]
-                    pbatch_labels = pool_labels[
-                                    (pool_id + gpu_id) * batch_size:(pool_id + gpu_id + 1) * batch_size, :]
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
-
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
 
 
 def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
@@ -1205,8 +1381,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            with tf.control_dependencies(tf_slice_vel_update[current_op]):
-                _ = session.run(tf_slice_optimize[current_op],feed_dict=pool_feed_dict)
+            with tf.control_dependencies(tf_pool_slice_vel_update_bottom):
+                _ = session.run(tf_pool_slice_optimize_bottom,feed_dict=pool_feed_dict)
 
     '''train_feed_dict[tf_dropout_rate] = 0.0
     train_feed_dict.update({tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
@@ -1399,8 +1575,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            with tf.control_dependencies(tf_slice_vel_update[current_op]):
-                _ = session.run(tf_slice_optimize[current_op],feed_dict=pool_feed_dict)
+            with tf.control_dependencies(tf_pool_slice_vel_update_bottom):
+                _ = session.run(tf_pool_slice_optimize_bottom,feed_dict=pool_feed_dict)
 
 
     '''train_feed_dict[tf_dropout_rate] = 0.0
@@ -2870,7 +3046,7 @@ if __name__ == '__main__':
                                                                           batch_labels[gpu_id], axis=0)
 
                         hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                          super_loss_vec, max(0.0,prev_train_acc - current_train_acc))
+                                                          super_loss_vec, max(0.05,prev_train_acc - current_train_acc))
 
                         logger.debug('Pooling data summary')
                         logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
@@ -2919,48 +3095,45 @@ if __name__ == '__main__':
                     else:
                         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                             if current_action_type == adapter.get_naivetrain_action_type():
-                                with tf.control_dependencies(update_train_velocity_op):
-                                    _ = session.run(
-                                        [apply_grads_op], feed_dict=train_feed_dict
-                                    )
+
+                                if np.random.random()<0.75:
+                                    with tf.control_dependencies(update_train_velocity_op):
+                                        _ = session.run(
+                                            [apply_grads_op], feed_dict=train_feed_dict
+                                        )
+                                else:
+                                    # print(curr_layer_sizes/add_amout_filter_vec)
+                                    with tf.control_dependencies(tf_training_slice_vel_update_bottom):
+                                        _ = session.run(
+                                            tf_training_slice_optimize_bottom,
+                                            feed_dict=train_feed_dict)
+
                             elif current_action_type == adapter.get_add_action_type():
 
-                                if 'conv' in current_op:
-                                    train_feed_dict.update(
-                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - cnn_hyperparameters[current_op]['weights'][3]//2,
-                                                               cnn_hyperparameters[current_op]['weights'][3])})
-                                elif 'fulcon' in current_op:
-                                    train_feed_dict.update(
-                                        {tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - cnn_hyperparameters[current_op]['out']//2,
-                                                               cnn_hyperparameters[current_op]['out'])})
-
-                                #print(curr_layer_sizes/add_amout_filter_vec)
-                                train_feed_dict.update({tf_scale_parameter: np.ones_like(curr_layer_sizes)*2.0})
-                                with tf.control_dependencies(tf_training_slice_vel_update[current_op]):
-                                    _ = session.run(
-                                        tf_training_slice_optimize[current_op],
-                                        feed_dict=train_feed_dict)
-
-                                '''with tf.control_dependencies(update_train_velocity_op):
-                                    _ = session.run(
-                                        [apply_grads_op], feed_dict=train_feed_dict
-                                    )'''
+                                if np.random.random()<0.5:
+                                    with tf.control_dependencies(tf_training_slice_vel_update_top):
+                                        _ = session.run(
+                                            tf_training_slice_optimize_top,
+                                            feed_dict=train_feed_dict)
+                                else:
+                                    with tf.control_dependencies(update_train_velocity_op):
+                                        _ = session.run(
+                                            [apply_grads_op], feed_dict=train_feed_dict
+                                        )
 
                             elif current_action_type == adapter.get_finetune_action_type():
 
-                                train_feed_dict.update(
-                                    {tf_indices: np.random.choice(np.arange(cnn_hyperparameters['conv_0']['weights'][3]).tolist(),replace=False,
-                                                                  size=cnn_hyperparameters['conv_0']['weights'][3]//2)}
-                                )
 
-                                #print(curr_layer_sizes/add_amout_filter_vec)
-                                train_feed_dict.update({tf_scale_parameter: np.ones_like(curr_layer_sizes)*2.0})
-
-                                with tf.control_dependencies(tf_training_slice_vel_update[current_op]):
-                                    _ = session.run(
-                                        tf_training_slice_optimize[current_op],
-                                        feed_dict=train_feed_dict)
-
+                                if np.random.random()<0.25:
+                                    with tf.control_dependencies(tf_training_slice_vel_update_top):
+                                        _ = session.run(
+                                            tf_training_slice_optimize_top,
+                                            feed_dict=train_feed_dict)
+                                else:
+                                    with tf.control_dependencies(update_train_velocity_op):
+                                        _ = session.run(
+                                            apply_grads_op,
+                                            feed_dict=train_feed_dict)
 
                             #if batch_id % 25 == 0:
                                 #act_vectors = session.run([tf.get_variable(tmp_op) for tmp_op in activation_vec_ops])
@@ -3031,7 +3204,7 @@ if __name__ == '__main__':
 
                     # ===============================================================
                     # Finetune with data in hard_pool_ft (AdaCNN)
-                    fintune_with_pool_ft(hard_pool_ft)
+                    run_actual_finetune_operation(hard_pool_ft)
 
                     # =================================================================
                     # Calculate pool accuracy (hard_pool_valid)
@@ -3140,7 +3313,7 @@ if __name__ == '__main__':
                         # without if can give problems in exploratory stage because of no data in the pool
                         if hard_pool_ft.get_size() > batch_size:
                             # Train with latter half of the data
-                            fintune_with_pool_ft(hard_pool_ft)
+                            run_actual_finetune_operation(hard_pool_ft)
                     # ==================================================================
 
                     # ==================================================================
