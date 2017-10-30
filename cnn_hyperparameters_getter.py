@@ -89,8 +89,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters = {}
     model_hyperparameters['adapt_structure'] = adapt_structure
     model_hyperparameters['batch_size'] = 64  # number of datapoints in a single batch
-    model_hyperparameters['start_lr'] = 0.0005
-    model_hyperparameters['min_learning_rate'] = 0.00001
+    model_hyperparameters['start_lr'] = 0.0001
+    model_hyperparameters['min_learning_rate'] = 0.000001
     model_hyperparameters['decay_learning_rate'] = True
     model_hyperparameters['decay_rate'] = 0.75
     model_hyperparameters['adapt_decay_rate'] = 0.9 # decay rate used for adaptation related optimziations

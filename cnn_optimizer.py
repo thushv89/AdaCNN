@@ -57,21 +57,26 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
     grads_and_vars,vel_update_ops = [],[]
     # for each trainable variable
     if model_parameters['decay_learning_rate']:
-        learning_rate = tf.maximum(model_parameters['min_learning_rate'],
-                                   tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
-                                                              decay_rate=model_parameters['decay_rate'],
-                                                              staircase=True))
+        learning_rate = tf.maximum(
+            model_parameters['min_learning_rate'],
+            tf.train.exponential_decay(
+                learning_rate, global_step, decay_steps=1,
+                decay_rate=model_parameters['decay_rate'],
+                staircase=True)
+        )
 
     # update velocity vector
-    for op in cnn_ops:
+    for lyr_i, op in enumerate(cnn_ops):
         if 'pool' in op:
             continue
 
         for (g,v) in grads_and_vars_vanilla:
+
             with tf.variable_scope(op, reuse=True):
                 w,b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
                 print(v.name, ', ', w.name)
                 if v.name == w.name:
+
                     print('\tFound match')
                     with tf.variable_scope(TF_WEIGHTS, reuse=True):
 
@@ -88,6 +93,7 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
                 print(v.name, ', ', b.name)
                 if v.name == b.name:
                     with tf.variable_scope(TF_BIAS, reuse=True):
+
                         print('\tFound match')
                         vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                         vel_update_ops.append(
@@ -113,7 +119,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
                                                               staircase=True))
 
     # update velocity vector
-    for op in cnn_ops:
+    for lyr_i, op in enumerate(cnn_ops):
         if 'pool' in op:
             continue
         for (g,v) in grads_and_vars_vanilla:
@@ -121,6 +127,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
                 w,b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
                 print(v.name, ', ', w.name)
                 if v.name == w.name:
+
                     print('\tFound match')
                     with tf.variable_scope(TF_WEIGHTS, reuse=True):
 
@@ -136,6 +143,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
 
                 print(v.name, ', ', b.name)
                 if v.name == b.name:
+
                     print('\tFound match')
                     with tf.variable_scope(TF_BIAS, reuse=True):
 
@@ -154,7 +162,9 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
 
 def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_replace, adapted_op, avg_grad_and_vars,
                                       tf_cnn_hyperparameters, learning_rate, global_step, use_pool_momentum,tf_scale_parameter):
-    global cnn_ops, cnn_hyperparameters
+    global cnn_ops, cnn_hyperparameters, add_amout, add_fulcon_amount
+
+    assert add_amout>0 and add_fulcon_amount > 0
 
     decay_lr = model_parameters['decay_learning_rate']
     # decay_lr = False
@@ -426,7 +436,7 @@ def optimize_masked_momentum_gradient(optimizer, filter_indices_to_replace, op, 
     #decay_lr = False
     if decay_lr:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
-                                   tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
+                                   tf.train.exponential_decay(learning_rate/2.0, global_step, decay_steps=1,
                                                               decay_rate=model_parameters['adapt_decay_rate'], staircase=True))
     else:
         learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')
@@ -588,7 +598,7 @@ def optimize_masked_momentum_gradient_for_fulcon(optimizer, filter_indices_to_re
     #decay_lr = False
     if decay_lr:
         learning_rate = tf.maximum(model_parameters['min_learning_rate'],
-                                   tf.train.exponential_decay(learning_rate, global_step, decay_steps=1,
+                                   tf.train.exponential_decay(learning_rate/2.0, global_step, decay_steps=1,
                                                               decay_rate=model_parameters['adapt_decay_rate'], staircase=True))
     else:
         learning_rate = tf.constant(model_parameters['start_lr'], dtype=tf.float32, name='learning_rate')

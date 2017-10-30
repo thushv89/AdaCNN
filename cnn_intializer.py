@@ -457,26 +457,30 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
                     # out channel pruning
-                    tr_w_vel = tf.transpose(w_vel,[3,0,1,2])
-                    gathered_w_vel = tf.gather(tr_w_vel,tf_prune_ids[op]['out'])
-                    gathered_w_vel = tf.transpose(gathered_w_vel, [1,2,3,0])
+                    #tr_w_vel = tf.transpose(w_vel,[3,0,1,2])
+                    #gathered_w_vel = tf.gather(tr_w_vel,tf_prune_ids[op]['out'])
+                    #gathered_w_vel = tf.transpose(gathered_w_vel, [1,2,3,0])
 
                     # in channel pruning
-                    gathered_w_vel = tf.transpose(gathered_w_vel, [2,0,1,3])
-                    gathered_w_vel = tf.gather(gathered_w_vel, tf_prune_ids[op]['in'])
-                    gathered_w_vel = tf.transpose(gathered_w_vel, [1, 2, 0, 3])
+                    #gathered_w_vel = tf.transpose(gathered_w_vel, [2,0,1,3])
+                    #gathered_w_vel = tf.gather(gathered_w_vel, tf_prune_ids[op]['in'])
+                    #gathered_w_vel = tf.transpose(gathered_w_vel, [1, 2, 0, 3])
+
+                    gathered_w_vel = tf.zeros(cnn_hyps[op]['weights'], dtype=tf.float32)
 
                     pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
                     # out channel pruning
-                    tr_pool_w_vel = tf.transpose(pool_w_vel, [3, 0, 1, 2])
-                    gathered_pool_w_vel = tf.gather(tr_pool_w_vel, tf_prune_ids[op]['out'])
-                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [1, 2, 3, 0])
+                    #tr_pool_w_vel = tf.transpose(pool_w_vel, [3, 0, 1, 2])
+                    #gathered_pool_w_vel = tf.gather(tr_pool_w_vel, tf_prune_ids[op]['out'])
+                    #gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [1, 2, 3, 0])
 
                     # in channel pruning
-                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [2, 0, 1, 3])
-                    gathered_pool_w_vel = tf.gather(gathered_pool_w_vel, tf_prune_ids[op]['in'])
-                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [1, 2, 0, 3])
+                    #gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [2, 0, 1, 3])
+                    #gathered_pool_w_vel = tf.gather(gathered_pool_w_vel, tf_prune_ids[op]['in'])
+                    #gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel, [1, 2, 0, 3])
+
+                    gathered_pool_w_vel = tf.zeros(cnn_hyps[op]['weights'], dtype=tf.float32)
 
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
@@ -488,10 +492,12 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
 
                 with tf.variable_scope(TF_BIAS):
                     b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_b_vel = tf.gather(b_vel,tf_prune_ids[op]['out'])
+                    #gathered_b_vel = tf.gather(b_vel,tf_prune_ids[op]['out'])
+                    gathered_b_vel = tf.zeros([cnn_hyps[op]['weights'][3]], dtype=tf.float32)
 
                     pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
+                    #gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
+                    gathered_pool_b_vel = tf.zeros([cnn_hyps[op]['weights'][3]], dtype=tf.float32)
 
                     reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))
@@ -520,22 +526,24 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
                     w_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
 
                     # Out pruning
-                    tr_w_vel = tf.transpose(w_vel)
-                    gathered_w_vel = tf.gather(tr_w_vel, tf_prune_ids[op]['out'])
-                    gathered_w_vel = tf.transpose(gathered_w_vel)
+                    #tr_w_vel = tf.transpose(w_vel)
+                    #gathered_w_vel = tf.gather(tr_w_vel, tf_prune_ids[op]['out'])
+                    #gathered_w_vel = tf.transpose(gathered_w_vel)
 
                     # In pruning
-                    gathered_w_vel = tf.gather(gathered_w_vel, tf_prune_ids[op]['in'])
+                    #gathered_w_vel = tf.gather(gathered_w_vel, tf_prune_ids[op]['in'])
+                    gathered_w_vel = tf.zeros([cnn_hyps[op]['in'],cnn_hyps[op]['out']],dtype=tf.float32)
 
                     pool_w_vel = tf.get_variable(TF_POOL_MOMENTUM)
 
                     # Out pruning
-                    tr_pool_w_vel = tf.transpose(pool_w_vel)
-                    gathered_pool_w_vel = tf.gather(tr_pool_w_vel, tf_prune_ids[op]['out'])
-                    gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel)
+                    #tr_pool_w_vel = tf.transpose(pool_w_vel)
+                    #gathered_pool_w_vel = tf.gather(tr_pool_w_vel, tf_prune_ids[op]['out'])
+                    #gathered_pool_w_vel = tf.transpose(gathered_pool_w_vel)
 
                     # In pruning
-                    gathered_pool_w_vel = tf.gather(gathered_pool_w_vel, tf_prune_ids[op]['in'])
+                    #gathered_pool_w_vel = tf.gather(gathered_pool_w_vel, tf_prune_ids[op]['in'])
+                    gathered_pool_w_vel = tf.zeros([cnn_hyps[op]['in'], cnn_hyps[op]['out']], dtype=tf.float32)
 
                     reset_ops.append(tf.assign(w_vel, gathered_w_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_w_vel, gathered_pool_w_vel, validate_shape=False))
@@ -546,10 +554,12 @@ def reset_cnn_preserve_weights_custom(cnn_hyps, cnn_ops, tf_prune_ids, tf_prune_
 
                 with tf.variable_scope(TF_BIAS):
                     b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
-                    gathered_b_vel = tf.gather(b_vel, tf_prune_ids[op]['out'])
+                    #gathered_b_vel = tf.gather(b_vel, tf_prune_ids[op]['out'])
+                    gathered_b_vel = tf.zeros([cnn_hyps[op]['out']],dtype=tf.float32)
 
                     pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
-                    gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
+                    #gathered_pool_b_vel = tf.gather(pool_b_vel, tf_prune_ids[op]['out'])
+                    gathered_pool_b_vel = tf.zeros([cnn_hyps[op]['out']], dtype=tf.float32)
 
                     reset_ops.append(tf.assign(b_vel, gathered_b_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_b_vel, gathered_pool_b_vel, validate_shape=False))

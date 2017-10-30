@@ -779,6 +779,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 init_tf_prune_cnn_hyperparameters()
                 tf_prune_factor = tf.placeholder(shape=None, dtype=tf.float32,name='prune_factor')
                 tf_scale_parameter = tf.placeholder(shape=[None], dtype=tf.float32, name='grad_scal_factor')
+
                 tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(
                     tf_prune_cnn_hyperparameters,cnn_ops,tf_prune_factor
                 )
@@ -925,6 +926,7 @@ def fintune_with_pool_ft(hard_pool_ft):
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[
                                   (pool_id + gpu_id) * batch_size:(pool_id + gpu_id + 1) * batch_size, :, :,
@@ -1027,7 +1029,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             #print(normalize_factor)
             #count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
             #count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
-            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  # * normalize_factor
+            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)  #* normalize_factor
 
             print('count vec',count_vec.shape)
             print(count_vec)
@@ -1182,7 +1184,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    pbatch_train_count = 0
 
     # Train only with half of the batch
     for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
@@ -1204,8 +1205,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
-                               feed_dict=pool_feed_dict)
+            with tf.control_dependencies(tf_slice_vel_update[current_op]):
+                _ = session.run(tf_slice_optimize[current_op],feed_dict=pool_feed_dict)
 
     '''train_feed_dict[tf_dropout_rate] = 0.0
     train_feed_dict.update({tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
@@ -1282,7 +1283,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             normalize_factor = 1.0*(curr_weight_shape[1] + amount_to_add) / curr_weight_shape[1]
             print(normalize_factor)
             #count_vec = np.concatenate([count_vec,count_vec[rand_indices_1]])#*normalize_factor
-            count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  # *normalize_factor
+            count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)  #*normalize_factor
             print('count vec',count_vec.shape)
             print(count_vec)
 
@@ -1398,7 +1399,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
+            with tf.control_dependencies(tf_slice_vel_update[current_op]):
+                _ = session.run(tf_slice_optimize[current_op],feed_dict=pool_feed_dict)
 
 
     '''train_feed_dict[tf_dropout_rate] = 0.0
@@ -1507,6 +1509,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
             if np.random.random() < research_parameters['finetune_rate']:
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
                                                                                    pool_id + gpu_id + 1) * batch_size,
@@ -1517,8 +1520,9 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                with tf.control_dependencies(update_pool_velocity_ops):
+                    _ = session.run(apply_pool_grads_op,
+                                       feed_dict=pool_feed_dict)
 
 def run_actual_finetune_operation(hard_pool_ft,overried_finetune_rate=False):
     '''
@@ -1539,6 +1543,7 @@ def run_actual_finetune_operation(hard_pool_ft,overried_finetune_rate=False):
                 #print('fintuning network (pool_id: ',pool_id,')')
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+
                 for gpu_id in range(num_gpus):
                     pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
                                                                                    pool_id + gpu_id + 1) * batch_size,
@@ -1549,8 +1554,9 @@ def run_actual_finetune_operation(hard_pool_ft,overried_finetune_rate=False):
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                with tf.control_dependencies(update_pool_velocity_ops):
+                    _ = session.run(apply_pool_grads_op,
+                                       feed_dict=pool_feed_dict)
 
 
 def top_n_accuracy(predictions,labels,n):
@@ -2369,6 +2375,7 @@ if __name__ == '__main__':
 
     # Various run-time arguments specified
     #
+    num_gpus=1
     allow_growth = False
     fake_tasks = False
     noise_label_rate = None
@@ -2639,10 +2646,26 @@ if __name__ == '__main__':
     elif datatype=='cifar-100':
         if data_overlap:
             n_tasks = 4
+            global_labels_of_each_task = [
+                [list(range(0, 50)) for _ in range(n_tasks)],
+                [list(range(25, 75)) for _ in range(n_tasks)],
+                [list(range(50, 100)) for _ in range(n_tasks)],
+                [list(range(75, 100)) + list(range(0, 25)) for _ in range(n_tasks)]
+                 ]
+            n_epochs = len(global_labels_of_each_task)
             labels_per_task = 50
-            labels_of_each_task = [list(range(0,50)),list(range(25,75)),list(range(50,100)),list(range(75,100))+list(range(0,25))]
+
         else:
             n_tasks = 4
+
+            global_labels_of_each_task = [
+                [list(range(0, 25)) for _ in range(n_tasks)],
+                [list(range(25, 50)) for _ in range(n_tasks)],
+                [list(range(50, 75)) for _ in range(n_tasks)],
+                [list(range(75, 100)) for _ in range(n_tasks)]
+            ]
+            n_epochs = len(global_labels_of_each_task)
+
             labels_per_task = 25
             labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='imagenet-250':
@@ -2663,7 +2686,7 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError
 
-    data_prior = change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_iterations,labels_of_each_task,num_labels)
+    #data_prior = change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_iterations,labels_of_each_task,num_labels)
 
     logger.debug('CNN_HYPERPARAMETERS')
     logger.debug('\t%s\n', tf_cnn_hyperparameters)
@@ -2716,7 +2739,12 @@ if __name__ == '__main__':
 
     current_action_type = growth_adapter.get_naivetrain_action_type() if adapt_structure else None
 
+    current_train_acc, prev_train_acc = 0,0
     for epoch in range(n_epochs):
+
+        labels_of_each_task = global_labels_of_each_task[epoch]
+        data_prior_100 = change_data_prior_to_introduce_new_labels_over_time(
+            data_prior, n_tasks, n_iterations, labels_of_each_task, num_labels)
 
         if adapt_structure:
             adapter = growth_adapter
@@ -2754,7 +2782,7 @@ if __name__ == '__main__':
                 # ========================================================
                 # Creating data batchs for the towers
                 for gpu_id in range(num_gpus):
-                    label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior,
+                    label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior_100,
                                                                                          batch_size, num_labels)
                     logger.debug('Got label sequence (for batch %d)', global_batch_id)
                     logger.debug(Counter(label_seq))
@@ -2818,6 +2846,7 @@ if __name__ == '__main__':
 
                 train_accuracy = np.mean(
                     [accuracy(train_predictions[gid], batch_labels[gid]) for gid in range(num_gpus)]) / 100.0
+                current_train_acc = train_accuracy
                 # =========================================================
 
                 # ==========================================================
@@ -2841,9 +2870,7 @@ if __name__ == '__main__':
                                                                           batch_labels[gpu_id], axis=0)
 
                         hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                          super_loss_vec,
-                                                          min(research_parameters['hard_pool_max_threshold'],
-                                                              max(0.01, (1.0 - train_accuracy))))
+                                                          super_loss_vec, max(0.0,prev_train_acc - current_train_acc))
 
                         logger.debug('Pooling data summary')
                         logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
@@ -2870,8 +2897,8 @@ if __name__ == '__main__':
                         if adapt_structure or (rigid_pooling and rigid_pool_type == 'smart'):
                             #print('add examples to hard pool ft')
                             hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                           super_loss_vec, min(research_parameters['hard_pool_max_threshold'],
-                                                                      max(0.01, (1.0 - train_accuracy))))
+                                                           super_loss_vec, max(0.0,prev_train_acc-current_train_acc))
+
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
                         elif (not adapt_structure) and rigid_pooling and rigid_pool_type=='naive':
                             #print('add examples to rigid pooling naive')
@@ -2885,18 +2912,19 @@ if __name__ == '__main__':
                     if (not adapt_structure):
                         for _ in range(iterations_per_batch):
                             #print('training on current batch (action type: ', current_action_type, ')')
-                            _, _ = session.run(
-                                [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                            )
+                            with tf.control_dependencies(update_train_velocity_op):
+                                _ = session.run(
+                                    apply_grads_op, feed_dict=train_feed_dict
+                                )
                     else:
                         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                             if current_action_type == adapter.get_naivetrain_action_type():
-
-                                _, _ = session.run(
-                                    [apply_grads_op, update_train_velocity_op], feed_dict=train_feed_dict
-                                )
+                                with tf.control_dependencies(update_train_velocity_op):
+                                    _ = session.run(
+                                        [apply_grads_op], feed_dict=train_feed_dict
+                                    )
                             elif current_action_type == adapter.get_add_action_type():
-                                train_feed_dict[tf_dropout_rate] = 0.0
+                                '''train_feed_dict[tf_dropout_rate] = 0.0
                                 if 'conv' in current_op:
                                     train_feed_dict.update(
                                         {tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - ai[1],
@@ -2907,10 +2935,16 @@ if __name__ == '__main__':
                                                                cnn_hyperparameters[current_op]['out'])})
 
                                 #print(curr_layer_sizes/add_amout_filter_vec)
-                                train_feed_dict.update({tf_scale_parameter: curr_layer_sizes/add_amout_filter_vec})
-                                _, _ = session.run(
-                                    [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
-                                    feed_dict=train_feed_dict)
+                                train_feed_dict.update({tf_scale_parameter: np.asarray(curr_layer_sizes)/add_amout_filter_vec})
+                                with tf.control_dependencies(tf_training_slice_vel_update[current_op]):
+                                    _ = session.run(
+                                        tf_training_slice_optimize[current_op],
+                                        feed_dict=train_feed_dict)'''
+
+                                with tf.control_dependencies(update_train_velocity_op):
+                                    _ = session.run(
+                                        [apply_grads_op], feed_dict=train_feed_dict
+                                    )
 
                             elif current_action_type == adapter.get_finetune_action_type():
 
@@ -2921,11 +2955,12 @@ if __name__ == '__main__':
                                 )
 
                                 #print(curr_layer_sizes/add_amout_filter_vec)
-                                train_feed_dict.update({tf_scale_parameter: curr_layer_sizes/add_amout_filter_vec})
+                                train_feed_dict.update({tf_scale_parameter: np.asarray(curr_layer_sizes)/add_amout_filter_vec})
 
-                                _, _ = session.run(
-                                    [tf_training_slice_optimize[current_op], tf_training_slice_vel_update[current_op]],
-                                    feed_dict=train_feed_dict)
+                                with tf.control_dependencies(tf_training_slice_vel_update[current_op]):
+                                    _ = session.run(
+                                        tf_training_slice_optimize[current_op],
+                                        feed_dict=train_feed_dict)
 
 
                             #if batch_id % 25 == 0:
@@ -2941,11 +2976,11 @@ if __name__ == '__main__':
                 assert not np.isnan(l)
 
                 train_losses.append(l)
-
+                prev_train_acc = current_train_acc
                 # =============================================================
                 # Validation Phase (Use single tower) (Before adaptations)
                 v_label_seq = label_sequence_generator.sample_label_sequence_for_batch(
-                    n_iterations,data_prior,batch_size,num_labels,freeze_index_increment=True
+                    n_iterations,data_prior_100,batch_size,num_labels,freeze_index_increment=True
                 )
                 batch_valid_data,batch_valid_labels = data_gen.generate_data_with_label_sequence(
                     train_dataset,train_labels,v_label_seq,dataset_info

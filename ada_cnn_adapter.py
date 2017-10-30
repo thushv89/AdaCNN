@@ -74,7 +74,7 @@ def add_with_action(
         # calculating new weights
         tf_reshaped_replicative_factor_vec = tf.reshape(tf_replicative_factor_vec, [1, 1, 1, -1])
         tf_new_weights = tf.div(tf.concat(axis=3, values=[w, tf_weights_this]),tf_reshaped_replicative_factor_vec)
-        tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_bias_this]),tf_replicative_factor_vec)
+        tf_new_biases = tf.div(tf.concat(axis=0, values=[b, tf_bias_this]),tf_reshaped_replicative_factor_vec)
         tf_new_act = tf.concat(axis=0, values=[act,tf_act_this])
 
         if research_parameters['optimizer'] == 'Momentum':
