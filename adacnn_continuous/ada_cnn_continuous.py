@@ -2309,13 +2309,14 @@ if __name__ == '__main__':
     prev_binned_data_dist_vector = None
     running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
     tf_summary_data_dist = tf.placeholder(shape=[model_hyperparameters['binned_data_dist_length']],dtype=tf.float32,name='tf_summary_data_dist')
+    tf_summary_accuracy = tf.placeholder(shape=None, dtype=tf.float32, name='tf_summary_accuracy' )
 
     with tf.name_scope(TF_GLOBAL_SCOPE):
         with tf.name_scope(constants.TF_SUMMARY_SCOPE):
             tf_summary_data_dist_writer = tf.summary.histogram('data_ditribution', tf_summary_data_dist)
+            tf_summary_accuracy_writer = tf.summary.scalar('test_accuracy',tf_summary_accuracy)
 
     # Merge all summary writing ops to a single op so we don't ahve to run them individually
-    summaries = tf.summary.merge_all()
     summary_writer.add_graph(session.graph)
 
     binned_data_dist_decay = 0.5
@@ -2634,6 +2635,11 @@ if __name__ == '__main__':
                                       global_batch_id, mean_train_loss, train_accuracy*100.0,
                                       unseen_valid_accuracy, np.mean(test_accuracies)
                                       )
+
+                    accuracy_summ = session.run(tf_summary_accuracy_writer,
+                                                 feed_dict={tf_summary_accuracy: current_test_accuracy})
+                    summary_writer.add_summary(accuracy_summ, global_step=global_batch_id)
+
                 # ====================================================================
 
                     if research_parameters['adapt_structure'] and \
