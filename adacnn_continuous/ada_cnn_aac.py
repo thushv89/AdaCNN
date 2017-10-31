@@ -119,7 +119,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         home_dir = '.' + os.sep + self.persit_dir + os.sep + "ada_cnn_tensorboard_data"
         if not os.path.exists(home_dir):
             dirs_in_tensorboard = []
+            if not os.path.exists(home_dir + os.sep + 'actor_critic'):
+                os.mkdir(home_dir + os.sep + 'actor_critic')
         else:
+            if not os.path.exists(home_dir + os.sep + 'actor_critic'):
+                os.mkdir(home_dir + os.sep + 'actor_critic')
             dirs_in_tensorboard = [int(o) for o in os.listdir(home_dir + os.sep + 'actor_critic')
                                    if os.path.isdir(os.path.join(home_dir + os.sep + "actor_critic",o))]
         if len(dirs_in_tensorboard)==0:
@@ -823,8 +827,23 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         for a_idx, ai in enumerate(a):
             if a_idx< len(self.conv_ids):
                 new_a.append(ceil(ai * self.add_amount))
+
+                # We need this because we use squeeze operation in
+                # cnn_adapter. So if there is only 1 filter, that dimension will dissapear
+                if new_a[-1]>0:
+                    new_a[-1] = max(new_a[-1],2)
+                elif new_a[-1]<0:
+                    new_a[-1] = min(new_a[-1],-2)
+
             elif a_idx < len(self.conv_ids + self.fulcon_ids):
                 new_a.append(ceil(ai * self.add_fulcon_amount))
+
+                # We need this because we use squeeze operation in
+                # cnn_adapter
+                if new_a[-1]>0:
+                    new_a[-1] = max(new_a[-1],2)
+                elif new_a[-1]<0:
+                    new_a[-1] = min(new_a[-1],-2)
 
         new_a.append(a[-1])
 
@@ -877,7 +896,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             if (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0<= self.top_k_accuracy/self.num_classes \
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
-        #mean_accuracy = accuracy_push_reward if data['pool_accuracy'] > data['max_pool_accuracy'] else -accuracy_push_reward
+        mean_accuracy = (before_adapt_queue[-1] - before_adapt_queue[-2])/100.0
+
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
@@ -898,8 +918,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # if complete_do_nothing:
         #    reward = -1e-3# * max(self.same_action_count+1,5)
 
-        self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f", self.train_global_step, data['batch_id'], ai,
-                                data['prev_pool_accuracy'], data['pool_accuracy'], reward)
+        self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f",
+                                self.train_global_step, data['batch_id'], ai,
+                                before_adapt_queue[-2], before_adapt_queue[-1],
+                                reward)
 
         # ===============================================================
         # Update Target Networks

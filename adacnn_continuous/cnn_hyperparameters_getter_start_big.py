@@ -22,7 +22,7 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level)
         'remove_filters_by': 'Activation', # The criteria for removing filters (AdaCNN) set of minimum maximum mean activations
         'optimize_end_to_end': True, # if true functions such as add and finetune will optimize the network from starting layer to end (fulcon_out)
         # This was 0.02 =========================================================================
-        'loss_diff_threshold': 0.5, # This is used to check if the loss reduction has stabalized
+        'loss_diff_threshold': 0.02, # This is used to check if the loss reduction has stabalized
         # ========================================================================================
         'start_adapting_after': 500, # Acts as a warming up phase, adapting from the very begining can make CNNs unstable
         'debugging': True if logging_level == logging.DEBUG else False,
@@ -68,9 +68,9 @@ def get_interval_related_hyperparameters(dataset_name):
         interval_parameters['orig_finetune_interval'] = 50
 
     if dataset_name == 'cifar-100':
-        interval_parameters['policy_interval'] = 24
-        interval_parameters['finetune_interval'] = 24
-        interval_parameters['orig_finetune_interval'] = 50
+        interval_parameters['policy_interval'] = 200
+        interval_parameters['finetune_interval'] = 200
+        interval_parameters['orig_finetune_interval'] = 200
 
     elif dataset_name == 'imagenet-250':
         interval_parameters['policy_interval'] = 48
@@ -90,9 +90,10 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters = {}
 
-    model_hyperparameters['batch_size'] = 128  # number of datapoints in a single batch
-    model_hyperparameters['start_lr'] = 0.01
-    model_hyperparameters['min_learning_rate'] = 0.0001
+    model_hyperparameters['adapt_structure'] = adapt_structure
+    model_hyperparameters['batch_size'] = 64  # number of datapoints in a single batch
+    model_hyperparameters['start_lr'] = 0.0001
+    model_hyperparameters['min_learning_rate'] = 0.00001
     model_hyperparameters['decay_learning_rate'] = True
     model_hyperparameters['decay_rate'] = 0.75
     model_hyperparameters['adapt_decay_rate'] = 0.9 # decay rate used for adaptation related optimziations
@@ -120,8 +121,6 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-
-    model_hyperparameters['start_lr'] = 0.01
     model_hyperparameters['include_l2_loss'] = True
     model_hyperparameters['beta'] = 0.0005
     model_hyperparameters['use_loc_res_norm'] = False
@@ -174,9 +173,9 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                              "#P,2,2,0#C,3,1,24#C,3,1,24#C,3,1,24#C,3,1,24" \
                              "#PG,3,2,0#FC,48,0,0#FC,48,0,0#FC,100,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,64#C,3,1,128#C,3,1,256#C,3,1,256" \
-                         "#P,2,2,0#C,3,1,256#C,3,1,256#C,3,1,256#C,3,1,256" \
-                         "#PG,2,2,0#FC,512,0,0#FC,512,0,0#FC,100,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#C,3,1,32" \
+                         "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
+                         "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,50,0,0#Terminate,0,0,0"
 
             filter_min_threshold = 24
             fulcon_min_threshold = 48

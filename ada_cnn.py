@@ -1191,11 +1191,14 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             next_weights_shape = next_weights.shape
 
             #rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
-            #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
+
             if np.random.random()<0.5:
                 rand_indices_1 = np.argsort(curr_act).ravel()[-amount_to_add:]
+                rand_indices_2 = np.argsort(curr_act).ravel()[:amount_to_add]
             else:
                 rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add,
+                                                  replace=True)
+                rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add,
                                                   replace=True)
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel()])
@@ -1209,14 +1212,14 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
             print('count vec',count_vec.shape)
             print(count_vec)
-            new_curr_weights = curr_weights[:,:,:,rand_indices_1]
+            new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
             new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
-            new_act_this = curr_act[rand_indices_1]
+            new_act_this = (curr_act[rand_indices_1] + curr_act[rand_indices_2])/2.0
 
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
             if last_conv_id != current_op:
-                new_next_weights = next_weights[:,:,rand_indices_1,:]
+                new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
                 new_next_weights = get_new_distorted_weights(new_next_weights,next_weights_shape)
 
                 #new_next_weights = next_weights[:, :, rand_indices, :]
@@ -1227,13 +1230,13 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 all_indices_1 = [np.arange(l,u) for (l,u) in low_up_bounds_1]
                 all_indices_1 = np.stack(all_indices_1).ravel()
 
-                #low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
-                #upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
-                #low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
-                #all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
-                #all_indices_2 = np.stack(all_indices_2).ravel()
+                low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
+                upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
+                low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
+                all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
+                all_indices_2 = np.stack(all_indices_2).ravel()
 
-                new_next_weights = next_weights[all_indices_1,:]
+                new_next_weights = (next_weights[all_indices_1,:] + next_weights[all_indices_2,:])/2.0
                 new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         # Random initialization
@@ -1446,9 +1449,11 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             if np.random.random()<0.5:
                 rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add,
                                                   replace=True)
+                rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add,
+                                                  replace=True)
             else:
                 rand_indices_1 = np.argsort(curr_act).ravel()[-amount_to_add:]
-
+                rand_indices_2 = np.argsort(curr_act).ravel()[:amount_to_add]
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel()])
             #print('allindices plus rand',all_indices_plus_rand.shape)
@@ -1463,13 +1468,13 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             print('count vec',count_vec.shape)
             print(count_vec)
 
-            new_curr_weights = curr_weights[:, rand_indices_1]
+            new_curr_weights = (curr_weights[:, rand_indices_1] + curr_weights[:, rand_indices_2])/2.0
             new_curr_weights = np.expand_dims(np.expand_dims(new_curr_weights,-1),-1)
-            new_curr_act = curr_act[rand_indices_1]
+            new_curr_act = (curr_act[rand_indices_1] + curr_act[rand_indices_2])/2.0
 
             new_curr_bias = np.random.normal(scale=scale_for_rand, size=(amount_to_add))
 
-            new_next_weights = next_weights[rand_indices_1,:]
+            new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         else:
