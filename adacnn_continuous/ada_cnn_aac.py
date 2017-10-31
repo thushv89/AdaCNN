@@ -113,6 +113,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
+        self.entropy_beta = 0.01
         self.session = params['session']
 
         # Create a new director for each summary writer
@@ -450,11 +451,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         mu_s = self.tf_calc_actor_output(self.tf_state_input)
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
+        entropy = -tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-5))
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
                      xs= theta_mu,
-                     grad_ys = [-g for g in d_Q_over_a])
+                     grad_ys = [-(g + self.entropy_beta * entropy) for g in d_Q_over_a])
 
-        grads = list(zip(d_mu_over_d_ThetaMu,theta_mu))
+
+
+        grads = list(zip(d_mu_over_d_ThetaMu ,theta_mu))
 
         grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
                                               momentum=self.momentum).apply_gradients(grads)
