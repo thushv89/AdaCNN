@@ -15,7 +15,7 @@ sys.path.append('../AdaCNN')
 import utils
 import constants
 
-logging_level = logging.DEBUG
+logging_level = logging.INFO
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 
@@ -112,7 +112,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.trial_phase_threshold = params['trial_phase_threshold'] # After this threshold all actions will be taken deterministically (e-greedy)
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
-        self.TAU = 0.001
+        self.TAU = 0.01
         self.session = params['session']
 
         # Create a new director for each summary writer

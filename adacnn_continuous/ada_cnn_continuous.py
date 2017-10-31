@@ -1226,12 +1226,12 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
             assert next_fulcon_op_weights.shape[0] == next_w_vel.shape[0]
 
-
-    logger.debug('\tSummary of changes to weights of %s ...', current_op)
-    logger.debug('\t\tNew Weights: %s', current_op_weights.shape)
-    logger.debug('\t\tNew Weights vel: %s', current_w_vel.shape)
-    logger.debug('\t\tNext weights: %s',next_fulcon_op_weights.shape)
-    logger.debug('\t\tNext Weights vel: %s',next_w_vel.shape)
+    if research_parameters['debugging']:
+        logger.debug('\tSummary of changes to weights of %s ...', current_op)
+        logger.debug('\t\tNew Weights: %s', current_op_weights.shape)
+        logger.debug('\t\tNew Weights vel: %s', current_w_vel.shape)
+        logger.debug('\t\tNext weights: %s',next_fulcon_op_weights.shape)
+        logger.debug('\t\tNext Weights vel: %s',next_w_vel.shape)
 
     # change out hyperparameter of op
     cnn_hyperparameters[current_op]['out'] += amount_to_add
@@ -1430,11 +1430,12 @@ def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id
 
     cnn_hyperparameters[next_fulcon_op]['in'] -= amount_to_rmv
 
-    logger.debug('\tSummary of changes to weights of %s ...', current_op)
-    logger.debug('\t\tNew Weights: %s', current_op_weights.eval().shape)
-    logger.debug('\t\tNew Weights vel: %s', w_vel.eval().shape)
-    logger.debug('\t\tNext weights: %s', next_fulcon_op_weights.eval().shape)
-    logger.debug('\t\tNext Weights vel: %s', next_w_vel.eval().shape)
+    if research_parameters['debugging']:
+        logger.debug('\tSummary of changes to weights of %s ...', current_op)
+        logger.debug('\t\tNew Weights: %s', current_op_weights.eval().shape)
+        logger.debug('\t\tNew Weights vel: %s', w_vel.eval().shape)
+        logger.debug('\t\tNext weights: %s', next_fulcon_op_weights.eval().shape)
+        logger.debug('\t\tNext Weights vel: %s', next_w_vel.eval().shape)
 
     logger.debug('\tSize after feature map reduction: %s,%s', next_fulcon_op,
                  tf.shape(next_fulcon_op_weights).eval())
@@ -2211,7 +2212,7 @@ if __name__ == '__main__':
             batch_size=32, persist_dir=output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.01,
+            hidden_layers=[256, 128, 64], momentum=0.9, learning_rate=0.001,
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
