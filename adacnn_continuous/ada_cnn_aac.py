@@ -145,12 +145,18 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_actor_grad_norm, self.tf_critic_grad_norm, self.tf_grads_for_debug = None, None, None
         self.tf_actor_target_update_op, self.tf_critic_target_update_op = None, None
 
+        #Losses
+        self.tf_policy_loss, self.tf_entropy = None, None
+
         # Summary for Tensorboard
         self.tf_summary_reward_ph = tf.placeholder(tf.float32,name='tf_summary_reward_ph')
         self.tf_summary_q_ph = tf.placeholder(shape=[self.output_size],dtype=tf.float32,name='tf_summary_q_ph')
         self.tf_summary_action_mean_ph = tf.placeholder(shape=[self.output_size],dtype=tf.float32,name='tf_summary_action_mean_ph')
         self.tf_summary_actor_grad_norm_ph = tf.placeholder(tf.float32, name='tf_actor_grad_norm_ph')
         self.tf_summary_critic_grad_norm_ph = tf.placeholder(tf.float32, name='tf_critic_grad_norm_ph')
+        self.tf_summary_policy_loss = tf.placeholder(tf.float32, name='tf_policy_loss')
+        self.tf_summary_critic_loss = tf.placeholder(tf.float32, name='tf_critic_loss')
+        self.tf_summary_entropy = tf.placeholder(tf.float32, name='tf_entropy')
         self.every_train_step_summ, self.every_action_sampled_summ = None, None
 
         self.prev_action, self.prev_state = None, None
@@ -202,7 +208,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op)
         self.tf_critic_optimize_op, self.tf_critic_grad_norm = self.tf_momentum_optimize(self.tf_critic_loss_op)
-        self.tf_actor_optimize_op, self.tf_actor_grad_norm, self.tf_grads_for_debug = self.tf_policy_gradient_optimize()
+        self.tf_actor_optimize_op, self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy = self.tf_policy_gradient_optimize()
         self.tf_actor_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_ACTOR_SCOPE)
         self.tf_critic_target_update_op = self.tf_train_actor_or_critic_target(constants.TF_CRITIC_SCOPE)
 
@@ -298,8 +304,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 mu_summ = tf.summary.histogram('Mu(s)',self.tf_summary_action_mean_ph)
                 actor_grad_summ = tf.summary.scalar('Grad Norm (Actor)',self.tf_summary_actor_grad_norm_ph)
                 critic_grad_summ = tf.summary.scalar('Grad Norm (Critic)', self.tf_summary_critic_grad_norm_ph)
+                policy_loss_summ = tf.summary.scalar('Policy Loss (Actor)', self.tf_summary_policy_loss)
+                critic_loss_summ = tf.summary.scalar('Critic Loss', self.tf_summary_critic_loss)
+                entropy_summ = tf.summary.scalar('Entropy', self.tf_summary_entropy)
 
-        every_train_step_summ_writer = tf.summary.merge([reward_summ,actor_grad_summ,critic_grad_summ])
+        every_train_step_summ_writer = tf.summary.merge([reward_summ,actor_grad_summ,critic_grad_summ,
+                                                         policy_loss_summ, critic_loss_summ, entropy_summ])
         every_action_sampled_summ_writer = tf.summary.merge([q_summ,mu_summ])
 
         return every_train_step_summ_writer,every_action_sampled_summ_writer
@@ -497,6 +507,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Calculates d(a)/d(Theta_mu) * -a
         # this is useful for reverse accumulation i.e. dy/dx = dy/dw1 * dw1/dw2 * dw2/dx
         mu_s = self.tf_calc_actor_output(self.tf_state_input)
+        policy_loss = -tf.reduce_sum(self.tf_calc_critic_output(self.tf_state_input, mu_s)*tf.log(mu_s + 1e-5))
+
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
         entropy = -tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-5))
@@ -512,7 +524,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
-        return grad_apply_op,grad_norm,grad_values
+        return grad_apply_op,grad_norm, policy_loss, entropy
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
         '''
@@ -763,10 +775,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         y_i = r + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
 
-        _,crit_grad_norm = self.session.run([self.tf_critic_optimize_op,self.tf_critic_grad_norm],
+        _,crit_grad_norm, critic_loss = self.session.run([self.tf_critic_optimize_op,self.tf_critic_grad_norm, self.tf_critic_loss_op],
                              feed_dict={self.tf_state_input:s_i,self.tf_action_input:a_i,
                                         self.tf_y_i_targets:y_i})
-        return crit_grad_norm
+        return crit_grad_norm, critic_loss
 
     def train_actor(self,experience_batch):
         '''
@@ -777,13 +789,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
         s_i, a_i, r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
-        _,act_grad_norm,grads_debug = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_grads_for_debug],feed_dict={
+        _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:s_i
         })
 
         self.verbose_logger.info('Grad Norm (Actor): %.5f',act_grad_norm)
 
-        return act_grad_norm
+        return act_grad_norm, policy_loss, entropy
 
     def sample_action_stochastic_from_actor(self,data):
 
@@ -985,15 +997,15 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 self.verbose_logger.debug('Experience indices: %s', exp_indices)
                 self.verbose_logger.info('\tTrained Actor')
-                act_grad_norm = self.train_actor([self.experience[ei] for ei in exp_indices])
+                act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices])
                 self.verbose_logger.info('\tTrained Critic')
-                crit_grad_norm = self.train_critic([self.experience[ei] for ei in exp_indices])
+                crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices])
 
             else:
                 self.verbose_logger.info('\tTrained Actor')
-                act_grad_norm = self.train_actor(self.experience)
+                act_grad_norm, policy_loss, entropy = self.train_actor(self.experience)
                 self.verbose_logger.info('\tTrained Critic')
-                crit_grad_norm = self.train_critic(self.experience)
+                crit_grad_norm, critic_loss = self.train_critic(self.experience)
 
             # Removing old experience to save memory
             if self.train_global_step > 0 and self.train_global_step % self.exp_clean_interval == 0:
@@ -1027,7 +1039,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             summ = self.session.run(self.every_train_step_summ,
                                     feed_dict={self.tf_summary_actor_grad_norm_ph: act_grad_norm,
                                                self.tf_summary_critic_grad_norm_ph: crit_grad_norm,
-                                               self.tf_summary_reward_ph:reward})
+                                               self.tf_summary_reward_ph:reward,
+                                               self.tf_summary_policy_loss:policy_loss,
+                                               self.tf_summary_critic_loss:critic_loss,
+                                               self.tf_summary_entropy:entropy})
+
             self.summary_writer.add_summary(summ, global_step=self.train_global_step)
 
         # if complete_do_nothing:
