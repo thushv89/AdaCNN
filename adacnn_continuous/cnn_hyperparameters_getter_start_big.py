@@ -161,7 +161,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     if dataset_name == 'cifar-100':
 
-        pool_size = model_hyperparameters['batch_size'] * 1* num_labels
+        pool_size = model_hyperparameters['batch_size'] * 2 * num_labels
 
         if not adapt_structure:
             if not use_fse_capacity:
@@ -191,7 +191,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['top_k_accuracy'] = 5.0
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['epochs'] = 8
-        pool_size = int(model_hyperparameters['batch_size'] * 0.75 * num_labels)
+        pool_size = int(model_hyperparameters['batch_size'] * 1 * num_labels)
 
         if not adapt_structure:
             cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128#C,3,1,128#P,2,2,0" \
