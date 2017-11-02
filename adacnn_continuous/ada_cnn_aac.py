@@ -576,18 +576,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     # ============================================================================
 
-    def clean_experience(self):
-        '''
-        Delete past experience to free memory
-        :return:
-        '''
-        self.verbose_logger.info('Cleaning Q values (removing old ones)')
-        self.verbose_logger.debug('\tSize of Q before: %d', len(self.q))
-        if len(self.q) > self.q_length:
-            for _ in range(len(self.q) - self.q_length):
-                self.q.popitem(last=True)
-            self.verbose_logger.debug('\tSize of Q after: %d', len(self.q))
-
     def get_action_string_for_logging(self):
         '''
         Action string for logging purposes (predicted_q.log)
@@ -849,9 +837,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         cont_actions_all_layers = cont_actions_all_layers.flatten()
         self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-1)] + [0.5]),
-                                              theta=0.25 , sigma=np.asarray([0.5 for _ in range(self.output_size-1)] + [0.2]))
+                                              theta=0.25 , sigma=np.asarray([0.3 for _ in range(self.output_size-1)] + [0.2]))
         self.verbose_logger.debug('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
+        # Otherwise can go above 1
+        cont_actions_all_layers = np.clip(cont_actions_all_layers,-1.0,1.0)
 
         valid_action = self.get_new_valid_action_when_stochastic(
              cont_actions_all_layers, data
@@ -1111,6 +1101,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
 
         # update experience
+
+        for idx in range(len(self.experience)-5,len(self.experience)):
+            self.experience[idx][2] = 0.9 * self.experience[idx][2] + 0.1 * reward
 
         self.experience.append([si, ai, reward, sj, self.train_global_step])
 
