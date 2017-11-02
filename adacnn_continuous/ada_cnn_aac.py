@@ -314,6 +314,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return every_train_step_summ_writer,every_action_sampled_summ_writer
 
+    def tf_reset_actor_and_critic(self):
+        raise NotImplementedError
+
     def tf_init_actor_and_critic(self):
         '''
         Initialize the variables for neural network used for q learning
@@ -512,8 +515,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
-        #entropy = - tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8))
-        entropy =  (mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8) + 1.0
+        entropy = - tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8))
+        #entropy =  (mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8) + 1.0
 
         d_H_over_d_ThetaMu = tf.gradients(ys=-1.0*self.entropy_beta*entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
@@ -527,7 +530,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
-        return grad_apply_op,grad_norm, policy_loss, -tf.reduce_sum(entropy - 1.0)
+        return grad_apply_op,grad_norm, policy_loss, entropy
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
         '''
@@ -837,14 +840,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         cont_actions_all_layers = cont_actions_all_layers.flatten()
         self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-1)] + [0.5]),
-                                              theta=0.25 , sigma=np.asarray([0.3 for _ in range(self.output_size-1)] + [0.2]))
-        self.verbose_logger.debug('Adding exploration noise: %s',exp_noise)
+                                              theta=0.25 , sigma=np.asarray([0.1 for _ in range(self.output_size-1)] + [0.2]))
+        self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
         # Otherwise can go above 1
         cont_actions_all_layers = np.clip(cont_actions_all_layers,-1.0,1.0)
 
         valid_action = self.get_new_valid_action_when_stochastic(
-             cont_actions_all_layers, data
+             cont_actions_all_layers, data, state
         )
 
         self.verbose_logger.info('Action chosen stochastic')
@@ -885,7 +888,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.summary_writer.add_summary(summ,global_step=self.sample_action_global_step)
         valid_action = self.get_new_valid_action_when_stochastic(
-             cont_actions_all_layers, data
+             cont_actions_all_layers, data, state
         )
 
         self.sample_action_global_step += 1
@@ -896,12 +899,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('\t%s (scaled)',scaled_a)
         return state, scaled_a, valid_action
 
-    def get_new_valid_action_when_stochastic(self, action, data):
+    def get_new_valid_action_when_stochastic(self, action, data, state):
 
         self.verbose_logger.debug('Getting new valid action (stochastic)')
 
         valid_action = action.tolist()
-
+        opposite_action = action.tolist()
         for a_idx, a in enumerate(valid_action):
             layer_id_for_action = None
 
@@ -915,7 +918,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
                 if next_layer_complexity < self.min_filter_threshold or next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
-                    valid_action[a_idx] = 0.0
+                    opposite_action[a_idx] *= -0.5
+                    valid_action[a_idx] *= -0.5
 
             # For fully-connected layers
             elif a_idx < len(self.conv_ids) + len(self.fulcon_ids):
@@ -928,50 +932,30 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 if next_layer_complexity < self.min_fulcon_threshold or \
                                 next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
-                    valid_action[a_idx] = 0.0
+                    opposite_action[a_idx] *= -0.5
+                    valid_action[a_idx] *= -0.5
             # For finetune action there is no invalid state
             else:
                 continue
+
+        #scaled_opposite_action = self.scale_adaptaion_propotions_to_number_of_filters(opposite_action)
+        #next_state = self.get_next_state_from_state_action(state, scaled_opposite_action)
+        #self.verbose_logger.info('\tInvalid action: %s', action)
+        #self.verbose_logger.info('\tValid opposite action: %s', opposite_action)
+        #self.verbose_logger.info('\tState: %s', state)
+        #self.verbose_logger.info('\tNext state: %s', next_state)
+
+        #self.update_experience(state, opposite_action, 1.0 / self.num_classes, next_state)
 
         return valid_action
 
-    def get_new_valid_action_when_deterministic(self, action, data):
+    def get_next_state_from_state_action(self, s, a):
+        filter_values = s[:self.net_depth]
 
-        self.verbose_logger.debug('Getting new valid action (stochastic)')
+        for i, fidx in enumerate(self.conv_ids + self.fulcon_ids):
+            filter_values[fidx] += a[i]
 
-        valid_action = action.tolist()
-
-        for a_idx, a in enumerate(valid_action):
-            layer_id_for_action = None
-
-            # For Convolution layers
-            if a_idx < len(self.conv_ids):
-                layer_id_for_action = self.conv_ids[a_idx]
-                self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (conv)', a_idx,
-                                          layer_id_for_action)
-                self.verbose_logger.debug('\tTrying to add %d', floor(a * self.add_amount))
-                next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + floor(a * self.add_amount)
-
-                if next_layer_complexity < self.min_filter_threshold or next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
-                    valid_action[a_idx] = 0.0
-
-            # For fully-connected layers
-            elif a_idx < len(self.conv_ids) + len(self.fulcon_ids):
-                layer_id_for_action = self.fulcon_ids[a_idx - len(self.conv_ids)]
-                self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (fulcon)', a_idx,
-                                          layer_id_for_action)
-                next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + floor(a * self.add_fulcon_amount)
-                self.verbose_logger.debug('\tTrying to add %d', floor(a * self.add_fulcon_amount))
-                if next_layer_complexity < self.min_fulcon_threshold or \
-                                next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
-
-                    valid_action[a_idx] = 0.0
-
-            # For finetune action there is no invalid state
-            else:
-                continue
-
-        return self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
+        return filter_values + s[self.net_depth:]
 
 
     def scale_adaptaion_propotions_to_number_of_filters(self,a):
@@ -1049,8 +1033,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             if (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0<= self.top_k_accuracy/self.num_classes \
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
-        mean_accuracy = (before_adapt_queue[-1] - before_adapt_queue[-2])/100.0
-        mean_valid_accuracy = (data['unseen_valid_after'] - data['unseen_valid_before'])/100.0
+        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
+        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
 
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
@@ -1059,7 +1043,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Pool Accuracy (gain): %.5f ', mean_accuracy)
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
-        reward = mean_accuracy + 0.001*comp_gain + 0.5*mean_valid_accuracy # new
+        reward = mean_accuracy + 0.01*comp_gain + 0.1*mean_valid_accuracy # new
 
         # wRITING Summary
         if len(self.experience)>0:
@@ -1102,8 +1086,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # update experience
 
-        for idx in range(len(self.experience)-5,len(self.experience)):
-            self.experience[idx][2] = 0.9 * self.experience[idx][2] + 0.1 * reward
+        #for idx in range(len(self.experience)-5,len(self.experience)):
+        #    self.experience[idx][2] = 0.9 * self.experience[idx][2] + 0.1 * reward
 
         self.experience.append([si, ai, reward, sj, self.train_global_step])
 
@@ -1133,6 +1117,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             return np.mean(np.max(q_pred, axis=1))
         else:
             return 0.0
+
+    def reset_actor_critic_nets_except_targets(self):
+        raise NotImplementedError
+
+    def get_global_train_step(self):
+        return self.train_global_step
 
     def reset_loggers(self):
         self.verbose_logger.handlers = []

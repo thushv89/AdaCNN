@@ -903,7 +903,32 @@ def fintune_with_pool_ft(hard_pool_ft):
                                    feed_dict=pool_feed_dict)
 
 
-def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add):
+def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
+    if np.random.random() < 0.25:
+        new_curr_weights = np.flip(new_curr_weights, axis=np.random.choice([0, 1]))
+    if np.random.random() < 0.25:
+        new_curr_weights = np.swapaxes(new_curr_weights, 0, 1)
+    if np.random.random() < 0.8:
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((translate_amout, 0), (0, 0), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[:curr_weight_shape[0], :, :, :]
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((0, translate_amout), (0, 0), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[translate_amout:, :, :, :]
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((0, 0), (translate_amout, 0), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[:, :curr_weight_shape[1], :, :]
+        if np.random.random() < 0.5:
+            translate_amout = np.random.choice([1, 2, 3])
+            new_curr_weights = np.pad(new_curr_weights, ((0, 0), (0, translate_amout), (0, 0), (0, 0)), 'mean')
+            new_curr_weights = new_curr_weights[:, translate_amout:, :, :]
+
+    return new_curr_weights
+
+def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add, epoch):
     '''
     Run the add operation using the given Session
     :param session:
@@ -919,6 +944,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     if current_op != last_conv_id:
         next_conv_op = \
             [tmp_op for tmp_op in cnn_ops[cnn_ops.index(current_op) + 1:] if 'conv' in tmp_op][0]
+
 
     with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
 
@@ -942,22 +968,28 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
                 logger.debug('\tNext weight size: %s', next_weights.shape)
 
+        curr_weight_shape = curr_weights.shape
+        next_weights_shape = next_weights.shape
+
         #Net2Net type initialization
-        if np.random.random()<0.5:
+        if np.random.random()<0.25**(epoch+1):
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
-            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
 
-            ind_counter = Counter(all_indices_plus_rand.tolist())
-            sorted_keys = sorted(ind_counter.keys())
-            count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
-            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            #ind_counter = Counter(all_indices_plus_rand.tolist())
+            #sorted_keys = sorted(ind_counter.keys())
+            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys ])
+            #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
 
+            count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
+            new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
+
             new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
 
             new_act_this = (curr_act[rand_indices_1] + curr_act[rand_indices_2]) / 2.0
@@ -984,8 +1016,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         # Random initialization
         else:
             print('Random Initialization')
-            curr_weight_shape = curr_weights.shape
-            next_weights_shape = next_weights.shape
 
             new_curr_weights = np.random.uniform(low=-0.001, high=0.001, size=(
             curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
@@ -1123,7 +1153,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
 
-def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add):
+def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add,epoch):
     '''
     Run the add operation using the given Session
     :param session:
@@ -1161,16 +1191,18 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if np.random.random()<0.5:
+        if np.random.random()<0.25**(epoch+1):
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
-            all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
-            print('allindices plus rand',all_indices_plus_rand.shape)
-            ind_counter = Counter(all_indices_plus_rand.tolist())
-            sorted_keys = np.asarray(sorted(ind_counter.keys()))
-            count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
-            count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
+            #print('allindices plus rand',all_indices_plus_rand.shape)
+            #ind_counter = Counter(all_indices_plus_rand.tolist())
+            #sorted_keys = np.asarray(sorted(ind_counter.keys()))
+            #count_vec = np.asarray([ind_counter[k] for k in sorted_keys])
+            #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
+            count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)
+
             print('count vec',count_vec.shape)
             print(count_vec)
             new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
@@ -1368,13 +1400,6 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
         session.run(tf_update_hyp_ops[next_conv_op], feed_dict={
             tf_weight_shape: cnn_hyperparameters[next_conv_op]['weights']
         })
-
-    logger.info('\t(Before) Size of Rolling mean vector for %s: %s', current_op,
-                rolling_ativation_means[current_op].shape)
-    rolling_ativation_means[current_op] = np.delete(rolling_ativation_means[current_op],
-                                                    rm_indices)
-    logger.info('\tSize of Rolling mean vector for %s: %s', current_op,
-                rolling_ativation_means[current_op].shape)
 
     current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
@@ -2585,9 +2610,9 @@ if __name__ == '__main__':
 
                             if ai>0.0:
                                 if 'conv' in current_op:
-                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai)
+                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, epoch)
                                 elif 'fulcon' in current_op:
-                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai)
+                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai, epoch)
 
                             elif ai <0.0:
                                 if 'conv' in current_op:

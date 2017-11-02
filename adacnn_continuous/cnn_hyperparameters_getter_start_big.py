@@ -173,14 +173,14 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
                              "#P,2,2,0#C,3,1,24#C,3,1,24#C,3,1,24#C,3,1,24" \
                              "#PG,3,2,0#FC,48,0,0#FC,48,0,0#FC,100,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,32#C,3,1,32#C,3,1,32#C,3,1,32" \
+            cnn_string = "C,3,1,48#C,3,1,48#C,3,1,48#C,3,1,48" \
                          "#P,2,2,0#C,3,1,64#C,3,1,64#C,3,1,64#C,3,1,64" \
                          "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,50,0,0#Terminate,0,0,0"
 
-            filter_min_threshold = 24
+            filter_min_threshold = 47
             fulcon_min_threshold = 48
             filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
-            add_amount, remove_amount, add_fulcon_amount = 8, 6, 24
+            add_amount, remove_amount, add_fulcon_amount = 8, 6, 16
 
 
         model_hyperparameters['n_iterations'] = 10000
