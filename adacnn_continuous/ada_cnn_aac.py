@@ -85,7 +85,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.q_length = 25 * self.output_size # length of the experience
         self.state_history_collector = []
         self.state_history_dumped = False
-        self.experience_threshold = 100
+        self.experience_threshold = 250
         self.exp_clean_interval = 25
 
         self.current_state_history = []
@@ -113,7 +113,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
-        self.entropy_beta = 0.00001
+        self.entropy_beta = 0.01
         self.session = params['session']
 
         # Create a new director for each summary writer
@@ -498,6 +498,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return tf.gradients(q_for_s_and_a,a_for_grad)
 
+
     def tf_policy_gradient_optimize(self):
 
         d_Q_over_a = self.tf_critic_gradients()
@@ -507,11 +508,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Calculates d(a)/d(Theta_mu) * -a
         # this is useful for reverse accumulation i.e. dy/dx = dy/dw1 * dw1/dw2 * dw2/dx
         mu_s = self.tf_calc_actor_output(self.tf_state_input)
-        policy_loss = -tf.reduce_sum(self.tf_calc_critic_output(self.tf_state_input, mu_s)*tf.log(mu_s + 1e-5))
+        policy_loss = -tf.reduce_sum(self.tf_calc_critic_output(self.tf_state_input, mu_s)*mu_s)
 
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
-        entropy = -tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-5))
+        #entropy = - tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8))
+        entropy =  (mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8) + 1.0
+
         d_H_over_d_ThetaMu = tf.gradients(ys=-1.0*self.entropy_beta*entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
                      xs= theta_mu,
@@ -524,7 +527,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
-        return grad_apply_op,grad_norm, policy_loss, entropy
+        return grad_apply_op,grad_norm, policy_loss, -tf.reduce_sum(entropy - 1.0)
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
         '''
@@ -698,8 +701,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # total gain should be negative for taking add action before half way througl a layer
         # total gain should be positve for taking add action after half way througl a layer
         total = 0
-        split_factor = 0.6
-        for l_i,(c_depth, p_depth, up_dept) in enumerate(zip(curr_comp,prev_comp,filter_bound_vec)):
+        split_factor = 0.5
+        '''for l_i,(c_depth, p_depth, up_dept) in enumerate(zip(curr_comp,prev_comp,filter_bound_vec)):
             if up_dept>0 and abs(c_depth-p_depth) > 0:
                 total += (((up_dept*split_factor)-c_depth)/(up_dept*split_factor))
 
@@ -708,8 +711,39 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         elif sum(curr_comp)-sum(prev_comp)<0.0:
             return total * (self.top_k_accuracy/self.num_classes)
         else:
-            return 0.0
+            return 0.0'''
 
+        for l_i, (c_depth, p_depth, up_dept) in enumerate(zip(curr_comp, prev_comp, filter_bound_vec)):
+            if up_dept > 0:
+                total +=  -(c_depth*1.0/up_dept)*np.log((c_depth*1.0/up_dept)) -1.0
+
+        return total/self.net_depth
+
+    def get_ordered_layer_size_reward(self, curr_comp, prev_comp):
+
+        total = 0.0
+        prev_c_d, prev_p_d = curr_comp[0],prev_comp[0]
+        for l_i,(c_d, p_d) in enumerate(zip(curr_comp, prev_comp)):
+
+            if c_d == 0:
+                continue
+
+            if l_i>0:
+                local_c_d_rew = c_d - prev_c_d
+                #local_p_d_rew = p_d - prev_p_d
+
+                local_rew = local_c_d_rew
+                # Use *2 because actions range between -add_amount , add_amount
+                if l_i in self.conv_ids:
+                    total += local_rew*1.0/(self.add_amount*2) if local_rew<0 else 0
+                elif l_i in self.fulcon_ids:
+                    total += local_rew*1.0/(self.add_fulcon_amount*2) if local_rew<0 else 0
+                else:
+                    raise NotImplementedError
+
+            prev_c_d,prev_p_d = c_d,p_d
+
+        return total/self.net_depth
     def tf_train_actor_or_critic_target(self,actor_or_critic_scope):
         '''
         Update the Target networks using following equation
@@ -814,7 +848,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
         self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
-        exp_noise = self.exploration_noise_OU(cont_actions_all_layers, 0.0, 0.2, 0.5)
+        exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-1)] + [0.5]),
+                                              theta=0.25 , sigma=np.asarray([0.5 for _ in range(self.output_size-1)] + [0.2]))
         self.verbose_logger.debug('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
 
@@ -1015,6 +1050,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.debug('Si,Ai,Sj: %s,%s,%s', si, ai, sj)
 
         comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec)
+        layer_order_reward = self.get_ordered_layer_size_reward(data['curr_state'][:self.net_depth], data['prev_state'][:self.net_depth])
 
         before_adapt_queue = data['pool_accuracy_before_adapt_queue']
         after_adapt_queue = data['pool_accuracy_after_adapt_queue']
@@ -1024,15 +1060,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
         mean_accuracy = (before_adapt_queue[-1] - before_adapt_queue[-2])/100.0
+        mean_valid_accuracy = (data['unseen_valid_after'] - data['unseen_valid_before'])/100.0
 
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
-        self.verbose_logger.info('Complexity penalty: %.5f', comp_gain)
-        self.verbose_logger.info('Pool Accuracy: %.5f ', mean_accuracy)
-        self.verbose_logger.info('Max Pool Accuracy: %.5f ', data['max_pool_accuracy'])
-
-        reward = mean_accuracy - comp_gain #+ 0.5*immediate_mean_accuracy # new
+        self.verbose_logger.info('Complexity reward: %.5f', comp_gain)
+        self.verbose_logger.info('Pool Accuracy (gain): %.5f ', mean_accuracy)
+        self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
+        self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
+        reward = mean_accuracy + 0.001*comp_gain + 0.5*mean_valid_accuracy # new
 
         # wRITING Summary
         if len(self.experience)>0:
@@ -1063,7 +1100,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.update_experience(si,ai,reward,sj)
 
         self.previous_reward = reward
-        self.prev_prev_pool_accuracy = data['prev_pool_accuracy']
+
 
         self.train_global_step += 1
 

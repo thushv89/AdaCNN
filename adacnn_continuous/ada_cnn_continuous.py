@@ -1521,228 +1521,6 @@ def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparam
     hyp_logger.info(model_hyperparameters)
 
 
-def get_explore_action_probs(epoch, trial_phase, n_conv, n_fulcon):
-    '''
-    Explration action probabilities. We manually specify a probabilities of a stochastic policy
-    used to explore the state space adequately
-    :param epoch:
-    :param trial_phase: use the global_trial_phase because at this time we only care about exploring actions
-    :param n_conv:
-    :return:
-    '''
-
-    n_all = n_conv + n_fulcon
-    trial_phase_split = 0.4 if datatype != 'imagenet-250' else 0.25
-    if epoch == 0 and trial_phase<trial_phase_split:
-        logger.info('Finetune phase')
-        trial_action_probs = [0.2 / (1.0 * n_all) for _ in range(n_all)]  # add
-        trial_action_probs.extend([0.1, .35, 0.35])
-
-    elif epoch == 0 and trial_phase >= trial_phase_split and trial_phase < 1.0:
-        logger.info('Growth phase')
-        # There is 0.1 amount probability to be divided between all the remove actions
-        # We give 1/10 th as for other remove actions for the last remove action
-        trial_action_probs = []
-        trial_action_probs.extend([0.6 / (1.0 * (n_all)) for _ in range(n_all)])  # add
-        trial_action_probs.extend([0.1, 0.15, 0.15])
-
-    elif epoch == 2 and trial_phase >= 2.0 and trial_phase < 2.7:
-        logger.info('Shrink phase')
-        # There is 0.6 amount probability to be divided between all the remove actions
-        # We give 1/10 th as for other remove actions for the last remove action
-        raise NotImplementedError
-
-    elif epoch == 2 and trial_phase >= 2.7 and trial_phase < 3.0:
-        logger.info('Finetune phase')
-        trial_action_probs = []
-        trial_action_probs.extend([0.2 / (1.0 * n_all) for _ in range(n_all)])  # add
-        trial_action_probs.extend([0.26, 0.26, 0.28])
-
-    return trial_action_probs
-
-# Continuous adaptation
-def get_continuous_adaptation_action_in_different_epochs(q_learner, data, epoch, global_trial_phase, local_trial_phase, n_conv, n_fulcon, eps, adaptation_period):
-    '''
-    Continuously adapting the structure
-    :param q_learner:
-    :param data:
-    :param epoch:
-    :param trial_phase (global and local):
-    :param n_conv:
-    :param eps:
-    :param adaptation_period:
-    :return:
-    '''
-
-    adapting_now = None
-    if epoch == 0:
-        # Grow the network mostly (Exploration)
-        logger.info('Explorative Growth Stage')
-        state, action, invalid_actions = q_learner.output_action_with_type(
-            data, 'Explore', p_action=get_explore_action_probs(epoch, global_trial_phase, n_conv,n_fulcon)
-        )
-        adapting_now = True
-    else:
-        logger.info('Epsilon: %.3f',eps)
-        if adaptation_period=='first':
-            # use slightly lower value because otherwise the netowrk will get pruned before running non-adaptation
-            if local_trial_phase<=0.49:
-                logger.info('Greedy Adapting period of epoch (first)')
-                if np.random.random() >= eps:
-                    state, action, invalid_actions = q_learner.output_action_with_type(
-                        data, 'Greedy')
-
-                else:
-                    state, action, invalid_actions = q_learner.output_action_with_type(
-                        data, 'Stochastic'
-                    )
-                adapting_now = True
-
-            else:
-                logger.info('Greedy Not adapting period of epoch (first)')
-                if np.random.random() < 0.3:
-                    state, action, invalid_actions = q_learner.get_naivetrain_action(data)
-                else:
-                    state, action, invalid_actions = q_learner.get_finetune_action(data)
-                adapting_now = False
-
-        elif adaptation_period == 'last':
-            # use slightly lower value because otherwise the netowrk will get pruned before running non-adaptation
-            if local_trial_phase > 0.51:
-                logger.info('Greedy Adapting period of epoch (last)')
-                if np.random.random() >= eps:
-                    state, action, invalid_actions = q_learner.output_action_with_type(
-                        data, 'Greedy')
-
-                else:
-                    state, action, invalid_actions = q_learner.output_action_with_type(
-                        data, 'Stochastic'
-                    )
-                adapting_now=True
-            else:
-                logger.info('Not adapting period of epoch (last). Randomly outputting (Donothing, Naive Triain, Finetune')
-                if np.random.random()<0.3:
-                    state, action, invalid_actions = q_learner.get_naivetrain_action(data)
-                else:
-                    state, action, invalid_actions = q_learner.get_finetune_action(data)
-
-                adapting_now = False
-
-        elif adaptation_period =='both':
-
-            logger.info('Greedy Adapting period of epoch (both)')
-            if datatype=='cifar-10':
-                non_adapting_threshold = 0.1
-            elif datatype=='cifar-100':
-                non_adapting_threshold = 0.1
-            elif datatype=='imagenet-250':
-                non_adapting_threshold = 0.25
-
-            if local_trial_phase> non_adapting_threshold:
-                if np.random.random() >= eps:
-                    state, action, invalid_actions = q_learner.output_action_with_type(
-                        data, 'Greedy')
-
-                else:
-                    state, action, invalid_actions = q_learner.output_action_with_type(
-                        data, 'Stochastic'
-                    )
-            else:
-
-                # This is a hacky way to get only non-adaptive actions for sometime at the beginning of every task
-                # As this might be cause some problems in convergens
-                logger.info('\tGetting non adaptive actions for a bit')
-                state, action, invalid_actions = q_learner.output_action_with_type(
-                    data, 'Explore', p_action=get_explore_action_probs(0, 0.01, n_conv, n_fulcon)
-                )
-
-            adapting_now = True
-
-        elif adaptation_period =='none':
-
-            logger.info('Greedy Adapting period of epoch (both)')
-            logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
-            if np.random.random() < 0.3:
-                state, action, invalid_actions = q_learner.get_naivetrain_action(data)
-            else:
-                state, action, invalid_actions = q_learner.get_finetune_action(data)
-
-            adapting_now = False
-
-        else:
-            raise NotImplementedError
-
-    return state, action, invalid_actions, adapting_now
-
-def get_continuous_adaptation_action_randomly(q_learner, data, epoch, global_trial_phase, local_trial_phase, n_conv, n_fulcon, eps, adaptation_period):
-    '''
-    Continuously adapting the structure
-    :param q_learner:
-    :param data:
-    :param epoch:
-    :param trial_phase (global and local):
-    :param n_conv:
-    :param eps:
-    :param adaptation_period:
-    :return:
-    '''
-
-    adapting_now = None
-
-    logger.info('Epsilon: %.3f',eps)
-    if adaptation_period=='first':
-        if local_trial_phase<=0.5:
-            logger.info('Greedy Adapting period of epoch (first)')
-
-            state, action, invalid_actions = q_learner.output_action_with_type(
-                data, 'Stochastic'
-            )
-            adapting_now = True
-
-        else:
-            logger.info('Greedy Not adapting period of epoch (first)')
-            state, action, invalid_actions = q_learner.get_finetune_action(data)
-
-            adapting_now = False
-
-    elif adaptation_period == 'last':
-        if local_trial_phase > 0.5:
-            logger.info('Greedy Adapting period of epoch (last)')
-            state, action, invalid_actions = q_learner.output_action_with_type(
-                data, 'Stochastic'
-            )
-            adapting_now=True
-        else:
-            logger.info('Not adapting period of epoch (last). Randomly outputting (Donothing, Naive Triain, Finetune')
-            state, action, invalid_actions = q_learner.get_finetune_action(data)
-
-            adapting_now = False
-
-    elif adaptation_period =='both':
-
-        logger.info('Greedy Adapting period of epoch (both)')
-        state, action, invalid_actions = q_learner.output_action_with_type(
-            data, 'Stochastic'
-        )
-        adapting_now = True
-
-    elif adaptation_period =='none':
-
-        logger.info('Greedy Adapting period of epoch (both)')
-        logger.info('Not adapting period of epoch. Randomly outputting (Donothing, Naive Triain, Finetune')
-        if np.random.random() < 0.3:
-            state, action, invalid_actions = q_learner.get_naivetrain_action(data)
-        else:
-            state, action, invalid_actions = q_learner.get_finetune_action(data)
-
-        adapting_now = False
-
-    else:
-        raise NotImplementedError
-
-    return state, action, invalid_actions, adapting_now
-
-
 def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_iterations,labels_of_each_task,n_labels):
     '''
     We consider a group of labels as one task
@@ -2297,6 +2075,9 @@ if __name__ == '__main__':
     prev_pool_accuracy = 0
     max_pool_accuracy = 0
 
+    unseen_valid_accuracy = 0
+    unseen_valid_after_accuracy = 0
+
 
     # Stop and start adaptations when necessary
     start_adapting = False
@@ -2505,25 +2286,7 @@ if __name__ == '__main__':
 
                 train_losses.append(l)
                 prev_train_acc = current_train_acc
-                # =============================================================
-                # Validation Phase (Use single tower) (Before adaptations)
-                v_label_seq = label_sequence_generator.sample_label_sequence_for_batch(
-                    n_iterations,data_prior,batch_size,num_labels,freeze_index_increment=True
-                )
-                batch_valid_data,batch_valid_labels = data_gen.generate_data_with_label_sequence(
-                    train_dataset,train_labels,v_label_seq,dataset_info
-                )
 
-                feed_valid_dict = {tf_valid_data_batch: batch_valid_data, tf_valid_label_batch: batch_valid_labels}
-                unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
-
-                if adapt_structure:
-                    valid_acc_queue.append(unseen_valid_accuracy)
-                    if len(valid_acc_queue) > state_history_length + 1:
-                        del valid_acc_queue[0]
-
-                # =============================================================
 
                 # =============================================================
                 # log hard_pool distribution over time
@@ -2721,7 +2484,7 @@ if __name__ == '__main__':
                             logger.info('\tState (next): %s', str(next_state))
                             logger.info('\tPool Accuracy: %.3f', p_accuracy)
                             logger.info('\tValid accuracy (Before Adapt): %.3f', unseen_valid_accuracy)
-                            logger.info('\tValid accuracy (After Adapt): %.3f', prev_unseen_valid_accuracy)
+                            logger.info('\tValid accuracy (After Adapt): %.3f', unseen_valid_after_accuracy)
                             logger.info('\tPrev pool Accuracy: %.3f\n', prev_pool_accuracy)
                             logger.info(('=' * 80) + '\n')
                             assert not np.isnan(p_accuracy)
@@ -2733,8 +2496,8 @@ if __name__ == '__main__':
                                                    'next_accuracy': None,
                                                    'pool_accuracy_before_adapt_queue': pool_acc_before_adapt_queue,
                                                    'pool_accuracy_after_adapt_queue': pool_acc_after_adapt_queue,
-                                                   'prev_pool_accuracy': pool_acc_before_adapt_queue[0],
-                                                   'max_pool_accuracy': max_pool_accuracy,
+                                                   'unseen_valid_before': unseen_valid_accuracy,
+                                                   'unseen_valid_after': unseen_valid_after_accuracy,
                                                    'batch_id': global_batch_id})
                             # ===================================================================================
 
@@ -2751,6 +2514,23 @@ if __name__ == '__main__':
 
                             max_pool_accuracy = max(max(pool_acc_before_adapt_queue), p_accuracy)
                             prev_pool_accuracy = p_accuracy
+
+                        # =============================================================
+                        # Validation Phase (Use single tower) (Before adaptations)
+                        v_label_seq = label_sequence_generator.sample_label_sequence_for_batch(
+                            n_iterations, data_prior, batch_size, num_labels, freeze_index_increment=True
+                        )
+                        batch_valid_data, batch_valid_labels = data_gen.generate_data_with_label_sequence(
+                            train_dataset, train_labels, v_label_seq, dataset_info
+                        )
+
+                        feed_valid_dict = {tf_valid_data_batch: batch_valid_data,
+                                           tf_valid_label_batch: batch_valid_labels}
+                        unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
+                        unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
+
+
+                        # =============================================================
 
                         # ===================================================================================
                         # Execute action according to the policy
@@ -2827,7 +2607,10 @@ if __name__ == '__main__':
                             del pool_acc_after_adapt_queue[0]
                         # ==================================================================
 
-                # =============================================================
+                        unseen_valid_after_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
+                        unseen_valid_after_accuracy = accuracy(unseen_valid_after_predictions, batch_valid_labels)
+
+                        # =============================================================
 
                 # ==============================================================
                 # Logging time / tensorflow information
