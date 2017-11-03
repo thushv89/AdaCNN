@@ -820,7 +820,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         comp_penalty = np.concatenate((self.get_complexity_penanlty_for_each_layer_for_batch(s_i,self.filter_bound_vec),
                                  np.zeros((s_i.shape[0],self.global_actions),dtype=np.float32)), axis=1)
 
-        y_i = r + 0.1* comp_penalty + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
+        y_i = r + 0.01* comp_penalty + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
 
         _,crit_grad_norm, critic_loss = self.session.run(
             [self.tf_critic_optimize_op,self.tf_critic_grad_norm, self.tf_critic_loss_op],
