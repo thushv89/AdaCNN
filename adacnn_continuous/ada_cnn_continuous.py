@@ -291,7 +291,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     # Transpose x (b,h,w,d) to (b,d,w,h)
                     # This help us to do adaptations more easily
                     x = tf.transpose(x, [0, 3, 1, 2])
-                    x = tf.reshape(x, [batch_size, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]])
+                    x = tf.reshape(x, [-1, tf_cnn_hyperparameters[op][TF_FC_WEIGHT_IN_STR]])
 
                     tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
                                          tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
@@ -640,12 +640,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 if datatype!='imagenet-250':
                     tf_pool_data_batch.append(tf.placeholder(tf.float32,
                                                              shape=(
-                                                                 batch_size, image_size, image_size, num_channels),
+                                                                 None, image_size, image_size, num_channels),
                                                              name='PoolDataset'))
                 else:
                     tf_pool_data_batch.append(tf.placeholder(tf.float32,
                                                              shape=(
-                                                                 batch_size, resize_to, resize_to, num_channels),
+                                                                 None, resize_to, resize_to, num_channels),
                                                              name='PoolDataset'))
                 tf_pool_label_batch.append(
                     tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='PoolLabels'))
@@ -1775,7 +1775,7 @@ def calculate_pool_accuracy(hard_pool):
         pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
                           tf_pool_label_batch[0]: pbatch_labels}
         p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
-        if num_labels <= 100:
+        if num_labels <= 25:
             pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
         else:
             pool_accuracy.append(top_n_accuracy(p_predictions, pbatch_labels, 5))
@@ -2552,7 +2552,10 @@ if __name__ == '__main__':
                         feed_valid_dict = {tf_valid_data_batch: batch_valid_data,
                                            tf_valid_label_batch: batch_valid_labels}
                         unseen_valid_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                        unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
+                        if num_labels>=25:
+                            unseen_valid_accuracy = top_n_accuracy(unseen_valid_predictions, batch_valid_labels,5)
+                        else:
+                            unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
 
 
                         # =============================================================
@@ -2633,7 +2636,10 @@ if __name__ == '__main__':
                         # ==================================================================
 
                         unseen_valid_after_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                        unseen_valid_after_accuracy = accuracy(unseen_valid_after_predictions, batch_valid_labels)
+                        if num_labels>25:
+                            unseen_valid_after_accuracy = top_n_accuracy(unseen_valid_after_predictions, batch_valid_labels,5)
+                        else:
+                            unseen_valid_after_accuracy = accuracy(unseen_valid_after_predictions, batch_valid_labels)
 
                         # =============================================================
 
@@ -2645,6 +2651,15 @@ if __name__ == '__main__':
                 perf_logger.info('%d,%.5f,%.5f,%d,%d', global_batch_id, t1 - t0,
                                  (t1_train - t0_train) / num_gpus, op_count, var_count)
                 # ================================================================
+
+        adapter.update_add_amounts(
+            model_hyperparameters['add_amount']//(2**(epoch+1)),
+            model_hyperparameters['add_fulcon_amount']//(2**(epoch+1))
+        )
+
+        if model_hyperparameters['add_amount']//2**(epoch+1)<=1 or \
+                        model_hyperparameters['add_fulcon_amount'] // 2 ** (epoch + 1)<=1:
+            stop_adapting = True
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs

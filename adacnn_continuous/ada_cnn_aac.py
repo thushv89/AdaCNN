@@ -70,7 +70,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.setup_loggers()
 
         # RL Agent Input/Output sizes
-        self.local_actions, self.global_actions = 1, 3
+        self.local_actions, self.global_actions = 1, 1
         self.output_size = len(self.actions)
         self.actor_input_size = self.calculate_input_size(constants.TF_ACTOR_SCOPE)
         self.critic_input_size = self.calculate_input_size(constants.TF_CRITIC_SCOPE)
@@ -85,7 +85,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.q_length = 25 * self.output_size # length of the experience
         self.state_history_collector = []
         self.state_history_dumped = False
-        self.experience_threshold = 250
+        self.experience_threshold = 1000
         self.exp_clean_interval = 25
 
         self.current_state_history = []
@@ -116,6 +116,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.entropy_beta = 0.01
         self.session = params['session']
 
+        self.running_mean_action = np.zeros(shape=(self.output_size), dtype=np.float32)
+
         # Create a new director for each summary writer
         home_dir = '.' + os.sep + self.persit_dir + os.sep + "ada_cnn_tensorboard_data"
         if not os.path.exists(home_dir):
@@ -138,6 +140,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.momentum = params['momentum']
 
         self.tf_state_input, self.tf_action_input, self.tf_y_i_targets, self.tf_q_mask = None,None,None,None
+        self.a_for_grad = None
         self.tf_critic_out_op, self.tf_actor_out_op = None, None
         self.tf_critic_target_out_op, self.tf_actor_target_out_op = None, None
         self.tf_critic_loss_op = None
@@ -196,6 +199,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Input and output placeholders
         self.tf_state_input = tf.placeholder(tf.float32, shape=(None, self.input_size), name='InputDataset')
         self.tf_action_input = tf.placeholder(tf.float32, shape=(None, self.output_size), name='InputDataset')
+        self.a_for_grad = tf.placeholder(tf.float32, shape=[None, self.output_size], name='A_for_grad')
         self.tf_y_i_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
 
         # output of each network
@@ -337,18 +341,18 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                         all_vars.append(tf.get_variable(initializer=bias_rand,name=constants.TF_BIAS))
                     else:
                         with tf.variable_scope('except_ft'):
-                            weights_rand = tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]-1],
+                            weights_rand = tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
                                                                stddev=2. / self.actor_layer_info[li])
-                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01, shape=[self.actor_layer_info[li + 1]-1])
+                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01, shape=[self.actor_layer_info[li + 1]-self.global_actions])
                             all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
                             all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
 
                         with tf.variable_scope('ft'):
                             weights_rand = tf.truncated_normal(
-                                [self.actor_layer_info[li], 1],
+                                [self.actor_layer_info[li], self.global_actions],
                                 stddev=2. / self.actor_layer_info[li])
                             bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
-                                                          shape=[1])
+                                                          shape=[self.global_actions])
                             all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
                             all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
 
@@ -362,14 +366,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                                             name=constants.TF_BIAS))
                         else:
                             with tf.variable_scope('except_ft'):
-                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]-1],
+                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
                                                                 dtype=tf.float32),name=constants.TF_WEIGHTS))
-                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]-1]), name=constants.TF_BIAS))
+                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]-self.global_actions]), name=constants.TF_BIAS))
                             with tf.variable_scope('ft'):
                                 all_vars.append(tf.get_variable(
-                                    initializer=tf.zeros([self.actor_layer_info[li], 1],
+                                    initializer=tf.zeros([self.actor_layer_info[li], self.global_actions],
                                                          dtype=tf.float32), name=constants.TF_WEIGHTS))
-                                all_vars.append(tf.get_variable(initializer=tf.zeros([1]),
+                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.global_actions]),
                                                                 name=constants.TF_BIAS))
 
         with tf.variable_scope(constants.TF_CRITIC_SCOPE):
@@ -485,8 +489,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
-                                               momentum=self.momentum)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         grads = optimizer.compute_gradients(loss,var_list=self.get_all_variables(constants.TF_CRITIC_SCOPE,False))
 
         optimize = optimizer.apply_gradients(grads)
@@ -496,10 +499,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     def tf_critic_gradients(self):
 
-        a_for_grad = self.tf_calc_actor_output(self.tf_state_input)
-        q_for_s_and_a = self.tf_calc_critic_output(self.tf_state_input,a_for_grad)
+        #a_for_grad = self.tf_calc_actor_output(self.tf_state_input)
+        q_for_s_and_a = self.tf_calc_critic_output(self.tf_state_input,self.a_for_grad)
 
-        return tf.gradients(q_for_s_and_a,a_for_grad)
+        return tf.gradients(q_for_s_and_a,self.a_for_grad)
 
 
     def tf_policy_gradient_optimize(self):
@@ -515,7 +518,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
-        entropy = - tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8))
+        entropy = - tf.reduce_sum((mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8),axis=[1])
         #entropy =  (mu_s+1.0)/2.0 * tf.log(((mu_s+1.0)/2.0) + 1e-8) + 1.0
 
         d_H_over_d_ThetaMu = tf.gradients(ys=-1.0*self.entropy_beta*entropy, xs=theta_mu)
@@ -525,12 +528,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
 
-        grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate,
-                                              momentum=self.momentum).apply_gradients(grads)
+        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/2.0).apply_gradients(grads)
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
-        return grad_apply_op,grad_norm, policy_loss, entropy
+        return grad_apply_op,grad_norm, policy_loss, tf.reduce_mean(entropy)
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
         '''
@@ -611,27 +613,27 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return act_string
 
-    def normalize_state(self, s):
+    def normalize_state_batch(self, s):
         '''
         Normalize the layer filter count to [-1, 1]
         :param s: current state
         :return:
         '''
         # state looks like [distMSE, filter_count_1, filter_count_2, ...]
-        norm_state = np.zeros((1, self.net_depth))
+        # Make everything between -1, 1
+        filter_bound_vec = (np.asarray(self.filter_bound_vec) + 1e-1).reshape(1,-1)/2.0
+        norm_state = np.asarray(s[:,:self.net_depth])
+        norm_state = (norm_state - filter_bound_vec)/filter_bound_vec
+
+        norm_dist_state = np.asarray(s[:, self.net_depth:]) / np.reshape(np.max(s[:,self.net_depth:],axis=1),(-1,1))
+        norm_dist_state -= 0.5
+        norm_dist_state *= 2.0
+
         self.verbose_logger.debug('Before normalization: %s', s)
         # enumerate only the depth related part of the state
-        for ii, item in enumerate(s[:self.net_depth]):
-            if self.filter_bound_vec[ii] > 0:
-                norm_state[0, ii] = item * 1.0 - (self.filter_bound_vec[ii]/2.0)
-                norm_state[0, ii] /= (self.filter_bound_vec[ii]/2.0)
-            else:
-                norm_state[0, ii] = -1.0
 
-        # concatenate binned distributions and normalized layer depth
-        norm_state = np.append(norm_state,np.reshape(s[self.net_depth:],(1,-1)),axis=1)
-        self.verbose_logger.debug('\tNormalized state: %s\n', norm_state)
-        return tuple(norm_state.flatten())
+        return np.concatenate((norm_state, norm_dist_state),axis=1)
+
 
     def get_ohe_state_ndarray(self, s):
         return np.asarray(self.normalize_state(s)).reshape(1, -1)
@@ -677,7 +679,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         return x, y, rewards, sj
 
     def exploration_noise_OU(self, a, mu, theta, sigma):
-        return theta * (mu - a) + sigma * np.random.randn(1)
+        return theta * (mu - a) + sigma * np.random.randn(1) + np.random.randn(a.size)*0.1
 
     def get_action_with_exploration(self):
         '''
@@ -706,9 +708,24 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         for l_i, (c_depth, p_depth, up_dept) in enumerate(zip(curr_comp, prev_comp, filter_bound_vec)):
             if up_dept > 0:
-                total +=  -(c_depth*1.0/up_dept)*np.log((c_depth*1.0/up_dept)) -1.0
+                total +=  -(c_depth*1.0/up_dept)*np.log((c_depth*1.0/up_dept)) -0.5
 
         return total/self.net_depth
+
+    def get_complexity_penanlty_for_each_layer_for_batch(self, s_i, filter_bound_vec):
+        '''
+        Complexity penelty is a layer wise entropy measure added at Q value calculation
+        :param s_i:
+        :param filter_bound_vec:
+        :return:
+        '''
+        curr_comp = np.asarray(s_i[:,:self.net_depth]) + 1e-1
+        filter_bound_vec = (np.asarray(filter_bound_vec) + 1e-1).reshape(1,-1)
+
+        entrpy_per_layer =  -(curr_comp*1.0/filter_bound_vec) * np.log(curr_comp*1.0/filter_bound_vec)
+        entrpy_per_layer = entrpy_per_layer[:,self.conv_ids+self.fulcon_ids]
+
+        return entrpy_per_layer
 
     def get_ordered_layer_size_reward(self, curr_comp, prev_comp):
 
@@ -735,6 +752,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             prev_c_d,prev_p_d = c_d,p_d
 
         return total/self.net_depth
+
+
     def tf_train_actor_or_critic_target(self,actor_or_critic_scope):
         '''
         Update the Target networks using following equation
@@ -789,20 +808,27 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.debug('\ts(t+1):%s', s_i_plus_1.shape)
 
         # predicte Q(s,a|theta_Q) with the critic
-        mu_s_i_plus_1 = self.session.run(self.tf_actor_target_out_op, feed_dict={self.tf_state_input: s_i_plus_1})
+        mu_s_i_plus_1 = self.session.run(self.tf_actor_target_out_op, feed_dict={self.tf_state_input: self.normalize_state_batch(s_i_plus_1)})
         q_given_s_i_plus_1_mu_s_i_plus_1 = self.session.run(self.tf_critic_target_out_op,
-                                                            feed_dict={self.tf_state_input: s_i_plus_1,
+                                                            feed_dict={self.tf_state_input: self.normalize_state_batch(s_i_plus_1),
                                                                        self.tf_action_input: mu_s_i_plus_1})
 
         self.verbose_logger.debug('Obtained q values for')
         self.verbose_logger.debug('\tAction: %s',mu_s_i_plus_1)
         self.verbose_logger.debug('\tQ values: %s',q_given_s_i_plus_1_mu_s_i_plus_1)
 
-        y_i = r + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
+        comp_penalty = np.concatenate((self.get_complexity_penanlty_for_each_layer_for_batch(s_i,self.filter_bound_vec),
+                                 np.zeros((s_i.shape[0],self.global_actions),dtype=np.float32)), axis=1)
 
-        _,crit_grad_norm, critic_loss = self.session.run([self.tf_critic_optimize_op,self.tf_critic_grad_norm, self.tf_critic_loss_op],
-                             feed_dict={self.tf_state_input:s_i,self.tf_action_input:a_i,
-                                        self.tf_y_i_targets:y_i})
+        y_i = r + 0.1* comp_penalty + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
+
+        _,crit_grad_norm, critic_loss = self.session.run(
+            [self.tf_critic_optimize_op,self.tf_critic_grad_norm, self.tf_critic_loss_op],
+            feed_dict={self.tf_state_input:self.normalize_state_batch(s_i),
+                       self.tf_action_input:a_i,
+                       self.tf_y_i_targets:y_i}
+        )
+
         return crit_grad_norm, critic_loss
 
     def train_actor(self,experience_batch):
@@ -813,14 +839,21 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :param experience_batch:
         :return:
         '''
-        s_i, a_i, r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
+        s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
+        a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:s_i})
+
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
-            self.tf_state_input:s_i
+            self.tf_state_input:self.normalize_state_batch(s_i),
+            self.a_for_grad: a_pred
         })
 
         self.verbose_logger.info('Grad Norm (Actor): %.5f',act_grad_norm)
 
         return act_grad_norm, policy_loss, entropy
+
+    def get_action_with_running_mean(self, a_i ):
+        self.running_mean_action =  0.9 * self.running_mean_action + 0.1 * a_i
+        return self.running_mean_action
 
     def sample_action_stochastic_from_actor(self,data):
 
@@ -838,13 +871,21 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         s_i = np.asarray(self.phi(state)).reshape(1, -1)
         cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
+
+        # Averaging with a running mean because some layers tend to fluctuate a lot
+        cont_actions_all_layers = self.get_action_with_running_mean(cont_actions_all_layers)
+
         self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
-        exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-1)] + [0.5]),
-                                              theta=0.25 , sigma=np.asarray([0.1 for _ in range(self.output_size-1)] + [0.2]))
+        exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.5 for _ in range(self.global_actions)]),
+                                              theta=0.25 , sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
+
         # Otherwise can go above 1
         cont_actions_all_layers = np.clip(cont_actions_all_layers,-1.0,1.0)
+
+        self.verbose_logger.info('Action before checking validity')
+        self.verbose_logger.info(cont_actions_all_layers)
 
         valid_action = self.get_new_valid_action_when_stochastic(
              cont_actions_all_layers, data, state
@@ -875,6 +916,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
 
+        # Averaging with a running mean because some layers tend to fluctuate a lot
+        cont_actions_all_layers = self.get_action_with_running_mean(cont_actions_all_layers)
+
+        self.verbose_logger.info('Action before checking validity')
+        self.verbose_logger.info(cont_actions_all_layers)
+
+        valid_action = self.get_new_valid_action_when_stochastic(
+            cont_actions_all_layers, data, state
+        )
+
         q_vals_for_action = self.session.run(self.tf_critic_out_op, feed_dict = {self.tf_state_input: s_i,
                                                                                  self.tf_action_input: np.reshape(cont_actions_all_layers,(1,-1))})
 
@@ -887,9 +938,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.action_logger.info(str_actions)
 
         self.summary_writer.add_summary(summ,global_step=self.sample_action_global_step)
-        valid_action = self.get_new_valid_action_when_stochastic(
-             cont_actions_all_layers, data, state
-        )
+
 
         self.sample_action_global_step += 1
 
@@ -905,35 +954,40 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         valid_action = action.tolist()
         opposite_action = action.tolist()
-        for a_idx, a in enumerate(valid_action):
+
+        scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(action)
+
+        for a_idx, (a, scl_a) in enumerate(zip(valid_action,scaled_a)):
             layer_id_for_action = None
 
             # For Convolution layers
             if a_idx < len(self.conv_ids):
                 layer_id_for_action = self.conv_ids[a_idx]
                 self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (conv)',a_idx,layer_id_for_action)
-                next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + floor(a * self.add_amount)
-                self.verbose_logger.debug('\tTrying to add %d',floor(a * self.add_amount))
+
+                next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + scl_a
+                self.verbose_logger.debug('\tTrying to add %d',scl_a)
                 self.verbose_logger.debug('\tNext layer complexity: %d (min: %d), (max: %d)',next_layer_complexity, self.min_filter_threshold, self.filter_bound_vec[layer_id_for_action])
 
                 if next_layer_complexity < self.min_filter_threshold or next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
-                    opposite_action[a_idx] *= -0.5
-                    valid_action[a_idx] *= -0.5
+                    opposite_action[a_idx] *= -1.0
+                    valid_action[a_idx] *= -1.0
 
             # For fully-connected layers
             elif a_idx < len(self.conv_ids) + len(self.fulcon_ids):
                 layer_id_for_action = self.fulcon_ids[a_idx - len(self.conv_ids)]
                 self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (fulcon)', a_idx,
                                           layer_id_for_action)
-                next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + floor(a * self.add_fulcon_amount)
-                self.verbose_logger.debug('\tTrying to add %d', floor(a * self.add_fulcon_amount))
+
+                next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + scl_a
+                self.verbose_logger.debug('\tTrying to add %d', scl_a)
                 self.verbose_logger.debug('\tNext layer complexity: %d', next_layer_complexity)
                 if next_layer_complexity < self.min_fulcon_threshold or \
                                 next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
-                    opposite_action[a_idx] *= -0.5
-                    valid_action[a_idx] *= -0.5
+                    opposite_action[a_idx] *= -1.0
+                    valid_action[a_idx] *= -1.0
             # For finetune action there is no invalid state
             else:
                 continue
@@ -962,17 +1016,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         new_a = []
         for a_idx, ai in enumerate(a):
             if a_idx< len(self.conv_ids):
-                new_a.append(ceil(ai * self.add_amount))
+                new_a.append(floor(ai * self.add_amount))
 
                 # We need this because we use squeeze operation in
                 # cnn_adapter. So if there is only 1 filter, that dimension will dissapear
-                if new_a[-1]>0:
+                if new_a[-1]>1e-3:
                     new_a[-1] = max(new_a[-1],2)
-                elif new_a[-1]<0:
+                elif new_a[-1]<-1e-3:
                     new_a[-1] = min(new_a[-1],-2)
 
             elif a_idx < len(self.conv_ids + self.fulcon_ids):
-                new_a.append(ceil(ai * self.add_fulcon_amount))
+                new_a.append(floor(ai * self.add_fulcon_amount))
 
                 # We need this because we use squeeze operation in
                 # cnn_adapter
@@ -1033,9 +1087,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             if (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0<= self.top_k_accuracy/self.num_classes \
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
-        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
-        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
-
+        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
+        #mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
+        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
@@ -1043,7 +1098,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Pool Accuracy (gain): %.5f ', mean_accuracy)
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
-        reward = mean_accuracy + 0.01*comp_gain + 0.1*mean_valid_accuracy # new
+        reward = mean_accuracy + 0.1*mean_valid_accuracy # new
 
         # wRITING Summary
         if len(self.experience)>0:
@@ -1117,6 +1172,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             return np.mean(np.max(q_pred, axis=1))
         else:
             return 0.0
+
+    def update_add_amounts(self, add_conv, add_fc):
+        self.add_amount = add_conv
+        self.add_fulcon_amount = add_fc
+        self.verbose_logger.info('Updating the update amounts')
+        self.verbose_logger.info(self.add_amount)
+        self.verbose_logger.info(self.add_fulcon_amount)
 
     def reset_actor_critic_nets_except_targets(self):
         raise NotImplementedError

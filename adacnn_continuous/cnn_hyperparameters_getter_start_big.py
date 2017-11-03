@@ -180,7 +180,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_min_threshold = 47
             fulcon_min_threshold = 48
             filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
-            add_amount, remove_amount, add_fulcon_amount = 8, 6, 16
+            add_amount, remove_amount, add_fulcon_amount = 12, 6, 12
 
 
         model_hyperparameters['n_iterations'] = 10000
