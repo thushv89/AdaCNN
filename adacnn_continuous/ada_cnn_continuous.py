@@ -648,7 +648,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                                                  None, resize_to, resize_to, num_channels),
                                                              name='PoolDataset'))
                 tf_pool_label_batch.append(
-                    tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='PoolLabels'))
+                    tf.placeholder(tf.float32, shape=(None, num_labels), name='PoolLabels'))
 
                 # Used for augmenting the pool data
 

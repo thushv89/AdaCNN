@@ -875,9 +875,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Averaging with a running mean because some layers tend to fluctuate a lot
         cont_actions_all_layers = self.get_action_with_running_mean(cont_actions_all_layers)
 
+        sigma_for_action = 0.2/max(1,min(self.sample_action_global_step//10,0.01))
+
         self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.5 for _ in range(self.global_actions)]),
-                                              theta=0.25 , sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]))
+                                              theta=0.25 , sigma=np.asarray([sigma_for_action for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
 
