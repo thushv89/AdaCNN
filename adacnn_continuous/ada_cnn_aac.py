@@ -113,7 +113,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
-        self.entropy_beta = 0.01
+        self.entropy_beta = 0.001
         self.session = params['session']
 
         self.running_mean_action = np.zeros(shape=(self.output_size), dtype=np.float32)

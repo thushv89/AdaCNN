@@ -111,7 +111,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['epochs'] = 10
 
     model_hyperparameters['n_iterations'] = 5000
-    model_hyperparameters['start_eps'] = 0.5
+    model_hyperparameters['start_eps'] = 0.25
     model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
