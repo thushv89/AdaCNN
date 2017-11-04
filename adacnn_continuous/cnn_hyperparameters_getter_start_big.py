@@ -109,10 +109,12 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['iterations_per_batch'] = 1
 
     model_hyperparameters['epochs'] = 10
+    if adapt_structure:
+        model_hyperparameters['epochs']+=3
 
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.25
-    model_hyperparameters['eps_decay'] = 0.9
+    model_hyperparameters['eps_decay'] = 0.5
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001
@@ -180,7 +182,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_min_threshold = 47
             fulcon_min_threshold = 48
             filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
-            add_amount, remove_amount, add_fulcon_amount = 12, 6, 12
+            add_amount, remove_amount, add_fulcon_amount = 8, 6, 8
 
 
         model_hyperparameters['n_iterations'] = 10000

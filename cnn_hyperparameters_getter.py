@@ -173,7 +173,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
             start_filter_vector = [32, 32,   32,  32, 0,  64,  64,  64,  64, 0, 128, 128, 64]
             filter_vector =       [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 110]
-            add_amount, remove_amount, add_fulcon_amount = 8, 4, 24
+            add_amount, remove_amount, add_fulcon_amount = 8, 4, 8
             filter_min_threshold = 24
             fulcon_min_threshold = 48
 

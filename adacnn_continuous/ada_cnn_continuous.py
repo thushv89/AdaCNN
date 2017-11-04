@@ -521,7 +521,7 @@ def setup_loggers(adapt_structure):
     pool_dist_logger.addHandler(pool_handler)
     pool_dist_logger.info('#Class distribution')
 
-    pool_ft_dist_logger = logging.getLogger('pool_distribution_logger')
+    pool_ft_dist_logger = logging.getLogger('pool_distribution_ft_logger')
     pool_ft_dist_logger.propagate = False
     pool_ft_dist_logger.setLevel(logging.INFO)
     pool_ft_handler = logging.FileHandler(output_dir + os.sep + 'pool_ft_distribution.log', mode='w')
@@ -2015,7 +2015,7 @@ if __name__ == '__main__':
             batch_size=32, persist_dir=output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[256, 128, 64], momentum=0.9, learning_rate=0.001,
+            hidden_layers=[64, 32, 16], momentum=0.9, learning_rate=0.001,
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2283,7 +2283,7 @@ if __name__ == '__main__':
                         if adapt_structure or (rigid_pooling and rigid_pool_type == 'smart'):
                             #print('add examples to hard pool ft')
                             hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                           super_loss_vec, max(0.0,prev_train_acc-current_train_acc))
+                                                           super_loss_vec, max(0.05,prev_train_acc-current_train_acc))
 
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
                         elif (not adapt_structure) and rigid_pooling and rigid_pool_type=='naive':
@@ -2348,7 +2348,7 @@ if __name__ == '__main__':
 
                     # ===============================================================
                     # Finetune with data in hard_pool_ft (AdaCNN)
-                    fintune_with_pool_ft(hard_pool_ft)
+                    run_actual_finetune_operation(hard_pool_ft, 0.5)
 
                     # =================================================================
                     # Calculate pool accuracy (hard_pool_valid)
@@ -2652,28 +2652,33 @@ if __name__ == '__main__':
                                  (t1_train - t0_train) / num_gpus, op_count, var_count)
                 # ================================================================
 
-        adapter.update_add_amounts(
-            model_hyperparameters['add_amount']//(2**(epoch+1)),
-            model_hyperparameters['add_fulcon_amount']//(2**(epoch+1))
-        )
+        if epoch>0:
+            adapter.update_add_amounts(
+                model_hyperparameters['add_amount']//(2**(epoch)),
+                model_hyperparameters['add_fulcon_amount']//(2**(epoch))
+            )
 
         if model_hyperparameters['add_amount']//2**(epoch+1)<=1 or \
-                        model_hyperparameters['add_fulcon_amount'] // 2 ** (epoch + 1)<=1:
-            stop_adapting = True
+                        model_hyperparameters['add_fulcon_amount'] // 2 ** (epoch + 1)<=1 or\
+            epoch==2:
+                stop_adapting = True
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs
-        if decay_learning_rate and epoch>0 and epoch%2==1:
-            session.run(increment_global_step_op)
+        if research_parameters['adapt_structure']:
+            if decay_learning_rate and epoch>1 and epoch%2==1:
+                session.run(increment_global_step_op)
+        else:
+            if decay_learning_rate and epoch>0 and epoch%2==1:
+                session.run(increment_global_step_op)
         # ======================================================
 
         # AdaCNN Algorithm
         if research_parameters['adapt_structure']:
-            if epoch > 0:
-                start_eps = max([start_eps*eps_decay,0.1])
-                adapt_period = np.random.choice(['first','last','both'],p=[0.0,0.0,1.0])
-                # At the moment not stopping adaptations for any reason
-                # stop_adapting = adapter.check_if_should_stop_adapting()
+
+            start_eps = max([start_eps*eps_decay,0.1])
+            # At the moment not stopping adaptations for any reason
+            # stop_adapting = adapter.check_if_should_stop_adapting()
 
         cnn_model_saver.save_cnn_hyperparameters(cnn_ops,final_2d_width,cnn_hyperparameters,'cnn-hyperparameters-%d.pickle'%epoch)
         cnn_model_saver.save_cnn_weights(cnn_ops,session,'cnn-model-%d.ckpt'%epoch)
