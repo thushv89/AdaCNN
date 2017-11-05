@@ -50,11 +50,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.min_filter_threshold = params['filter_min_threshold'] # The minimum bound for each convolution layer
         self.min_fulcon_threshold = params['fulcon_min_threshold'] # The minimum neurons in a fulcon layer
 
-        # Action related Hyperparameters
-        self.actions = []
-        self.actions.extend([('adapt', 0.0, conv_id) for conv_id in self.conv_ids])
-        self.actions.extend([('adapt', 0.0, fc_id) for fc_id in self.fulcon_ids])
-        self.actions.extend([('finetune', 0)])
 
         # Time steps in RL
         self.local_time_stamp = 0
@@ -70,8 +65,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.setup_loggers()
 
         # RL Agent Input/Output sizes
-        self.local_actions, self.global_actions = 1, 1
-        self.output_size = len(self.actions)
+        self.local_actions, self.global_actions = 1, 2
+        self.output_size = len(self.conv_ids) + len(self.fulcon_ids) + self.global_actions
         self.actor_input_size = self.calculate_input_size(constants.TF_ACTOR_SCOPE)
         self.critic_input_size = self.calculate_input_size(constants.TF_CRITIC_SCOPE)
 
@@ -115,6 +110,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.TAU = 0.01
         self.entropy_beta = 0.001
         self.session = params['session']
+
+        self.max_pool_accuracy = 0.0
+        self.pool_accuracy_no_increment_threshold = 10
+        self.pool_acc_drop_count = 0
 
         self.running_mean_action = np.zeros(shape=(self.output_size), dtype=np.float32)
 
@@ -283,7 +282,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
             return len(self.phi(dummy_state))
         elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
-            return len(self.phi(dummy_state)) + len(self.actions)
+            return len(self.phi(dummy_state)) + self.output_size
 
     def phi(self, si):
         '''
@@ -530,8 +529,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                      grad_ys = [-g for g in d_Q_over_a])
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
-        grads = [(d_mu - self.entropy_beta*d_H, v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
-        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/2.0).apply_gradients(grads)
+        grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-25.0,25.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
+        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/10.0).apply_gradients(grads)
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
@@ -1050,8 +1049,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 elif new_a[-1]<0:
                     new_a[-1] = min(new_a[-1],-2)
 
-        new_a.append(a[-1])
-
+        new_a.extend(a[len(self.conv_ids + self.fulcon_ids):])
         return new_a
 
     def get_action_specific_reward(self, a):
@@ -1123,7 +1121,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = mean_accuracy  + 1e-1 * ai_rew + 5e-1 * comp_gain # new
+        reward = mean_accuracy  + 1e-2 * ai_rew + 1e-1 * comp_gain # new
+
+        curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
+        if curr_pool_acc>=self.max_pool_accuracy:
+            self.max_pool_accuracy = curr_pool_acc
+            self.pool_acc_drop_count = 0
+        else:
+            self.pool_acc_drop_count += 1
+
+        self.verbose_logger.info('Current pool accuracy: %.5f / %.5f (max)',curr_pool_acc, self.max_pool_accuracy)
+        self.verbose_logger.info('Pool accuracy drop count: %d', self.pool_acc_drop_count)
 
         # wRITING Summary
         if len(self.experience)>0:
@@ -1160,6 +1168,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.train_global_step += 1
 
         self.verbose_logger.info('Global/Local time step: %d\n', self.train_global_step)
+
+
+    def check_pool_accuracy_saturation(self):
+        if self.pool_acc_drop_count>=self.pool_accuracy_no_increment_threshold:
+            return True
+        else:
+            return False
 
 
     def update_experience(self,si,ai,reward,sj):

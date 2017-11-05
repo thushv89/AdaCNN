@@ -752,9 +752,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_out_size = tf.placeholder(dtype=tf.int32, name='fulcon_output_size')
                 tf_replicative_factor_vec = tf.placeholder(dtype=tf.float32, shape=[None], name='tf_replicative_factor')
 
-                init_tf_prune_cnn_hyperparameters()
-
-                #tf_reset_cnn = cnn_intializer.reset_cnn_preserve_weights_only_old(tf_prune_cnn_hyperparameters,cnn_ops)
+                tf_reset_cnn = cnn_intializer.reset_cnn(init_cnn_hyperparameters,cnn_ops)
 
                 for op in cnn_ops:
                     if 'pool' in op:
@@ -2015,7 +2013,7 @@ if __name__ == '__main__':
             batch_size=32, persist_dir=output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[64, 32, 16], momentum=0.9, learning_rate=0.001,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001,
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2095,7 +2093,7 @@ if __name__ == '__main__':
 
     # Check if loss is stabilized (for starting adaptations)
     previous_loss = 1e5  # used for the check to start adapting
-
+    current_data_train_rate = 1.0
     # Reward for Q-Learner
     prev_pool_accuracy = 0
     max_pool_accuracy = 0
@@ -2297,10 +2295,17 @@ if __name__ == '__main__':
                     # # Training Phase (Optimization)
                     for _ in range(iterations_per_batch):
                         #print('training on current batch (action type: ', current_action_type, ')')
-                        with tf.control_dependencies(update_train_velocity_op):
-                            _ = session.run(
-                                apply_grads_op, feed_dict=train_feed_dict
-                            )
+                        if adapt_structure:
+                            if np.random.random()<current_data_train_rate:
+                                with tf.control_dependencies(update_train_velocity_op):
+                                    _ = session.run(
+                                        apply_grads_op, feed_dict=train_feed_dict
+                                    )
+                        else:
+                            with tf.control_dependencies(update_train_velocity_op):
+                                _ = session.run(
+                                    apply_grads_op, feed_dict=train_feed_dict
+                                )
 
                 t1_train = time.clock()
 
@@ -2484,7 +2489,7 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
+                            layer_specific_actions, current_data_train_rate, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
                             # don't use current state as the next state, current state is for a different layer
 
@@ -2588,7 +2593,10 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
+                        layer_specific_actions, current_data_train_rate, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+
+                        logger.info('Finetune rate: %.5f', finetune_action)
+                        logger.info('Data train rate: %.5f', current_data_train_rate)
 
                         # reset the binned data distribution
                         prev_binned_data_dist_vector = running_binned_data_dist_vector
@@ -2643,6 +2651,8 @@ if __name__ == '__main__':
 
                         # =============================================================
 
+
+
                 # ==============================================================
                 # Logging time / tensorflow information
                 t1 = time.clock()
@@ -2652,21 +2662,73 @@ if __name__ == '__main__':
                                  (t1_train - t0_train) / num_gpus, op_count, var_count)
                 # ================================================================
 
-        if epoch>0:
-            adapter.update_add_amounts(
-                model_hyperparameters['add_amount']//(2**(epoch)),
-                model_hyperparameters['add_fulcon_amount']//(2**(epoch))
-            )
+            # ==============================================================
+            # Epoch ending condition check (Given by RL)
+            if epoch < model_hyperparameters['rl_epochs']-1 and adapter.check_pool_accuracy_saturation():
+                logger.info('='*80)
+                logger.info('End of %d episolde', epoch)
+                session.run(tf_reset_cnn)
 
-        if model_hyperparameters['add_amount']//2**(epoch+1)<=1 or \
-                        model_hyperparameters['add_fulcon_amount'] // 2 ** (epoch + 1)<=1 or\
-            epoch==2:
-                stop_adapting = True
+                _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+                cnn_hyperparameters = dict(init_cnn_hyperparameters)
+                print(cnn_hyperparameters)
+
+                print(init_cnn_hyperparameters)
+                for op in cnn_ops:
+                    if 'conv' in op:
+                        session.run(tf_update_hyp_ops[op],
+                                    feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
+                    elif 'fulcon' in op:
+                        session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
+                                                                      tf_out_size: init_cnn_hyperparameters[op]['out']})
+                print(session.run(tf_cnn_hyperparameters))
+
+                hard_pool_ft.reset_pool()
+                hard_pool_valid.reset_pool()
+                start_adapting = False
+                session.run(tower_logits, feed_dict=train_feed_dict)
+                previous_loss = 1e5
+                break
+                logger.info('=' * 80)
+            # ==============================================================
+
+        # Reset the model every rl epoch except the last one
+        if epoch < model_hyperparameters['rl_epochs'] - 1:
+            logger.info('=' * 80)
+            logger.info('End of %d episolde (full epoch)',epoch)
+            session.run(tf_reset_cnn)
+
+            _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+            cnn_hyperparameters = dict(init_cnn_hyperparameters)
+            print(cnn_hyperparameters)
+
+            print(init_cnn_hyperparameters)
+            for op in cnn_ops:
+                if 'conv' in op:
+                    session.run(tf_update_hyp_ops[op],
+                                feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
+                elif 'fulcon' in op:
+                    session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
+                                                                  tf_out_size: init_cnn_hyperparameters[op]['out']})
+            print(session.run(tf_cnn_hyperparameters))
+
+            session.run(tower_logits, feed_dict=train_feed_dict)
+            hard_pool_ft.reset_pool()
+            hard_pool_valid.reset_pool()
+
+            start_adapting = False
+            logger.info('=' * 80)
+            previous_loss = 1e5
+
+        # We use whatever the model found by the last RL episode
+        if epoch == model_hyperparameters['rl_epochs']-1:
+            stop_adapting = True
+            current_data_train_rate = 1.0
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs
         if research_parameters['adapt_structure']:
-            if decay_learning_rate and epoch>1 and epoch%2==1:
+            if decay_learning_rate and epoch>model_hyperparameters['rl_epochs'] and epoch%2==1:
                 session.run(increment_global_step_op)
         else:
             if decay_learning_rate and epoch>0 and epoch%2==1:
