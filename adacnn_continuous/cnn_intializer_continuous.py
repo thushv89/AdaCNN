@@ -580,11 +580,11 @@ def reset_cnn(cnn_hyps,cnn_ops):
                 weights = tf.get_variable(name=TF_WEIGHTS)
                 new_weights = tf.random_uniform(cnn_hyps[op]['weights'],
                                                 minval=-np.sqrt(
-                                                    6. / ((cnn_hyps[op]['weights'][0] * cnn_hyps[op]['weights'][1]) *
+                                                    2. / ((cnn_hyps[op]['weights'][0] * cnn_hyps[op]['weights'][1]) *
                                                           (cnn_hyps[op]['weights'][-2] + cnn_hyps[op]['weights'][-1]))
                                                     ),
                                                 maxval=np.sqrt(
-                                                    6. / ((cnn_hyps[op]['weights'][0] * cnn_hyps[op]['weights'][1]) *
+                                                    2. / ((cnn_hyps[op]['weights'][0] * cnn_hyps[op]['weights'][1]) *
                                                           (cnn_hyps[op]['weights'][-2] + cnn_hyps[op]['weights'][-1])))
                                                 )
 
@@ -601,7 +601,7 @@ def reset_cnn(cnn_hyps,cnn_ops):
                     reset_ops.append(tf.assign(pool_w_vel, new_w_vel, validate_shape=False))
 
                 bias = tf.get_variable(name=TF_BIAS)
-                new_bias = tf.constant(np.random.random() * 0.001, shape=[cnn_hyps[op]['weights'][3]])
+                new_bias = tf.constant(np.random.random() * 0.0001, shape=[cnn_hyps[op]['weights'][3]])
 
                 reset_ops.append(tf.assign(bias, new_bias, validate_shape=False))
 
@@ -622,8 +622,8 @@ def reset_cnn(cnn_hyps,cnn_ops):
             with tf.variable_scope(op) as scope:
                 weights = tf.get_variable(name=TF_WEIGHTS)
                 new_weights = tf.random_uniform([cnn_hyps[op]['in'], cnn_hyps[op]['out']],
-                                                minval=-np.sqrt(6. / (cnn_hyps[op]['in'] + cnn_hyps[op]['out'])),
-                                                maxval=np.sqrt(6. / (cnn_hyps[op]['in'] + cnn_hyps[op]['out']))
+                                                minval=-np.sqrt(2. / (cnn_hyps[op]['in'] + cnn_hyps[op]['out'])),
+                                                maxval=np.sqrt(2. / (cnn_hyps[op]['in'] + cnn_hyps[op]['out']))
                                                 )
                 reset_ops.append(tf.assign(weights, new_weights, validate_shape=False))
 
@@ -636,7 +636,7 @@ def reset_cnn(cnn_hyps,cnn_ops):
                     reset_ops.append(tf.assign(pool_w_vel, new_w_vel, validate_shape=False))
 
                 bias = tf.get_variable(name=TF_BIAS)
-                new_bias = tf.constant(np.random.random() * 0.001, shape=[cnn_hyps[op]['out']])
+                new_bias = tf.constant(np.random.random() * 0.0001, shape=[cnn_hyps[op]['out']])
                 reset_ops.append(tf.assign(bias, new_bias, validate_shape=False))
 
                 with tf.variable_scope(TF_BIAS) as child_scope:
