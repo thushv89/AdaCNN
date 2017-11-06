@@ -566,8 +566,11 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     logger.info('Defining Optimizer')
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=1.0)
     increment_global_step_op = tf.assign(global_step, global_step + 1)
-    tf_learning_rate = tf.train.exponential_decay(start_lr, global_step, decay_steps=decay_steps,
-                               decay_rate=decay_rate, staircase=True)
+    if not adapt_structure:
+        tf_learning_rate = tf.train.exponential_decay(start_lr, global_step, decay_steps=decay_steps,
+                                   decay_rate=decay_rate, staircase=True)
+    else:
+        tf_learning_rate = tf.placeholder(dtype=tf.float32,name='start_learning_rate_placeholder')
 
     tf_dropout_rate = tf.Variable(dropout_rate,trainable=False,dtype=tf.float32,name='tf_dropout_rate')
     # Test data (Global)
@@ -627,8 +630,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tower_loss_vectors.append(tf_tower_loss_vec)
 
                 logger.info('\tGradient calculation opeartions for tower')
-                tower_grad = cnn_optimizer.gradients(optimizer, tf_tower_loss, global_step,
-                                       tf.constant(start_lr, dtype=tf.float32))
+                tower_grad = cnn_optimizer.gradients(optimizer, tf_tower_loss, global_step,tf_learning_rate)
                 tower_grads.append(tower_grad)
 
                 logger.info('\tPrediction operations for tower')
@@ -661,7 +663,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                     single_pool_loss = tower_loss(augmented_pool_data_batch[-1], augmented_pool_label_batch[-1], False, None,
                                                   tf_cnn_hyperparameters)
                     tower_pool_losses.append(single_pool_loss)
-                    single_pool_grad = cnn_optimizer.gradients(optimizer, single_pool_loss, global_step, start_lr)
+                    single_pool_grad = cnn_optimizer.gradients(optimizer, single_pool_loss, global_step, tf_learning_rate)
                     tower_pool_grads.append(single_pool_grad)
 
     logger.info('GLOBAL_VARIABLES (all)')
@@ -672,7 +674,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # Train data operations
         # avg_grad_and_vars = [(avggrad0,var0),(avggrad1,var1),...]
         tf_avg_grad_and_vars = average_gradients(tower_grads)
-        apply_grads_op, update_train_velocity_op = cnn_optimizer.apply_gradient_with_rmsprop(optimizer, start_lr,
+        apply_grads_op, update_train_velocity_op = cnn_optimizer.apply_gradient_with_rmsprop(optimizer, tf_learning_rate,
                                                                                              global_step,
                                                                                              tf_avg_grad_and_vars)
         concat_loss_vec_op = concat_loss_vector_towers(tower_loss_vectors)
@@ -682,7 +684,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # Pool data operations
         tf_pool_avg_gradvars = average_gradients(tower_pool_grads)
         apply_pool_grads_op, update_pool_velocity_ops = cnn_optimizer.apply_pool_gradient_with_rmsprop(
-            optimizer,start_lr,global_step,tf_pool_avg_gradvars)
+            optimizer,tf_learning_rate,global_step,tf_pool_avg_gradvars)
 
         mean_pool_loss = tf.reduce_mean(tower_pool_losses)
 
@@ -776,7 +778,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
                             tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
-                            tf.constant(start_lr, dtype=tf.float32), global_step
+                            tf_learning_rate, global_step
                         )
 
                         tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_with_action(tmp_op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm)
@@ -796,7 +798,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
                                 optimizer, tf_indices,
                                 tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
-                                tf.constant(start_lr, dtype=tf.float32), global_step
+                                tf_learning_rate, global_step
                             )
 
                             tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_from_fulcon(tmp_op, tf_action_info,
@@ -877,29 +879,6 @@ def get_adaptive_dropout():
     return dropout_rate*(dropout_factor**2)
 
 
-def fintune_with_pool_ft(hard_pool_ft):
-    global apply_pool_grads_op, update_pool_velocity_ops,current_adaptive_dropout
-
-    if hard_pool_ft.get_size() > batch_size:
-        # Randomize data in the batch
-
-        for pool_id in range(0,
-                             (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
-                pool_feed_dict = {}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-                for gpu_id in range(num_gpus):
-                    pbatch_data = pool_dataset[
-                                  (pool_id + gpu_id) * batch_size:(pool_id + gpu_id + 1) * batch_size, :, :,
-                                  :]
-                    pbatch_labels = pool_labels[
-                                    (pool_id + gpu_id) * batch_size:(pool_id + gpu_id + 1) * batch_size, :]
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
-
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
-
 
 def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
     if np.random.random() < 0.25:
@@ -970,7 +949,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if np.random.random()<0.25**(epoch+1):
+        if np.random.random()<0.25:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -1014,19 +993,19 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         # Random initialization
         else:
             print('Random Initialization')
-
-            new_curr_weights = np.random.uniform(low=-0.001, high=0.001, size=(
+            rand_scale = 0.001
+            new_curr_weights = np.random.uniform(low=-rand_scale, high=rand_scale, size=(
             curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
-            new_curr_bias = np.random.uniform(low=-0.001, high=0.001, size=(amount_to_add))
+            new_curr_bias = np.random.uniform(low=-rand_scale, high=rand_scale, size=(amount_to_add))
 
             new_act_this = np.zeros(shape=(amount_to_add), dtype=np.float32)
 
             if last_conv_id != current_op:
 
-                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                new_next_weights = np.random.uniform(low=-rand_scale, high=rand_scale,
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
             else:
-                new_next_weights = np.random.uniform(low=-0.001, high=0.001,
+                new_next_weights = np.random.uniform(low=-rand_scale, high=rand_scale,
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
             count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
 
@@ -1145,6 +1124,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
+            pool_feed_dict.update({tf_learning_rate:model_hyperparameters['start_lr']})
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
                                feed_dict=pool_feed_dict)
 
@@ -1189,7 +1169,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if np.random.random()<0.25**(epoch+1):
+        if np.random.random()<0.25:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -1212,13 +1192,13 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         else:
-
-            new_curr_weights = np.random.uniform(low=-0.001,high=0.01,size=(curr_weight_shape[0],amount_to_add,1,1))
-            new_curr_bias = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add))
+            rand_scale = 0.001
+            new_curr_weights = np.random.uniform(low=-rand_scale,high=rand_scale,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_bias = np.random.uniform(low=-rand_scale,high=rand_scale,size=(amount_to_add))
 
             new_curr_act = np.zeros(shape=(amount_to_add), dtype=np.float32)
 
-            new_next_weights = np.random.uniform(low=-0.001,high=0.001,size=(amount_to_add,next_weights_shape[1],1,1))
+            new_next_weights = np.random.uniform(low=-rand_scale,high=rand_scale,size=(amount_to_add,next_weights_shape[1],1,1))
             count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],
@@ -1319,6 +1299,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                 pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
                                        tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
+            pool_feed_dict.update({tf_learning_rate: model_hyperparameters['start_lr']})
             _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
             pbatch_train_count += 1
@@ -1490,8 +1471,9 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
     if hard_pool_ft.get_size() > batch_size:
         # Train with latter half of the data
 
+
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < rate:
+            if np.random.random() < 0.5:
                 #print('fintuning network (pool_id: ',pool_id,')')
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
@@ -1504,6 +1486,9 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
                                     :]
                     pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
+
+                if adapt_structure:
+                    pool_feed_dict.update({tf_learning_rate: rate * model_hyperparameters['start_lr']})
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
                                    feed_dict=pool_feed_dict)
@@ -2093,7 +2078,7 @@ if __name__ == '__main__':
 
     # Check if loss is stabilized (for starting adaptations)
     previous_loss = 1e5  # used for the check to start adapting
-    current_data_train_rate = 1.0
+    current_data_lr = 1.0
     # Reward for Q-Learner
     prev_pool_accuracy = 0
     max_pool_accuracy = 0
@@ -2138,7 +2123,7 @@ if __name__ == '__main__':
             # Because in my opinion, pool accuracy treats each task differently
             # max_pool_accuracy = 0.0
 
-            research_parameters['momentum']=0.9
+            research_parameters['momentum']=0.5
             research_parameters['pool_momentum']=0.9
 
             cnn_optimizer.update_hyperparameters(research_parameters)
@@ -2291,21 +2276,17 @@ if __name__ == '__main__':
 
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
+                    if adapt_structure:
+                        train_feed_dict.update({tf_learning_rate:current_data_lr*model_hyperparameters['start_lr']})
                     # =========================================================
                     # # Training Phase (Optimization)
                     for _ in range(iterations_per_batch):
                         #print('training on current batch (action type: ', current_action_type, ')')
-                        if adapt_structure:
-                            if np.random.random()<current_data_train_rate:
-                                with tf.control_dependencies(update_train_velocity_op):
-                                    _ = session.run(
-                                        apply_grads_op, feed_dict=train_feed_dict
-                                    )
-                        else:
-                            with tf.control_dependencies(update_train_velocity_op):
-                                _ = session.run(
-                                    apply_grads_op, feed_dict=train_feed_dict
-                                )
+                        with tf.control_dependencies(update_train_velocity_op):
+                            _ = session.run(
+                                apply_grads_op, feed_dict=train_feed_dict
+                            )
+
 
                 t1_train = time.clock()
 
@@ -2353,7 +2334,7 @@ if __name__ == '__main__':
 
                     # ===============================================================
                     # Finetune with data in hard_pool_ft (AdaCNN)
-                    run_actual_finetune_operation(hard_pool_ft, 0.5)
+                    run_actual_finetune_operation(hard_pool_ft, current_data_lr)
 
                     # =================================================================
                     # Calculate pool accuracy (hard_pool_valid)
@@ -2372,7 +2353,10 @@ if __name__ == '__main__':
                     logger.info('=' * 60)
                     logger.info('\tBatch ID: %d' % batch_id)
                     if decay_learning_rate:
-                        logger.info('\tLearning rate: %.5f' % session.run(tf_learning_rate))
+                        if adapt_structure:
+                            logger.info('\tLearning rate: %.5f' %(current_data_lr*model_hyperparameters['start_lr']))
+                        else:
+                            logger.info('\tLearning rate: %.5f' % session.run(tf_learning_rate))
                     else:
                         logger.info('\tLearning rate: %.5f' % start_lr)
 
@@ -2467,7 +2451,7 @@ if __name__ == '__main__':
                         # without if can give problems in exploratory stage because of no data in the pool
                         if hard_pool_ft.get_size() > batch_size:
                             # Train with latter half of the data
-                            fintune_with_pool_ft(hard_pool_ft)
+                            run_actual_finetune_operation(hard_pool_ft,current_data_lr)
                     # ==================================================================
 
                     # ==================================================================
@@ -2489,7 +2473,7 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, current_data_train_rate, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                            layer_specific_actions, current_data_lr, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
                             # don't use current state as the next state, current state is for a different layer
 
@@ -2593,10 +2577,10 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, current_data_train_rate, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                        layer_specific_actions, current_data_lr, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
 
                         logger.info('Finetune rate: %.5f', finetune_action)
-                        logger.info('Data train rate: %.5f', current_data_train_rate)
+                        logger.info('Data train rate: %.5f', current_data_lr)
 
                         # reset the binned data distribution
                         prev_binned_data_dist_vector = running_binned_data_dist_vector
@@ -2664,9 +2648,12 @@ if __name__ == '__main__':
 
             # ==============================================================
             # Epoch ending condition check (Given by RL)
-            if epoch < model_hyperparameters['rl_epochs']-1 and adapter.check_pool_accuracy_saturation():
+            '''if epoch < model_hyperparameters['rl_epochs']-1 and adapter.check_pool_accuracy_saturation():
+
+                adapter.reset_max_pool_accuracy()
                 logger.info('='*80)
                 logger.info('End of %d episolde', epoch)
+                logger.info('Epsilon: %.5f',start_eps)
                 session.run(tf_reset_cnn)
 
                 _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
@@ -2689,13 +2676,16 @@ if __name__ == '__main__':
                 session.run(tower_logits, feed_dict=train_feed_dict)
                 previous_loss = 1e5
                 break
-                logger.info('=' * 80)
+                logger.info('=' * 80)'''
             # ==============================================================
 
         # Reset the model every rl epoch except the last one
         if epoch < model_hyperparameters['rl_epochs'] - 1:
+
+            adapter.reset_max_pool_accuracy()
             logger.info('=' * 80)
             logger.info('End of %d episolde (full epoch)',epoch)
+            logger.info('Epsilon: %.5f', start_eps)
             session.run(tf_reset_cnn)
 
             _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
@@ -2723,13 +2713,15 @@ if __name__ == '__main__':
         # We use whatever the model found by the last RL episode
         if epoch == model_hyperparameters['rl_epochs']-1:
             stop_adapting = True
-            current_data_train_rate = 1.0
+            current_data_lr = 1.0
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs
         if research_parameters['adapt_structure']:
             if decay_learning_rate and epoch>model_hyperparameters['rl_epochs'] and epoch%2==1:
                 session.run(increment_global_step_op)
+                current_data_lr *= model_hyperparameters['decay_rate']
+
         else:
             if decay_learning_rate and epoch>0 and epoch%2==1:
                 session.run(increment_global_step_op)

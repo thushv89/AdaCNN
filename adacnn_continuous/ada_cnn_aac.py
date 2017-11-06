@@ -183,6 +183,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             self.layer_scopes.append('fulcon_%d'%h_i)
             self.actor_layer_info.append(hidden)  # 128,64,32
             self.critic_layer_info.append(hidden)
+
         self.layer_scopes.append('fulcon_out')
         self.actor_layer_info.append(self.output_size)
         self.critic_layer_info.append(self.output_size)
@@ -202,12 +203,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_y_i_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
 
         # output of each network
-        self.tf_critic_out_op = self.tf_calc_critic_output(self.tf_state_input,self.tf_action_input)
-        self.tf_actor_out_op = self.tf_calc_actor_output(self.tf_state_input)
-        self.tf_critic_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
-                                                           constants.TF_CRITIC_SCOPE)
-        self.tf_actor_target_out_op = self.tf_calc_actor_critic_target_output(self.tf_state_input, self.tf_action_input,
-                                                         constants.TF_ACTOR_SCOPE)
+        self.tf_critic_out_op = self.tf_calc_critic_output(self.tf_state_input,self.tf_action_input, False)
+        self.tf_actor_out_op = self.tf_calc_actor_output(self.tf_state_input, False)
+        self.tf_critic_target_out_op = self.tf_calc_critic_output(self.tf_state_input, self.tf_action_input,True)
+        self.tf_actor_target_out_op = self.tf_calc_actor_output(self.tf_state_input,True)
 
         self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op)
         self.tf_critic_optimize_op, self.tf_critic_grad_norm = self.tf_momentum_optimize(self.tf_critic_loss_op)
@@ -279,10 +278,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         '''
         dummy_state = [0 for _ in range(self.net_depth+self.binned_data_dist_length)]
 
-        if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
-            return len(self.phi(dummy_state))
-        elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
-            return len(self.phi(dummy_state)) + self.output_size
+        #if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
+        return len(self.phi(dummy_state))
+        #elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
+        #    return len(self.phi(dummy_state)) + self.output_size
 
     def phi(self, si):
         '''
@@ -378,98 +377,160 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         with tf.variable_scope(constants.TF_CRITIC_SCOPE):
             # Defining critic network
             for li in range(len(self.critic_layer_info) - 1):
-                with tf.variable_scope(self.layer_scopes[li]):
-                    weights_rand = tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
-                                        stddev=2. / self.actor_layer_info[li])
-                    bias_rand = tf.random_uniform(minval=-0.01,maxval=0.01,shape=[self.critic_layer_info[li + 1]])
-                    all_vars.append(tf.get_variable(initializer=weights_rand,
-                                                       name=constants.TF_WEIGHTS))
-                    all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
-
-                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
-                        all_vars.append(tf.get_variable(initializer=weights_rand,name=constants.TF_WEIGHTS))
+                if li != 1:
+                    with tf.variable_scope(self.layer_scopes[li]):
+                        weights_rand = tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                            stddev=2. / self.actor_layer_info[li])
+                        bias_rand = tf.random_uniform(minval=-0.01,maxval=0.01,shape=[self.critic_layer_info[li + 1]])
+                        all_vars.append(tf.get_variable(initializer=weights_rand,
+                                                           name=constants.TF_WEIGHTS))
                         all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
-        self.verbose_logger.debug('Initialized the following Variables')
-        self.verbose_logger.debug([v.name for v in all_vars])
+
+                        with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
+                            all_vars.append(tf.get_variable(initializer=weights_rand,name=constants.TF_WEIGHTS))
+                            all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+                else:
+                    with tf.variable_scope(self.layer_scopes[li]):
+                        with tf.variable_scope('state'):
+                            weights_rand = tf.truncated_normal(
+                                [self.critic_layer_info[1], self.critic_layer_info[2]],
+                                stddev=2. / self.actor_layer_info[li])
+                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
+                                                          shape=[self.critic_layer_info[2]])
+                            all_vars.append(tf.get_variable(initializer=weights_rand,
+                                                            name=constants.TF_WEIGHTS))
+                            all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+
+                            with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
+                                all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
+                                all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+
+                        with tf.variable_scope('action'):
+
+                            weights_rand = tf.truncated_normal(
+                                [self.output_size, self.critic_layer_info[2]],
+                                stddev=2. / self.actor_layer_info[li])
+                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
+                                                          shape=[self.critic_layer_info[2]])
+                            all_vars.append(tf.get_variable(initializer=weights_rand,
+                                                            name=constants.TF_WEIGHTS))
+                            all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+
+                            with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
+                                all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
+                                all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+
+        self.verbose_logger.info('Initialized the following Variables')
+        self.verbose_logger.info([v.name for v in all_vars])
 
         return all_vars
 
 
 
-    def tf_calc_critic_output(self, tf_state_input, tf_action_input):
+    def tf_calc_critic_output(self, tf_state_input, tf_action_input, is_target_network):
         '''
         Calculate the output of the actor/critic network (quickly updated one)
         '''
         self.verbose_logger.info('(Tensorflow) Critic Output Calculation operation')
-        x = tf.concat([tf_state_input,tf_action_input],axis=1)
+        #x = tf.concat([tf_state_input,tf_action_input],axis=1)
+        x = tf_state_input
 
         with tf.variable_scope(constants.TF_CRITIC_SCOPE, reuse=True):
-            for scope in self.layer_scopes:
-                with tf.variable_scope(scope, reuse=True):
-                    if scope != self.layer_scopes[-1]:
+            # First layer
+            with tf.variable_scope(self.layer_scopes[0], reuse=True):
+
+                if is_target_network:
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
                         x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
                             constants.TF_BIAS))
-                    else:
-                        x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
+                else:
+                    x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                        constants.TF_BIAS))
 
+            # Second layer
+            with tf.variable_scope(self.layer_scopes[1], reuse=True):
+
+                with tf.variable_scope('state', reuse=True):
+                    if is_target_network:
+                        with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                            x1 = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                constants.TF_BIAS)
+                    else:
+                        x1 = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                            constants.TF_BIAS)
+
+                with tf.variable_scope('action', reuse=True):
+                    if is_target_network:
+                        with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                            x2 = tf.matmul(tf_action_input, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                constants.TF_BIAS)
+                    else:
+                        x2 = tf.matmul(tf_action_input, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                            constants.TF_BIAS)
+
+                x = x1 + x2
+                x = utils.lrelu(x)
+
+            # Third layer
+            with tf.variable_scope(self.layer_scopes[2], reuse=True):
+
+                if is_target_network:
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                        x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
+                else:
+                    x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
+
+            # Final layer
+            with tf.variable_scope(self.layer_scopes[3], reuse=True):
+
+                if is_target_network:
+                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                        x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
+                else:
+                    x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
+
+        self.verbose_logger.info('(Tensorflow) Output size: %s',x.get_shape().as_list())
         return x
 
-    def tf_calc_actor_output(self, tf_state_input):
+    def tf_calc_actor_output(self, tf_state_input, is_target_network):
         '''
         Calculate the output of the actor/critic network (quickly updated one)
         '''
         self.verbose_logger.info('(Tensorflow) Actor output calculation operation')
         x = tf_state_input
         with tf.variable_scope(constants.TF_ACTOR_SCOPE, reuse=True):
-            for scope in self.layer_scopes:
+
+            for  scope in self.layer_scopes:
                 with tf.variable_scope(scope, reuse=True):
                     if scope != self.layer_scopes[-1]:
-                        x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
-                            constants.TF_BIAS))
+                        if is_target_network:
+                            with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                    constants.TF_BIAS))
+                        else:
+                            x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                constants.TF_BIAS))
                     # Last Layer computations
                     else:
-                        with tf.variable_scope('except_ft',reuse=True):
-                            x_except_ft = tf.nn.tanh(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
-                        with tf.variable_scope('ft', reuse=True):
-                            x_ft = tf.nn.sigmoid(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
+                        if is_target_network:
+                            with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                with tf.variable_scope('except_ft',reuse=True):
+                                    x_except_ft = tf.nn.tanh(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
+                                with tf.variable_scope('ft', reuse=True):
+                                    x_ft = tf.nn.sigmoid(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS))
+                        else:
+                            with tf.variable_scope('except_ft', reuse=True):
+                                x_except_ft = tf.nn.tanh(
+                                    tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                        constants.TF_BIAS))
+                            with tf.variable_scope('ft', reuse=True):
+                                x_ft = tf.nn.sigmoid(
+                                    tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
+                                        constants.TF_BIAS))
 
                         x = tf.concat(axis=1,values=[x_except_ft,x_ft])
         return x
 
-    def tf_calc_actor_critic_target_output(self, tf_state_input, tf_action_input, actor_or_critic_scope):
-        '''
-        Calculate the output of the target actor/critic network (slowly updated one)
-        '''
-        if actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
-            x = tf_state_input
-        elif actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
-            x = tf.concat([tf_state_input,tf_action_input],axis=1)
-
-        with tf.variable_scope(actor_or_critic_scope, reuse=True):
-            for scope in self.layer_scopes:
-                with tf.variable_scope(scope, reuse=True):
-                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse = True):
-                        if scope != self.layer_scopes[-1]:
-                            x = utils.lrelu(tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS))+tf.get_variable(constants.TF_BIAS))
-                        else:
-                            if actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
-                                x = tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(constants.TF_BIAS)
-                            elif actor_or_critic_scope==constants.TF_ACTOR_SCOPE:
-
-                                with tf.variable_scope('except_ft', reuse=True):
-                                    x_except_ft = tf.nn.tanh(
-                                        tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
-                                            constants.TF_BIAS))
-                                with tf.variable_scope('ft', reuse=True):
-                                    x_ft = tf.nn.sigmoid(
-                                        tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
-                                            constants.TF_BIAS))
-
-                                x = tf.concat(axis=1, values=[x_except_ft, x_ft])
-
-                            else:
-                                raise NotImplementedError
-        return x
 
     def tf_mse_loss_of_critic(self, tf_y_i_output, tf_q_given_s_i):
         '''
@@ -499,7 +560,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
     def tf_critic_gradients(self):
 
         #a_for_grad = self.tf_calc_actor_output(self.tf_state_input)
-        q_for_s_and_a = self.tf_calc_critic_output(self.tf_state_input,self.a_for_grad)
+        q_for_s_and_a = self.tf_calc_critic_output(self.tf_state_input,self.a_for_grad, False)
 
         return tf.gradients(q_for_s_and_a,self.a_for_grad)
 
@@ -512,8 +573,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # more info: https://stackoverflow.com/questions/42399401/use-of-grads-ys-parameter-in-tf-gradients-tensorflow
         # Calculates d(a)/d(Theta_mu) * -a
         # this is useful for reverse accumulation i.e. dy/dx = dy/dw1 * dw1/dw2 * dw2/dx
-        mu_s = self.tf_calc_actor_output(self.tf_state_input)
-        policy_loss = -tf.reduce_sum(self.tf_calc_critic_output(self.tf_state_input, mu_s)*mu_s)
+        mu_s = self.tf_calc_actor_output(self.tf_state_input, False)
+        policy_loss = -tf.reduce_sum(self.tf_calc_critic_output(self.tf_state_input, mu_s, False)*mu_s)
 
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
 
@@ -521,7 +582,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         offset_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
         devide_vec = np.asarray([2.0 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(self.global_actions)]).reshape(1,-1)
-        entropy =  - (mu_s+offset_vec)/devide_vec * tf.log(((mu_s+offset_vec)/devide_vec) + 1e-8)
+        entropy = -(mu_s+offset_vec)/devide_vec * tf.log(((mu_s+offset_vec)/devide_vec) + 1e-8)
 
         d_H_over_d_ThetaMu = tf.gradients(ys=entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
@@ -529,7 +590,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                      grad_ys = [-g for g in d_Q_over_a])
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
-        grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-25.0,25.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
+        grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-5.0,5.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
         grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/10.0).apply_gradients(grads)
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
@@ -572,13 +633,33 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                                      tf.get_variable(constants.TF_BIAS)])
 
                     else:
-                        if not is_target_network:
-                            vars.extend([tf.get_variable(constants.TF_WEIGHTS),
-                                         tf.get_variable(constants.TF_BIAS)])
-                        else:
-                            with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                        if scope != self.layer_scopes[1]:
+                            if not is_target_network:
                                 vars.extend([tf.get_variable(constants.TF_WEIGHTS),
                                              tf.get_variable(constants.TF_BIAS)])
+                            else:
+                                with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                    vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                 tf.get_variable(constants.TF_BIAS)])
+                        else:
+                            with tf.variable_scope('state', reuse=True):
+                                if not is_target_network:
+                                    vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                 tf.get_variable(constants.TF_BIAS)])
+                                else:
+                                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                        vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                     tf.get_variable(constants.TF_BIAS)])
+
+                            with tf.variable_scope('action', reuse=True):
+                                if not is_target_network:
+                                    vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                 tf.get_variable(constants.TF_BIAS)])
+                                else:
+                                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                        vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                     tf.get_variable(constants.TF_BIAS)])
+
         return vars
 
     # ============================================================================
@@ -625,7 +706,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Make everything between -1, 1
         filter_bound_vec = (np.asarray(self.filter_bound_vec) + 1e-1).reshape(1,-1)/2.0
         norm_state = np.asarray(s[:,:self.net_depth])
-        norm_state = (norm_state - filter_bound_vec)/filter_bound_vec
+        norm_state = (norm_state - filter_bound_vec)
 
         norm_dist_state = np.asarray(s[:, self.net_depth:]) / np.reshape(np.max(s[:,self.net_depth:],axis=1),(-1,1))
         norm_dist_state -= 0.5
@@ -772,32 +853,53 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         with tf.variable_scope(actor_or_critic_scope, reuse=True):
             for scope in self.layer_scopes:
                 with tf.variable_scope(scope, reuse=True):
-                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+
                         if actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
-                            w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                            w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                            target_assign_ops.append(tf.assign(w, self.TAU * w + (1-self.TAU)* w_dash))
-                            target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
-                        else:
-                            if scope != self.layer_scopes[-1]:
-                                w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
-                                    constants.TF_BIAS)
-                                w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                                target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
-                                target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+                            if scope != self.layer_scopes[1]:
+                                with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                    w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                                    w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                                    target_assign_ops.append(tf.assign(w, self.TAU * w + (1-self.TAU)* w_dash))
+                                    target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
                             else:
-                                with tf.variable_scope('except_ft', reuse= True):
+                                with tf.variable_scope('state', reuse = True):
+                                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                        w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
+                                            constants.TF_BIAS)
+                                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
+                                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+
+                                with tf.variable_scope('action', reuse = True):
+                                    with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                        w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
+                                            constants.TF_BIAS)
+                                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
+                                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+
+                        else:
+
+                            with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
+                                if scope != self.layer_scopes[-1]:
                                     w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
                                         constants.TF_BIAS)
                                     w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
                                     target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
                                     target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
-                                with tf.variable_scope('ft', reuse=True):
-                                    w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
-                                        constants.TF_BIAS)
-                                    w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                                    target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
-                                    target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+                                else:
+                                    with tf.variable_scope('except_ft', reuse= True):
+                                        w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
+                                            constants.TF_BIAS)
+                                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
+                                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+                                    with tf.variable_scope('ft', reuse=True):
+                                        w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
+                                            constants.TF_BIAS)
+                                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
+                                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
+                                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
 
         return target_assign_ops
 
@@ -881,17 +983,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Averaging with a running mean because some layers tend to fluctuate a lot
         # cont_actions_all_layers = self.get_action_with_running_mean(cont_actions_all_layers)
 
-        sigma_for_action = 0.2/max(1,min(self.sample_action_global_step//10,0.01))
 
         self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.5 for _ in range(self.global_actions)]),
-                                              theta=0.75 , sigma=np.asarray([sigma_for_action for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]))
+                                              theta=0.5 , sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.3 for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
 
         # Otherwise can go above 1
         cont_actions_all_layers = np.clip(cont_actions_all_layers,-1.0,1.0)
-
+        cont_actions_all_layers[len(self.conv_ids)+len(self.fulcon_ids):] = np.clip(cont_actions_all_layers[len(self.conv_ids)+len(self.fulcon_ids):],0.0,1.0)
         self.verbose_logger.info('Action before checking validity')
         self.verbose_logger.info(cont_actions_all_layers)
 
@@ -1109,9 +1210,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
         ai_rew = self.get_action_specific_reward(ai)
-        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
-        #mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
-        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
+        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
+        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+
         mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
@@ -1176,6 +1278,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         else:
             return False
 
+    def reset_max_pool_accuracy(self):
+        self.max_pool_accuracy = 0.0
+        self.pool_acc_drop_count = 0
 
     def update_experience(self,si,ai,reward,sj):
 
