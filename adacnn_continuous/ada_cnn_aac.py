@@ -65,7 +65,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.setup_loggers()
 
         # RL Agent Input/Output sizes
-        self.local_actions, self.global_actions = 1, 2
+        self.local_actions, self.global_actions = 1, 1
         self.output_size = len(self.conv_ids) + len(self.fulcon_ids) + self.global_actions
         self.actor_input_size = self.calculate_input_size(constants.TF_ACTOR_SCOPE)
         self.critic_input_size = self.calculate_input_size(constants.TF_CRITIC_SCOPE)

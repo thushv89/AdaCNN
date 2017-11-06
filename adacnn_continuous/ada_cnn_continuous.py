@@ -21,7 +21,7 @@ import copy
 import constants
 import cnn_hyperparameters_getter_start_big as cnn_hyperparameters_getter
 import cnn_optimizer
-import cnn_intializer
+import cnn_intializer_continuous
 import ada_cnn_adapter
 import data_generator
 import label_sequence_generator
@@ -754,7 +754,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_out_size = tf.placeholder(dtype=tf.int32, name='fulcon_output_size')
                 tf_replicative_factor_vec = tf.placeholder(dtype=tf.float32, shape=[None], name='tf_replicative_factor')
 
-                tf_reset_cnn = cnn_intializer.reset_cnn(init_cnn_hyperparameters,cnn_ops)
+                tf_reset_cnn = cnn_intializer_continuous.reset_cnn(init_cnn_hyperparameters, cnn_ops)
 
                 for op in cnn_ops:
                     if 'pool' in op:
@@ -905,7 +905,7 @@ def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
 
     return new_curr_weights
 
-def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add, epoch):
+def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add, epoch, random_add):
     '''
     Run the add operation using the given Session
     :param session:
@@ -949,7 +949,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if np.random.random()<0.25:
+        if random_add<0.25:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -1131,7 +1131,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
 
-def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add,epoch):
+def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add,epoch, random_add):
     '''
     Run the add operation using the given Session
     :param session:
@@ -1169,7 +1169,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if np.random.random()<0.25:
+        if random_add<0.25:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -1473,7 +1473,7 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
 
 
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < 0.5:
+            if np.random.random() < rate:
                 #print('fintuning network (pool_id: ',pool_id,')')
                 pool_feed_dict = {}
                 pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
@@ -1488,7 +1488,7 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
                                            tf_pool_label_batch[gpu_id]: pbatch_labels})
 
                 if adapt_structure:
-                    pool_feed_dict.update({tf_learning_rate: rate * model_hyperparameters['start_lr']})
+                    pool_feed_dict.update({tf_learning_rate: current_data_lr * model_hyperparameters['start_lr']})
 
                 _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
                                    feed_dict=pool_feed_dict)
@@ -1856,7 +1856,7 @@ if __name__ == '__main__':
     cnn_model_saver.set_from_main(output_dir)
 
     set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling, use_fse_capacity)
-    cnn_intializer.set_from_main(research_parameters, logging_level, logging_format)
+    cnn_intializer_continuous.set_from_main(research_parameters, logging_level, logging_format)
 
     logger.info('Creating CNN hyperparameters and operations in the correct format')
     # Getting hyperparameters
@@ -1966,14 +1966,14 @@ if __name__ == '__main__':
     with tf.variable_scope(TF_GLOBAL_SCOPE,reuse=False) as scope:
         global_step = tf.get_variable(initializer=0, dtype=tf.int32, trainable=False, name='global_step')
         logger.info('Defining TF Hyperparameters')
-        tf_cnn_hyperparameters = cnn_intializer.init_tf_hyperparameters(cnn_ops, cnn_hyperparameters)
+        tf_cnn_hyperparameters = cnn_intializer_continuous.init_tf_hyperparameters(cnn_ops, cnn_hyperparameters)
         logger.info('Defining Weights and Bias for CNN operations')
-        _ = cnn_intializer.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
+        _ = cnn_intializer_continuous.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
         logger.info('Following parameters defined')
         logger.info([v.name for v in tf.trainable_variables()])
         logger.info('='*80)
         logger.info('Defining Velocities for Weights and Bias for CNN operations')
-        _ = cnn_intializer.define_velocity_vectors(scope, cnn_ops, cnn_hyperparameters)
+        _ = cnn_intializer_continuous.define_velocity_vectors(scope, cnn_ops, cnn_hyperparameters)
         logger.info('Following parameters defined')
         logger.info([v.name for v in tf.global_variables()])
         logger.info('=' * 80)
@@ -2079,6 +2079,7 @@ if __name__ == '__main__':
     # Check if loss is stabilized (for starting adaptations)
     previous_loss = 1e5  # used for the check to start adapting
     current_data_lr = 1.0
+    finetune_action = 1.0
     # Reward for Q-Learner
     prev_pool_accuracy = 0
     max_pool_accuracy = 0
@@ -2123,7 +2124,7 @@ if __name__ == '__main__':
             # Because in my opinion, pool accuracy treats each task differently
             # max_pool_accuracy = 0.0
 
-            research_parameters['momentum']=0.5
+            research_parameters['momentum']=0.9
             research_parameters['pool_momentum']=0.9
 
             cnn_optimizer.update_hyperparameters(research_parameters)
@@ -2334,7 +2335,7 @@ if __name__ == '__main__':
 
                     # ===============================================================
                     # Finetune with data in hard_pool_ft (AdaCNN)
-                    run_actual_finetune_operation(hard_pool_ft, current_data_lr)
+                    run_actual_finetune_operation(hard_pool_ft, finetune_action)
 
                     # =================================================================
                     # Calculate pool accuracy (hard_pool_valid)
@@ -2451,7 +2452,7 @@ if __name__ == '__main__':
                         # without if can give problems in exploratory stage because of no data in the pool
                         if hard_pool_ft.get_size() > batch_size:
                             # Train with latter half of the data
-                            run_actual_finetune_operation(hard_pool_ft,current_data_lr)
+                            run_actual_finetune_operation(hard_pool_ft,finetune_action)
                     # ==================================================================
 
                     # ==================================================================
@@ -2473,7 +2474,7 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, current_data_lr, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                            layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
                             # don't use current state as the next state, current state is for a different layer
 
@@ -2577,7 +2578,7 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, current_data_lr, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                        layer_specific_actions, finetune_action = current_action[:-1], current_action[-1]
 
                         logger.info('Finetune rate: %.5f', finetune_action)
                         logger.info('Data train rate: %.5f', current_data_lr)
@@ -2604,10 +2605,11 @@ if __name__ == '__main__':
                                     break
 
                             if ai>0.0:
+                                random_add = np.random.random()
                                 if 'conv' in current_op:
-                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, epoch)
+                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, epoch, random_add)
                                 elif 'fulcon' in current_op:
-                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai, epoch)
+                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai, epoch, random_add)
 
                             elif ai <0.0:
                                 if 'conv' in current_op:
