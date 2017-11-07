@@ -1223,7 +1223,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = mean_accuracy  + 1e-2 * ai_rew + 1e-1 * comp_gain # new
+        reward = 0.0 * mean_accuracy  + 1e-2 * ai_rew + 1.0 * comp_gain # new
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
