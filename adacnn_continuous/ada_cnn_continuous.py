@@ -2707,8 +2707,8 @@ if __name__ == '__main__':
             print(session.run(tf_cnn_hyperparameters))
 
             session.run(tower_logits, feed_dict=train_feed_dict)
-            hard_pool_ft.reset_pool()
-            hard_pool_valid.reset_pool()
+            #hard_pool_ft.reset_pool()
+            #hard_pool_valid.reset_pool()
 
             start_adapting = False
             logger.info('=' * 80)
