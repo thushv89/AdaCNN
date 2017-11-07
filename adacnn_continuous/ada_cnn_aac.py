@@ -86,6 +86,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.current_state_history = []
         # Format of {phi(s_t),a_t,r_t,phi(s_t+1)}
         self.experience = []
+        self.rew_experience = []
 
         self.previous_reward = 0
         self.prev_prev_pool_accuracy = 0
@@ -731,6 +732,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         amount_to_rmv = len(self.experience) - self.experience_threshold
         if amount_to_rmv>0:
             del self.experience[:amount_to_rmv]
+            del self.rew_experience[:amount_to_rmv]
         # np.random.shuffle(self.experience) # decorrelation
 
 
@@ -739,6 +741,51 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         x, y, rewards, sj = None, None, None, None
 
         for [si, ai, reward, s_i_plus_1, time_stamp] in experience_slice:
+            # phi_t, a_idx, reward, phi_t_plus_1
+            if x is None:
+                x = np.asarray(self.phi(si)).reshape((1, -1))
+            else:
+                x = np.append(x, np.asarray(self.phi(si)).reshape((1, -1)), axis=0)
+
+            if y is None:
+                y = np.asarray(ai).reshape(1, -1)
+            else:
+                y = np.append(y, np.asarray(ai).reshape(1, -1), axis=0)
+
+            if rewards is None:
+                rewards = np.asarray(reward).reshape(1, -1)
+            else:
+                rewards = np.append(rewards, np.asarray(reward).reshape(1, -1), axis=0)
+
+            if sj is None:
+                sj = np.asarray(self.phi(s_i_plus_1)).reshape(1, -1)
+            else:
+                sj = np.append(sj, np.asarray(self.phi(s_i_plus_1)).reshape(1, -1), axis=0)
+
+        return x, y, rewards, sj
+
+
+    def get_best_reward_s_a_r_s_with_experince(self):
+
+        x, y, rewards, sj = None, None, None, None
+
+
+        if len(self.experience)<self.batch_size:
+            best_ind = np.arange(len(self.experience)).tolist()
+        elif len(self.experience) < self.batch_size * 2:
+            best_ind = np.argsort(self.rew_experience).flatten()[-self.batch_size:].tolist()
+        else:
+            best_ind_to_chose_from = np.argsort(self.rew_experience).flatten()[-2*self.batch_size:]
+            best_ind = np.random.choice(best_ind_to_chose_from,replace=False, size=(self.batch_size)).tolist()
+
+        self.verbose_logger.info('Chose the indices with the rewards')
+        self.verbose_logger.info('\t %s', np.asarray(self.rew_experience)[best_ind[:self.batch_size//4]])
+
+        for e_i,(si, ai, reward, s_i_plus_1, time_stamp) in enumerate(self.experience):
+
+            if e_i not in best_ind:
+                continue
+
             # phi_t, a_idx, reward, phi_t_plus_1
             if x is None:
                 x = np.asarray(self.phi(si)).reshape((1, -1))
@@ -907,7 +954,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # data['prev_state'], data['curr_state']
 
         # sample a batch from experience
-        s_i, a_i , r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
+        s_i, a_i , r, s_i_plus_1 = self.get_best_reward_s_a_r_s_with_experince()
 
         self.verbose_logger.debug('Summary of Experience data')
         self.verbose_logger.debug('\ts(t):%s', s_i.shape)
@@ -947,7 +994,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :param experience_batch:
         :return:
         '''
-        s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
+        s_i, a_i, r, _ = self.get_best_reward_s_a_r_s_with_experince()
         a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:s_i})
 
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
@@ -1223,7 +1270,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = mean_accuracy  + 1e-2 * ai_rew + 1e-1 * comp_gain # new
+        reward = 0.0 * mean_accuracy  + 1e-2 * ai_rew + 1.0 * comp_gain # new
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
@@ -1291,6 +1338,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         #    self.experience[idx][2] = 0.9 * self.experience[idx][2] + 0.1 * reward
 
         self.experience.append([si, ai, reward, sj, self.train_global_step])
+        self.rew_experience.append(reward)
 
         if self.train_global_step < 3:
             self.verbose_logger.debug('Latest Experience: ')

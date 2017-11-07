@@ -993,7 +993,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         # Random initialization
         else:
             print('Random Initialization')
-            rand_scale = 0.001
+            rand_scale = 0.0001
             new_curr_weights = np.random.uniform(low=-rand_scale, high=rand_scale, size=(
             curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
             new_curr_bias = np.random.uniform(low=-rand_scale, high=rand_scale, size=(amount_to_add))
@@ -1105,28 +1105,31 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     pbatch_train_count = 0
 
     # Train only with half of the batch
-    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-        if np.random.random() < research_parameters['finetune_rate']:
-            pbatch_data, pbatch_labels = [], []
+    if hard_pool_ft.get_size() > batch_size:
+        for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+            if np.random.random() < research_parameters['finetune_rate']:
+                pbatch_data, pbatch_labels = [], []
 
-            pool_feed_dict = {
-                tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - amount_to_add,
-                                      cnn_hyperparameters[current_op]['weights'][3])}
-            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+                pool_feed_dict = {
+                    tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - amount_to_add,
+                                          cnn_hyperparameters[current_op]['weights'][3])}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
 
-            for gpu_id in range(num_gpus):
-                pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                    pool_id + gpu_id + 1) * batch_size,
-                                   :, :, :])
-                pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                     pool_id + gpu_id + 1) * batch_size,
-                                     :])
-                pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
-                                       tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
+                for gpu_id in range(num_gpus):
+                    pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
+                                                                                        pool_id + gpu_id + 1) * batch_size,
+                                       :, :, :])
+                    pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
+                                                                                         pool_id + gpu_id + 1) * batch_size,
+                                         :])
+                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
+                                           tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            pool_feed_dict.update({tf_learning_rate:model_hyperparameters['start_lr']})
-            _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],
-                               feed_dict=pool_feed_dict)
+                pool_feed_dict.update({tf_learning_rate:model_hyperparameters['start_lr']})
+
+                with tf.control_dependencies(tf_slice_vel_update[current_op]):
+                    _, _ = session.run(tf_slice_optimize[current_op],
+                                       feed_dict=pool_feed_dict)
 
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
@@ -1192,7 +1195,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         else:
-            rand_scale = 0.001
+            rand_scale = 0.0001
             new_curr_weights = np.random.uniform(low=-rand_scale,high=rand_scale,size=(curr_weight_shape[0],amount_to_add,1,1))
             new_curr_bias = np.random.uniform(low=-rand_scale,high=rand_scale,size=(amount_to_add))
 
@@ -1277,32 +1280,32 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    pbatch_train_count = 0
 
     # Train only newly added parameters
-    for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-        if np.random.random() < research_parameters['finetune_rate']:
-            pbatch_data, pbatch_labels = [], []
+    if hard_pool_ft.get_size()>batch_size:
+        for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
+            if np.random.random() < research_parameters['finetune_rate']:
+                pbatch_data, pbatch_labels = [], []
 
-            pool_feed_dict = {
-                tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - amount_to_add,
-                                      cnn_hyperparameters[current_op]['out'])}
-            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+                pool_feed_dict = {
+                    tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - amount_to_add,
+                                          cnn_hyperparameters[current_op]['out'])}
+                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
 
-            for gpu_id in range(num_gpus):
-                pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                    pool_id + gpu_id + 1) * batch_size,
-                                   :, :, :])
-                pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                     pool_id + gpu_id + 1) * batch_size,
-                                     :])
-                pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
-                                       tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
+                for gpu_id in range(num_gpus):
+                    pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
+                                                                                        pool_id + gpu_id + 1) * batch_size,
+                                       :, :, :])
+                    pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
+                                                                                         pool_id + gpu_id + 1) * batch_size,
+                                         :])
+                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
+                                           tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
-            pool_feed_dict.update({tf_learning_rate: model_hyperparameters['start_lr']})
-            _, _ = session.run([tf_slice_optimize[current_op], tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
+                pool_feed_dict.update({tf_learning_rate: model_hyperparameters['start_lr']})
+                with tf.control_dependencies(tf_slice_vel_update[current_op]):
+                    _ = session.run(tf_slice_optimize[current_op],feed_dict=pool_feed_dict)
 
-            pbatch_train_count += 1
 
 
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
@@ -1470,8 +1473,6 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
     # without if can give problems in exploratory stage because of no data in the pool
     if hard_pool_ft.get_size() > batch_size:
         # Train with latter half of the data
-
-
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < rate:
                 #print('fintuning network (pool_id: ',pool_id,')')
@@ -1490,8 +1491,8 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
                 if adapt_structure:
                     pool_feed_dict.update({tf_learning_rate: current_data_lr * model_hyperparameters['start_lr']})
 
-                _, _ = session.run([apply_pool_grads_op, update_pool_velocity_ops],
-                                   feed_dict=pool_feed_dict)
+                with tf.control_dependencies(update_pool_velocity_ops):
+                    _ = session.run(apply_pool_grads_op,feed_dict=pool_feed_dict)
 
 
 def top_n_accuracy(predictions,labels,n):
@@ -1979,7 +1980,6 @@ if __name__ == '__main__':
         logger.info('=' * 80)
     logger.info(('=' * 80) + '\n')
 
-
     if research_parameters['adapt_structure']:
 
         # Pruning hyperparameter initialization
@@ -2112,6 +2112,36 @@ if __name__ == '__main__':
 
     binned_data_dist_decay = 0.5
     current_train_acc, prev_train_acc = 0, 0
+
+    # ===================================================
+    '''logger.info('=' * 80)
+    logger.info('Epsilon: %.5f', start_eps)
+    session.run(tf_reset_cnn)
+
+    _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+    cnn_hyperparameters = dict(init_cnn_hyperparameters)
+    print(cnn_hyperparameters)
+
+    print(init_cnn_hyperparameters)
+    for op in cnn_ops:
+        if 'conv' in op:
+            session.run(tf_update_hyp_ops[op],
+                        feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
+        elif 'fulcon' in op:
+            session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
+                                                          tf_out_size: init_cnn_hyperparameters[op]['out']})
+    print(session.run(tf_cnn_hyperparameters))
+
+    #hard_pool_ft.reset_pool()
+    #hard_pool_valid.reset_pool()
+
+    start_adapting = False
+    logger.info('=' * 80)
+    previous_loss = 1e5
+
+    current_data_lr = 1.0
+    finetune_action = 1.0'''
+    # ===================================================
 
     for epoch in range(n_epochs):
 
@@ -2355,9 +2385,12 @@ if __name__ == '__main__':
                     logger.info('\tBatch ID: %d' % batch_id)
                     if decay_learning_rate:
                         if adapt_structure:
-                            logger.info('\tLearning rate: %.5f' %(current_data_lr*model_hyperparameters['start_lr']))
+                            logger.info('\tLearning rate: %.7f' %(current_data_lr*model_hyperparameters['start_lr']))
+                            logger.info('\tFinetune rate: %.7f'%(finetune_action*model_hyperparameters['start_lr']))
                         else:
                             logger.info('\tLearning rate: %.5f' % session.run(tf_learning_rate))
+
+
                     else:
                         logger.info('\tLearning rate: %.5f' % start_lr)
 
@@ -2423,12 +2456,10 @@ if __name__ == '__main__':
 
                     if research_parameters['adapt_structure'] and \
                             not start_adapting and \
-                            (previous_loss - mean_train_loss < research_parameters['loss_diff_threshold'] or batch_id >
-                                research_parameters['start_adapting_after']):
+                            batch_id > research_parameters['start_adapting_after']:
                         start_adapting = True
                         logger.info('=' * 80)
                         logger.info('Loss Stabilized: Starting structural adaptations...')
-                        logger.info('Hardpool acceptance rate: %.2f', research_parameters['hard_pool_acceptance_rate'])
                         logger.info('=' * 80)
 
                     previous_loss = mean_train_loss
@@ -2650,35 +2681,6 @@ if __name__ == '__main__':
 
             # ==============================================================
             # Epoch ending condition check (Given by RL)
-            '''if epoch < model_hyperparameters['rl_epochs']-1 and adapter.check_pool_accuracy_saturation():
-
-                adapter.reset_max_pool_accuracy()
-                logger.info('='*80)
-                logger.info('End of %d episolde', epoch)
-                logger.info('Epsilon: %.5f',start_eps)
-                session.run(tf_reset_cnn)
-
-                _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
-                cnn_hyperparameters = dict(init_cnn_hyperparameters)
-                print(cnn_hyperparameters)
-
-                print(init_cnn_hyperparameters)
-                for op in cnn_ops:
-                    if 'conv' in op:
-                        session.run(tf_update_hyp_ops[op],
-                                    feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
-                    elif 'fulcon' in op:
-                        session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
-                                                                      tf_out_size: init_cnn_hyperparameters[op]['out']})
-                print(session.run(tf_cnn_hyperparameters))
-
-                hard_pool_ft.reset_pool()
-                hard_pool_valid.reset_pool()
-                start_adapting = False
-                session.run(tower_logits, feed_dict=train_feed_dict)
-                previous_loss = 1e5
-                break
-                logger.info('=' * 80)'''
             # ==============================================================
 
         # Reset the model every rl epoch except the last one
@@ -2705,17 +2707,23 @@ if __name__ == '__main__':
             print(session.run(tf_cnn_hyperparameters))
 
             session.run(tower_logits, feed_dict=train_feed_dict)
-            hard_pool_ft.reset_pool()
-            hard_pool_valid.reset_pool()
+            #hard_pool_ft.reset_pool()
+            #hard_pool_valid.reset_pool()
 
             start_adapting = False
             logger.info('=' * 80)
             previous_loss = 1e5
 
+            current_data_lr = 1.0
+            finetune_action = 1.0
+            prev_train_acc = 0.0
+
         # We use whatever the model found by the last RL episode
         if epoch == model_hyperparameters['rl_epochs']-1:
             stop_adapting = True
             current_data_lr = 1.0
+            finetune_action = 1.0
+            prev_train_acc = 0.0
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs
