@@ -236,46 +236,6 @@ def add_to_fulcon_with_action(
 
     return update_ops
 
-def get_rm_indices_with_distance(op, tf_action_info, tf_cnn_hyperparameters):
-    amount_to_rmv = tf_action_info[2]
-    with tf.variable_scope(op) as scope:
-        w = tf.get_variable(TF_WEIGHTS)  # h x w x in x out
-        reshaped_weight = tf.transpose(w, [3, 0, 1, 2])
-        reshaped_weight = tf.reshape(w, [tf_cnn_hyperparameters[op]['weights'][3],
-                                         tf_cnn_hyperparameters[op]['weights'][0] *
-                                         tf_cnn_hyperparameters[op]['weights'][1] *
-                                         tf_cnn_hyperparameters[op]['weights'][2]]
-                                     )
-    cos_sim_weights = tf.matmul(reshaped_weight, tf.transpose(reshaped_weight), name='dot_prod_cos_sim') / tf.matmul(
-        tf.sqrt(tf.reduce_sum(reshaped_weight ** 2, axis=1, keep_dims=True)),
-        tf.sqrt(tf.transpose(tf.reduce_sum(reshaped_weight ** 2, axis=1, keep_dims=True)))
-        , name='norm_cos_sim')
-
-    upper_triang_cos_sim = tf.matrix_band_part(cos_sim_weights, 0, -1, name='upper_triang_cos_sim')
-    zero_diag_triang_cos_sim = tf.matrix_set_diag(upper_triang_cos_sim,
-                                                  tf.zeros(shape=[tf_cnn_hyperparameters[op]['weights'][3]]),
-                                                  name='zero_diag_upper_triangle')
-    flattened_cos_sim = tf.reshape(zero_diag_triang_cos_sim, shape=[-1], name='flattend_cos_sim')
-
-    # we are finding top amount_to_rmv + epsilon amount because
-    # to avoid k_values = {...,(83,1)(139,94)(139,83),...} like incidents
-    # above case will ignore both indices of (139,83) resulting in a reduction < amount_to_rmv
-    [high_sim_values, high_sim_indices] = tf.nn.top_k(flattened_cos_sim,
-                                                      k=tf.minimum(amount_to_rmv + 10,
-                                                                   tf_cnn_hyperparameters[op]['weights'][3]),
-                                                      name='top_k_indices')
-
-    tf_indices_to_remove_1 = tf.reshape(tf.mod(high_sim_indices, tf_cnn_hyperparameters[op]['weights'][3]), shape=[-1],
-                                        name='mod_indices')
-    tf_indices_to_remove_2 = tf.reshape(tf.floor_div(high_sim_indices, tf_cnn_hyperparameters[op]['weights'][3]),
-                                        shape=[-1], name='floor_div_indices')
-    # concat both mod and floor_div indices
-    tf_indices_to_rm = tf.reshape(tf.stack([tf_indices_to_remove_1, tf_indices_to_remove_2], name='all_rm_indices'),
-                                  shape=[-1])
-    # return both values and indices of unique values (discard indices)
-    tf_unique_rm_ind, _ = tf.unique(tf_indices_to_rm, name='unique_rm_indices')
-
-    return tf_unique_rm_ind
 
 
 def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm):

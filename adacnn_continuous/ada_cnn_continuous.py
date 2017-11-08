@@ -431,7 +431,7 @@ def accuracy(predictions, labels):
             / predictions.shape[0])
 
 
-def setup_loggers(adapt_structure):
+def setup_loggers(adapt_structure,output_dir):
     '''
     Setting up loggers
     logger: Main Logger
@@ -876,7 +876,7 @@ def get_adaptive_dropout():
     else:
         dropout_factor = (current_conv_depth_total * 1.0 / sum(conv_filter_vec))
 
-    return dropout_rate*(dropout_factor**2)
+    return dropout_rate*(dropout_factor**1)
 
 
 
@@ -935,6 +935,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             logger.debug('\tCurrent bias size: %s', curr_bias.shape)
             curr_act = tf.get_variable(TF_ACTIVAIONS_STR).eval()
             logger.debug('\tCurrent mean activation size: %s', curr_act.shape)
+
+            assert curr_act.shape[0] == curr_weights.shape[3],\
+                'Sizes incompatible %d (act) %d(weights)'%(curr_act.shape[0],curr_weights.shape[3])
 
         if current_op != last_conv_id:
             with tf.variable_scope(next_conv_op, reuse=True):
@@ -1164,6 +1167,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             logger.debug('\tCurrent bias shape: %s', curr_bias.shape)
             curr_act = tf.get_variable(TF_ACTIVAIONS_STR).eval()
             logger.debug('\tCurrent mean activation shape: %s', curr_act.shape)
+
+            assert curr_act.shape[0] == curr_weights.shape[1], \
+                'Sizes incompatible %d (act) %d(weights)'%(curr_act.shape[0],curr_weights.shape[1])
 
         with tf.variable_scope(next_fulcon_op, reuse=True):
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
@@ -1832,10 +1838,27 @@ if __name__ == '__main__':
     if not (adapt_structure or rigid_pooling):
         rigid_naive = True
 
+    # =============================================================================
+        # Setting up normal output data dir
+    home_dir = '.' + os.sep + output_dir
+    if not os.path.exists(home_dir):
+        dirs_in_main = []
+    else:
+        dirs_in_main = [int(o) for o in os.listdir(home_dir)
+                        if os.path.isdir(os.path.join(home_dir, o)) and str.isdigit(o)]
+
+    if len(dirs_in_main) == 0:
+        sub_output_dir = output_dir + os.sep + '0'
+        os.mkdir(sub_output_dir)
+    else:
+        sub_output_dir = output_dir + os.sep + '%d' % (max(dirs_in_main) + 1)
+        os.mkdir(sub_output_dir)
+    # ==============================================================================
+
     # Setting up loggers
     logger, perf_logger, cnn_structure_logger, \
     q_logger, class_dist_logger, pool_dist_logger, pool_dist_ft_logger, \
-    hyp_logger, error_logger, prune_logger = setup_loggers(adapt_structure)
+    hyp_logger, error_logger, prune_logger = setup_loggers(adapt_structure,sub_output_dir)
 
     logger.info('Created loggers')
 
@@ -1854,7 +1877,7 @@ if __name__ == '__main__':
     # =====================================================================
     # VARIOS SETTING UPS
     # SET FROM MAIN FUNCTIONS OF OTHER CLASSES
-    cnn_model_saver.set_from_main(output_dir)
+    cnn_model_saver.set_from_main(sub_output_dir)
 
     set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling, use_fse_capacity)
     cnn_intializer_continuous.set_from_main(research_parameters, logging_level, logging_format)
@@ -1911,11 +1934,12 @@ if __name__ == '__main__':
 
     session = tf.InteractiveSession(config=config)
 
+    # =============================================================================
+    # Setting up tensorboard data dir
     home_dir = '.' + os.sep + output_dir + os.sep + "ada_cnn_tensorboard_data"
     if not os.path.exists(home_dir):
         dirs_in_tensorboard = []
     else:
-        print('file exist')
         dirs_in_tensorboard = [int(o) for o in os.listdir(home_dir + os.sep + "main")
                                if os.path.isdir(os.path.join(home_dir + os.sep + "main", o))]
     if len(dirs_in_tensorboard) == 0:
@@ -1925,6 +1949,9 @@ if __name__ == '__main__':
         summary_writer = tf.summary.FileWriter(
             output_dir + os.sep + "ada_cnn_tensorboard_data" +
             os.sep + "main" + os.sep + '%d' % (max(dirs_in_tensorboard) + 1))
+    # ==============================================================================
+
+
 
     # Defining pool
     if adapt_structure or rigid_pooling:
@@ -1995,7 +2022,7 @@ if __name__ == '__main__':
             conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
             n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
             epsilon=0.5,
-            batch_size=64, persist_dir=output_dir,
+            batch_size=64, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001,
@@ -2733,6 +2760,7 @@ if __name__ == '__main__':
             if decay_learning_rate and epoch>model_hyperparameters['rl_epochs'] and epoch%2==1:
                 session.run(increment_global_step_op)
                 current_data_lr *= model_hyperparameters['decay_rate']
+                finetune_action *= model_hyperparameters['decay_rate']
 
         else:
             if decay_learning_rate and epoch>0 and epoch%2==1:

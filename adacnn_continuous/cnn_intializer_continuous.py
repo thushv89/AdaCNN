@@ -639,6 +639,11 @@ def reset_cnn(cnn_hyps,cnn_ops):
                 new_bias = tf.random_uniform(minval=-0.01, maxval=0.01, shape=[cnn_hyps[op]['out']])
                 reset_ops.append(tf.assign(bias, new_bias, validate_shape=False))
 
+                act_var = tf.get_variable(name=TF_ACTIVAIONS_STR)
+                new_act_var = tf.zeros(shape=[cnn_hyps[op]['out']],
+                                       dtype=tf.float32)
+                reset_ops.append(tf.assign(act_var, new_act_var, validate_shape=False))
+
                 with tf.variable_scope(TF_BIAS) as child_scope:
                     b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                     pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)

@@ -108,14 +108,14 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
 
-    model_hyperparameters['epochs'] = 10
+    model_hyperparameters['epochs'] = 5
     if adapt_structure:
         model_hyperparameters['rl_epochs'] = 5
         model_hyperparameters['epochs']+= model_hyperparameters['rl_epochs']
 
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.9
-    model_hyperparameters['eps_decay'] = 0.75
+    model_hyperparameters['eps_decay'] = 0.6
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001
@@ -267,7 +267,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 15
+        fluctuation = 8
 
     elif dataset_name == 'imagenet-250':
         image_size = 128

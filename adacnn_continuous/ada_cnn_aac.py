@@ -38,6 +38,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.num_classes = params['num_classes']
         self.persit_dir = params['persist_dir']
+        self.sub_persist_dir = params['sub_persist_dir']
 
         # CNN specific Hyperparametrs
         self.net_depth = params['net_depth'] # the depth of the network (counting pooling + convolution + fulcon layers)
@@ -109,7 +110,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
-        self.entropy_beta = 0.001
+        self.entropy_beta = 0.005
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -233,7 +234,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger = logging.getLogger('verbose_q_learner_logger')
         self.verbose_logger.propagate = False
         self.verbose_logger.setLevel(logging.DEBUG)
-        vHandler = logging.FileHandler(self.persit_dir + os.sep + 'ada_cnn_qlearner.log', mode='w')
+        vHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'ada_cnn_qlearner.log', mode='w')
         vHandler.setLevel(logging.INFO)
         vHandler.setFormatter(logging.Formatter('%(message)s'))
         self.verbose_logger.addHandler(vHandler)
@@ -245,7 +246,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.q_logger = logging.getLogger('q_logger')
         self.q_logger.propagate = False
         self.q_logger.setLevel(logging.INFO)
-        qHandler = logging.FileHandler(self.persit_dir + os.sep + 'q_logger.log', mode='w')
+        qHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'q_logger.log', mode='w')
         qHandler.setFormatter(logging.Formatter('%(message)s'))
         self.q_logger.addHandler(qHandler)
         self.q_logger.info(self.get_action_string_for_logging())
@@ -253,7 +254,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.reward_logger = logging.getLogger('reward_logger')
         self.reward_logger.propagate = False
         self.reward_logger.setLevel(logging.INFO)
-        rewarddistHandler = logging.FileHandler(self.persit_dir + os.sep + 'action_reward_.log', mode='w')
+        rewarddistHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'action_reward_.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
         self.reward_logger.addHandler(rewarddistHandler)
         self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
@@ -261,14 +262,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.action_logger = logging.getLogger('action_logger')
         self.action_logger.propagate = False
         self.action_logger.setLevel(logging.INFO)
-        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'actions.log', mode='w')
+        actionHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'actions.log', mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
 
         self.advantage_logger = logging.getLogger('adavantage_logger')
         self.advantage_logger.propagate = False
         self.advantage_logger.setLevel(logging.INFO)
-        actionHandler = logging.FileHandler(self.persit_dir + os.sep + 'advantage.log',mode='w')
+        actionHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'advantage.log',mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
 
@@ -591,7 +592,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                      grad_ys = [-g for g in d_Q_over_a])
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
-        grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-5.0,5.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
+        grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-25.0,25.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
         grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/10.0).apply_gradients(grads)
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
@@ -836,7 +837,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             return total * (self.top_k_accuracy/self.num_classes)
         else:
             return 0.0'''
-        mid_point_entropy = 0.17
+        mid_point_entropy = 0.17*2.0
         for l_i, (c_depth, p_depth, up_dept) in enumerate(zip(curr_comp, prev_comp, filter_bound_vec)):
             if up_dept > 0:
                 if l_i in self.conv_ids:
@@ -1256,9 +1257,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
         ai_rew = self.get_action_specific_reward(ai)
-        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
+        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
         mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
-        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
 
         mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
@@ -1269,7 +1270,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = 0.0 * mean_accuracy  + 1e-2 * ai_rew + 1.0 * comp_gain # new
+        reward = mean_accuracy + 1e-2 * ai_rew + 1.0 * comp_gain # new
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
