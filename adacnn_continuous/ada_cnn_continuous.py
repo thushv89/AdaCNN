@@ -1995,7 +1995,7 @@ if __name__ == '__main__':
             conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
             n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
             epsilon=0.5,
-            batch_size=32, persist_dir=output_dir,
+            batch_size=64, persist_dir=output_dir,
             session=session,
             state_history_length=state_history_length,
             hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001,
@@ -2068,7 +2068,7 @@ if __name__ == '__main__':
     act_decay = 0.9
     current_state, current_action,curr_adaptation_status, current_unscaled_action = None, None,None,None
     prev_unseen_valid_accuracy = 0
-    pool_acc_before_adapt_queue, pool_acc_after_adapt_queue = [],[]
+    pool_acc_before_adapt_queue, pool_acc_after_adapt_queue = [0.0],[0.0]
     valid_acc_queue = []
 
     current_q_learn_op_id = 0
@@ -2492,14 +2492,6 @@ if __name__ == '__main__':
                                             batch_id % interval_parameters['policy_interval'] == 4:
 
                         # ==================================================================
-                        # Calculating pool accuracy (Before Adaptation)
-                        p_accuracy = calculate_pool_accuracy(hard_pool_ft)
-                        pool_acc_before_adapt_queue.append(p_accuracy)
-                        if len(pool_acc_before_adapt_queue) > 20:
-                            del pool_acc_before_adapt_queue[0]
-                        # ==================================================================
-
-                        # ==================================================================
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
                         # (Not just outputting finetune action)
                         # ==================================================================
@@ -2578,6 +2570,13 @@ if __name__ == '__main__':
                         else:
                             unseen_valid_accuracy = accuracy(unseen_valid_predictions, batch_valid_labels)
 
+                        # ==================================================================
+                        # Calculating pool accuracy (Before Adaptation)
+                        p_accuracy = calculate_pool_accuracy(hard_pool_valid)
+                        pool_acc_before_adapt_queue.append(p_accuracy)
+                        if len(pool_acc_before_adapt_queue) > 20:
+                            del pool_acc_before_adapt_queue[0]
+                            # ==================================================================
 
                         # =============================================================
 
@@ -2601,7 +2600,10 @@ if __name__ == '__main__':
                         # Epoch 1: Deterministically grow the network
                         if not adapt_randomly:
                             data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
-                                    'binned_data_dist': running_binned_data_dist_vector.tolist()}
+                                    'binned_data_dist': running_binned_data_dist_vector.tolist(),
+                                    'pool_accuracy': pool_acc_before_adapt_queue[-1],
+                                    'valid_accuracy': unseen_valid_accuracy}
+
                             if np.random.random()<start_eps:
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data)
                             else:
@@ -2654,7 +2656,7 @@ if __name__ == '__main__':
 
                         # ==================================================================
                         # Calculating pool accuracy (After Adaptation)
-                        p_accuracy = calculate_pool_accuracy(hard_pool_ft)
+                        p_accuracy = calculate_pool_accuracy(hard_pool_valid)
                         pool_acc_after_adapt_queue.append(p_accuracy)
                         if len(pool_acc_after_adapt_queue) > 20:
                             del pool_acc_after_adapt_queue[0]

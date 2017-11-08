@@ -707,7 +707,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Make everything between -1, 1
         filter_bound_vec = (np.asarray(self.filter_bound_vec) + 1e-1).reshape(1,-1)/2.0
         norm_state = np.asarray(s[:,:self.net_depth])
-        norm_state = (norm_state - filter_bound_vec)
+        norm_state = (norm_state - filter_bound_vec)/filter_bound_vec
 
         norm_dist_state = np.asarray(s[:, self.net_depth:]) / np.reshape(np.max(s[:,self.net_depth:],axis=1),(-1,1))
         norm_dist_state -= 0.5
@@ -836,14 +836,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             return total * (self.top_k_accuracy/self.num_classes)
         else:
             return 0.0'''
-
+        mid_point_entropy = 0.17
         for l_i, (c_depth, p_depth, up_dept) in enumerate(zip(curr_comp, prev_comp, filter_bound_vec)):
             if up_dept > 0:
                 if l_i in self.conv_ids:
-                    total +=  -(max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)*np.log((max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)+1e-5) -0.5
+                    total +=  -(max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)*np.log((max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)+1e-5) -mid_point_entropy
                 elif l_i in self.fulcon_ids:
                     total += -(max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept) * np.log(
-                        (max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept)+1e-5) - 0.5
+                        (max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept)+1e-5) - mid_point_entropy
         return total/self.net_depth
 
     def get_complexity_penanlty_for_each_layer_for_batch(self, s_i, filter_bound_vec):
@@ -995,7 +995,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
         s_i, a_i, r, _ = self.get_best_reward_s_a_r_s_with_experince()
-        a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:s_i})
+        a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:self.normalize_state_batch(s_i)})
 
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
@@ -1024,7 +1024,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.debug('Getting new action according the the Actor')
         s_i = np.asarray(self.phi(state)).reshape(1, -1)
-        cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
+        cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: self.normalize_state_batch(s_i)})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
 
         # Averaging with a running mean because some layers tend to fluctuate a lot
@@ -1069,7 +1069,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.debug('Getting new action according the the Actor')
         s_i = np.asarray(self.phi(state)).reshape(1, -1)
-        cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: s_i})
+        cont_actions_all_layers = self.session.run(self.tf_actor_out_op, feed_dict={self.tf_state_input: self.normalize_state_batch(s_i)})
         cont_actions_all_layers = cont_actions_all_layers.flatten()
 
         # Averaging with a running mean because some layers tend to fluctuate a lot
@@ -1082,7 +1082,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             cont_actions_all_layers, data, state
         )
 
-        q_vals_for_action = self.session.run(self.tf_critic_out_op, feed_dict = {self.tf_state_input: s_i,
+        q_vals_for_action = self.session.run(self.tf_critic_out_op, feed_dict = {self.tf_state_input: self.normalize_state_batch(s_i),
                                                                                  self.tf_action_input: np.reshape(cont_actions_all_layers,(1,-1))})
 
         summ = self.session.run(self.every_action_sampled_summ,feed_dict={self.tf_summary_action_mean_ph:cont_actions_all_layers,
@@ -1094,7 +1094,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.action_logger.info(str_actions)
 
         self.summary_writer.add_summary(summ,global_step=self.sample_action_global_step)
-
 
         self.sample_action_global_step += 1
 
