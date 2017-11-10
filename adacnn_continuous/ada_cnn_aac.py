@@ -110,7 +110,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
-        self.entropy_beta = 0.005
+        self.entropy_beta = 0.05
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -584,7 +584,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         offset_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
         devide_vec = np.asarray([2.0 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(self.global_actions)]).reshape(1,-1)
-        entropy = -(mu_s+offset_vec)/devide_vec * tf.log(((mu_s+offset_vec)/devide_vec) + 1e-8)
+
+        # We remove the entropy for learning rates, because this pushes the learning rate towards 0.5 quickly
+        #glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
+        entropy = -(mu_s+offset_vec)/devide_vec * tf.log(((mu_s+offset_vec)/devide_vec) + 1e-8) #* glob_act_turn_off_vec
 
         d_H_over_d_ThetaMu = tf.gradients(ys=entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
@@ -593,6 +596,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
         grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-25.0,25.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
+        #grads = [(tf.clip_by_value(d_mu, -25.0, 25.0), v) for d_mu, v in
+        #         zip(d_mu_over_d_ThetaMu, theta_mu)]
         grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/10.0).apply_gradients(grads)
 
         grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
@@ -614,6 +619,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         with tf.variable_scope(actor_or_critic_scope, reuse=True):
             for scope in self.layer_scopes:
                 with tf.variable_scope(scope, reuse=True):
+
+                    # Actor Weights
                     if actor_or_critic_scope == constants.TF_ACTOR_SCOPE:
                         if scope != self.layer_scopes[-1]:
                             if not is_target_network:
@@ -628,12 +635,20 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                 with tf.variable_scope('except_ft',reuse=True):
                                     vars.extend([tf.get_variable(constants.TF_WEIGHTS),
                                                  tf.get_variable(constants.TF_BIAS)])
+                                with tf.variable_scope('ft',reuse=True):
+                                    vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                 tf.get_variable(constants.TF_BIAS)])
                             else:
                                 with tf.variable_scope(constants.TF_TARGET_NET_SCOPE,reuse = True):
+                                    with tf.variable_scope('except_ft',reuse=True):
+                                        vars.extend([tf.get_variable(constants.TF_WEIGHTS),
+                                                     tf.get_variable(constants.TF_BIAS)])
+
                                     with tf.variable_scope('ft',reuse=True):
                                         vars.extend([tf.get_variable(constants.TF_WEIGHTS),
                                                      tf.get_variable(constants.TF_BIAS)])
 
+                    # Critic Weights
                     else:
                         if scope != self.layer_scopes[1]:
                             if not is_target_network:
@@ -811,7 +826,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         return x, y, rewards, sj
 
     def exploration_noise_OU(self, a, mu, theta, sigma):
-        return theta * (mu - a) + sigma * np.random.randn(1) + np.random.randn(a.size)*0.1
+        return theta * (mu - a) + sigma * np.random.randn(a.size)
 
     def get_action_with_exploration(self):
         '''
@@ -955,7 +970,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # data['prev_state'], data['curr_state']
 
         # sample a batch from experience
-        s_i, a_i , r, s_i_plus_1 = self.get_best_reward_s_a_r_s_with_experince()
+        s_i, a_i , r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
 
         self.verbose_logger.debug('Summary of Experience data')
         self.verbose_logger.debug('\ts(t):%s', s_i.shape)
@@ -995,7 +1010,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :param experience_batch:
         :return:
         '''
-        s_i, a_i, r, _ = self.get_best_reward_s_a_r_s_with_experince()
+        s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
         a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:self.normalize_state_batch(s_i)})
 
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
@@ -1031,16 +1046,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Averaging with a running mean because some layers tend to fluctuate a lot
         # cont_actions_all_layers = self.get_action_with_running_mean(cont_actions_all_layers)
 
-
-        self.verbose_logger.debug('Obtained deterministic action: %s',cont_actions_all_layers)
-        exp_noise = self.exploration_noise_OU(cont_actions_all_layers, mu=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.5 for _ in range(self.global_actions)]),
-                                              theta=0.5 , sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.3 for _ in range(self.global_actions)]))
+        self.verbose_logger.info('Obtained deterministic action: %s',cont_actions_all_layers)
+        exp_noise = self.exploration_noise_OU(cont_actions_all_layers,
+                                              mu=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.8 for _ in range(self.global_actions)]),
+                                              theta=[0.5  for _ in range(self.output_size - self.global_actions)] + [0.9 for _ in range(self.global_actions)],
+                                              sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.3 for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
 
         # Otherwise can go above 1
         cont_actions_all_layers = np.clip(cont_actions_all_layers,-1.0,1.0)
-        cont_actions_all_layers[len(self.conv_ids)+len(self.fulcon_ids):] = np.clip(cont_actions_all_layers[len(self.conv_ids)+len(self.fulcon_ids):],0.0,1.0)
+        cont_actions_all_layers[len(self.conv_ids)+len(self.fulcon_ids):] = np.clip(cont_actions_all_layers[len(self.conv_ids)+len(self.fulcon_ids):],0.0,0.9)
         self.verbose_logger.info('Action before checking validity')
         self.verbose_logger.info(cont_actions_all_layers)
 
@@ -1050,6 +1066,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.info('Action chosen stochastic')
         self.verbose_logger.info('\t%s',valid_action)
+
+        str_actions = ','.join([str(a) for a in cont_actions_all_layers.ravel().tolist()])
+        self.action_logger.info(str_actions)
 
         scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
         self.verbose_logger.info('\t%s (scaled)', scaled_a)
@@ -1110,7 +1129,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         valid_action = action.tolist()
         neg_action = [0.0 for _ in range(self.output_size)]
-        pos_action = [0.0 for _ in range(self.output_size)]
+        pos_action = [0.0 for _ in range(self.output_size - self.global_actions)] + [0.5 for _ in range(self.global_actions)]
 
         scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(action)
 
@@ -1161,7 +1180,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             next_pos_state = self.get_next_state_from_state_action(state, scaled_pos_action)
 
             self.update_experience(state, neg_action, -0.5, next_neg_state)
-            self.update_experience(state, pos_action, 0.5, next_pos_state)
+            # Let's not have this
+            #self.update_experience(state, pos_action, 0.5, next_pos_state)
 
         return valid_action
 
@@ -1231,6 +1251,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 self.verbose_logger.info('\tTrained Actor')
                 act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices])
                 self.verbose_logger.info('\tTrained Critic')
+                exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices])
 
             else:
@@ -1270,7 +1291,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = mean_accuracy + 1e-2 * ai_rew + 1.0 * comp_gain # new
+        reward = mean_accuracy + 1.0 * comp_gain #+ 1e-2 * ai_rew # new
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:

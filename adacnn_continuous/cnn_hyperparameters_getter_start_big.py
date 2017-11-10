@@ -68,9 +68,9 @@ def get_interval_related_hyperparameters(dataset_name):
         interval_parameters['orig_finetune_interval'] = 50
 
     if dataset_name == 'cifar-100':
-        interval_parameters['policy_interval'] = 200
-        interval_parameters['finetune_interval'] = 200
-        interval_parameters['orig_finetune_interval'] = 200
+        interval_parameters['policy_interval'] = 100
+        interval_parameters['finetune_interval'] = 100
+        interval_parameters['orig_finetune_interval'] = 100
 
     elif dataset_name == 'imagenet-250':
         interval_parameters['policy_interval'] = 48
@@ -110,12 +110,12 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['epochs'] = 5
     if adapt_structure:
-        model_hyperparameters['rl_epochs'] = 5
+        model_hyperparameters['rl_epochs'] = 8
         model_hyperparameters['epochs']+= model_hyperparameters['rl_epochs']
 
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.9
-    model_hyperparameters['eps_decay'] = 0.6
+    model_hyperparameters['eps_decay'] = 0.75
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001

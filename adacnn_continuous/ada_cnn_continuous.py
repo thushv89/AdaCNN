@@ -2713,7 +2713,7 @@ if __name__ == '__main__':
             # ==============================================================
 
         # Reset the model every rl epoch except the last one
-        if epoch < model_hyperparameters['rl_epochs'] - 1:
+        if research_parameters['adapt_structure'] and epoch < model_hyperparameters['rl_epochs'] - 1:
 
             adapter.reset_max_pool_accuracy()
             logger.info('=' * 80)
@@ -2748,7 +2748,7 @@ if __name__ == '__main__':
             prev_train_acc = 0.0
 
         # We use whatever the model found by the last RL episode
-        if epoch == model_hyperparameters['rl_epochs']-1:
+        if research_parameters['adapt_structure'] and epoch == model_hyperparameters['rl_epochs']-1:
             stop_adapting = True
             current_data_lr = 1.0
             finetune_action = 1.0
