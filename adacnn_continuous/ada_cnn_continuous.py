@@ -1773,6 +1773,35 @@ def calculate_pool_accuracy(hard_pool):
     return np.mean(pool_accuracy) if len(pool_accuracy) > 0 else 0
 
 
+def reset_cnn_after_adapt():
+    global _, init_cnn_hyperparameters, cnn_hyperparameters, op, start_adapting, previous_loss, current_data_lr, finetune_action, prev_train_acc
+    adapter.reset_max_pool_accuracy()
+    logger.info('=' * 80)
+    logger.info('End of %d episolde (full epoch)', epoch)
+    logger.info('Epsilon: %.5f', start_eps)
+    session.run(tf_reset_cnn)
+    _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+    cnn_hyperparameters = dict(init_cnn_hyperparameters)
+    print(cnn_hyperparameters)
+    print(init_cnn_hyperparameters)
+    for op in cnn_ops:
+        if 'conv' in op:
+            session.run(tf_update_hyp_ops[op],
+                        feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
+        elif 'fulcon' in op:
+            session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
+                                                          tf_out_size: init_cnn_hyperparameters[op]['out']})
+    print(session.run(tf_cnn_hyperparameters))
+    session.run(tower_logits, feed_dict=train_feed_dict)
+    # hard_pool_ft.reset_pool()
+    # hard_pool_valid.reset_pool()
+    start_adapting = False
+    logger.info('=' * 80)
+    previous_loss = 1e5
+    current_data_lr = 1.0
+    finetune_action = 1.0
+    prev_train_acc = 0.0
+
 
 if __name__ == '__main__':
 
@@ -2351,7 +2380,8 @@ if __name__ == '__main__':
                 if np.isnan(l):
                     logger.critical('Diverged (NaN detected) (batchID) %d (last Cost) %.3f', batch_id,
                                     train_losses[-1])
-                assert not np.isnan(l)
+                    reset_cnn_after_adapt()
+                    
 
                 train_losses.append(l)
                 prev_train_acc = current_train_acc
@@ -2715,37 +2745,7 @@ if __name__ == '__main__':
         # Reset the model every rl epoch except the last one
         if research_parameters['adapt_structure'] and epoch < model_hyperparameters['rl_epochs'] - 1:
 
-            adapter.reset_max_pool_accuracy()
-            logger.info('=' * 80)
-            logger.info('End of %d episolde (full epoch)',epoch)
-            logger.info('Epsilon: %.5f', start_eps)
-            session.run(tf_reset_cnn)
-
-            _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
-            cnn_hyperparameters = dict(init_cnn_hyperparameters)
-            print(cnn_hyperparameters)
-
-            print(init_cnn_hyperparameters)
-            for op in cnn_ops:
-                if 'conv' in op:
-                    session.run(tf_update_hyp_ops[op],
-                                feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
-                elif 'fulcon' in op:
-                    session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
-                                                                  tf_out_size: init_cnn_hyperparameters[op]['out']})
-            print(session.run(tf_cnn_hyperparameters))
-
-            session.run(tower_logits, feed_dict=train_feed_dict)
-            #hard_pool_ft.reset_pool()
-            #hard_pool_valid.reset_pool()
-
-            start_adapting = False
-            logger.info('=' * 80)
-            previous_loss = 1e5
-
-            current_data_lr = 1.0
-            finetune_action = 1.0
-            prev_train_acc = 0.0
+            reset_cnn_after_adapt()
 
         # We use whatever the model found by the last RL episode
         if research_parameters['adapt_structure'] and epoch == model_hyperparameters['rl_epochs']-1:

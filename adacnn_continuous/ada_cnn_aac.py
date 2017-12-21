@@ -595,13 +595,18 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                      grad_ys = [-g for g in d_Q_over_a])
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
-        grads = [(tf.clip_by_value(d_mu - self.entropy_beta*d_H,-25.0,25.0), v) for d_mu, d_H, v in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu, theta_mu)]
+        grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
+
+        grads,_ = tf.clip_by_global_norm(grads,25.0)
+
+        grads = list(zip(grads,theta_mu))
+
         #grads = [(tf.clip_by_value(d_mu, -25.0, 25.0), v) for d_mu, v in
         #         zip(d_mu_over_d_ThetaMu, theta_mu)]
         grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/10.0).apply_gradients(grads)
 
-        grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
-        grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
+        #grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
+        grad_norm = tf.sqrt(tf.reduce_mean([tf.reduce_sum(g**2) for (g,_) in grads]))
         return grad_apply_op,grad_norm, policy_loss, tf.reduce_mean(tf.reduce_sum(entropy,axis=[1]))
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
@@ -1049,8 +1054,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers,
                                               mu=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.8 for _ in range(self.global_actions)]),
-                                              theta=[0.5  for _ in range(self.output_size - self.global_actions)] + [0.9 for _ in range(self.global_actions)],
-                                              sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.3 for _ in range(self.global_actions)]))
+                                              theta=[0.5  for _ in range(self.output_size - self.global_actions)] + [0.4 for _ in range(self.global_actions)],
+                                              sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
 

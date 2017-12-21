@@ -3,6 +3,7 @@ import constants
 import logging
 import numpy as np
 import sys
+import utils
 
 TF_WEIGHTS = constants.TF_WEIGHTS
 TF_BIAS = constants.TF_BIAS
@@ -677,3 +678,30 @@ def init_tf_hyperparameters(cnn_ops, cnn_hyperparameters):
                                                             dtype=tf.int32, trainable=False)
                                    }
     return tf_hyp_list
+
+def reset_cnn_after_episode(logger, session, tf_reset_cnn, dataset_info, cnn_string,
+                            cnn_ops, tf_update_hyp_ops, tf_weight_shape, tf_in_size, tf_out_size,
+                            tf_cnn_hyperparameters, tower_logits, train_feed_dict):
+
+    logger.info('=' * 80)
+
+    session.run(tf_reset_cnn)
+
+    _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+    cnn_hyperparameters = dict(init_cnn_hyperparameters)
+    print(cnn_hyperparameters)
+
+    print(init_cnn_hyperparameters)
+    for op in cnn_ops:
+        if 'conv' in op:
+            session.run(tf_update_hyp_ops[op],
+                        feed_dict={tf_weight_shape: init_cnn_hyperparameters[op]['weights']})
+        elif 'fulcon' in op:
+            session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
+                                                          tf_out_size: init_cnn_hyperparameters[op]['out']})
+    print(session.run(tf_cnn_hyperparameters))
+
+    session.run(tower_logits, feed_dict=train_feed_dict)
+    # hard_pool_ft.reset_pool()
+    # hard_pool_valid.reset_pool()
+
