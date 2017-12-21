@@ -595,9 +595,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                      grad_ys = [-g for g in d_Q_over_a])
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
+        d_mu_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_mu_over_d_ThetaMu,25.0)
         grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
 
-        grads,_ = tf.clip_by_global_norm(grads,25.0)
+        #grads,_ = tf.clip_by_global_norm(grads,25.0)
 
         grads = list(zip(grads,theta_mu))
 
@@ -1283,11 +1284,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
 
         ai_rew = self.get_action_specific_reward(ai)
-        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
+        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
         mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
-        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
 
-        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
+        #mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
@@ -1296,7 +1297,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = mean_accuracy + 1.0 * comp_gain #+ 1e-2 * ai_rew # new
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:

@@ -68,9 +68,9 @@ def get_interval_related_hyperparameters(dataset_name):
         interval_parameters['orig_finetune_interval'] = 50
 
     if dataset_name == 'cifar-100':
-        interval_parameters['policy_interval'] = 100
-        interval_parameters['finetune_interval'] = 100
-        interval_parameters['orig_finetune_interval'] = 100
+        interval_parameters['policy_interval'] = 200
+        interval_parameters['finetune_interval'] = 200
+        interval_parameters['orig_finetune_interval'] = 200
 
     elif dataset_name == 'imagenet-250':
         interval_parameters['policy_interval'] = 48

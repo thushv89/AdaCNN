@@ -2054,7 +2054,7 @@ if __name__ == '__main__':
             batch_size=64, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.0005,
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2555,6 +2555,8 @@ if __name__ == '__main__':
                         if (not adapt_randomly) and current_state:
 
                             layer_specific_actions, current_data_lr, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                            current_data_lr = 1.0
+                            finetune_action = 1.0
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
                             # don't use current state as the next state, current state is for a different layer
 
