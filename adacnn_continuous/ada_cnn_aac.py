@@ -1140,7 +1140,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         valid_action = action.tolist()
         neg_action = [0.0 for _ in range(self.output_size)]
-        pos_action = [0.0 for _ in range(self.output_size - self.global_actions)] + [0.5 for _ in range(self.global_actions)]
 
         scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(action)
 
@@ -1160,8 +1159,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 if next_layer_complexity < self.min_filter_threshold or next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
                     neg_action[a_idx] = a
-                    pos_action[a_idx] = -a
-                    valid_action[a_idx] *= -1.0
+                    valid_action[a_idx] *= 0.0
                     atleast_one_invalid_action = True
             # For fully-connected layers
             elif a_idx < len(self.conv_ids) + len(self.fulcon_ids):
@@ -1176,8 +1174,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                 next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
                     neg_action[a_idx] = a
-                    pos_action[a_idx] = -a
-                    valid_action[a_idx] *= -1.0
+                    valid_action[a_idx] *= 0.0
                     atleast_one_invalid_action = True
             # For finetune action there is no invalid state
             else:
@@ -1207,28 +1204,27 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     def scale_adaptaion_propotions_to_number_of_filters(self,a):
         adapt_type = a[-1]
-
+        print('Adapt type: ',adapt_type)
         new_a = []
         for a_idx, ai in enumerate(a):
             if a_idx< len(self.conv_ids):
-                if adapt_type>.25:
+                if adapt_type>.2:
                     new_a.append(floor(ai * self.add_amount))
-                elif adapt_type<.25:
+                elif adapt_type<-.2:
                     new_a.append(-floor(ai * self.add_amount))
                 else:
                     new_a.append(0)
 
             elif a_idx < len(self.conv_ids + self.fulcon_ids):
-                new_a.append(floor(ai * self.add_fulcon_amount))
-
-                # We need this because we use squeeze operation in
-                # cnn_adapter
-                if new_a[-1]>0:
-                    new_a[-1] = max(new_a[-1],2)
-                elif new_a[-1]<0:
-                    new_a[-1] = min(new_a[-1],-2)
+                if adapt_type>.2:
+                    new_a.append(floor(ai * self.add_fulcon_amount))
+                elif adapt_type<-.2:
+                    new_a.append(-floor(ai * self.add_fulcon_amount))
+                else:
+                    new_a.append(0)
 
         new_a.extend(a[len(self.conv_ids + self.fulcon_ids):])
+        self.verbose_logger.info('scaled action: %s',new_a)
         return new_a
 
     def get_action_specific_reward(self, a):
