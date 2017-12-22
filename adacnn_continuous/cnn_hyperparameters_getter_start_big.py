@@ -68,9 +68,9 @@ def get_interval_related_hyperparameters(dataset_name):
         interval_parameters['orig_finetune_interval'] = 50
 
     if dataset_name == 'cifar-100':
-        interval_parameters['policy_interval'] = 200
-        interval_parameters['finetune_interval'] = 200
-        interval_parameters['orig_finetune_interval'] = 200
+        interval_parameters['policy_interval'] = 250
+        interval_parameters['finetune_interval'] = 250
+        interval_parameters['orig_finetune_interval'] = 250
 
     elif dataset_name == 'imagenet-250':
         interval_parameters['policy_interval'] = 48
@@ -92,7 +92,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['adapt_structure'] = adapt_structure
     model_hyperparameters['batch_size'] = 64  # number of datapoints in a single batch
-    model_hyperparameters['start_lr'] = 0.0001
+    model_hyperparameters['start_lr'] = 0.0005
     model_hyperparameters['min_learning_rate'] = 0.00001
     model_hyperparameters['decay_learning_rate'] = True
     model_hyperparameters['decay_rate'] = 0.75
@@ -182,7 +182,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_min_threshold = 47
             fulcon_min_threshold = 48
             filter_vector = [64, 128, 256, 256, 0, 256, 256, 256, 256, 0, 512, 512, 100]
-            add_amount, remove_amount, add_fulcon_amount = 8, 6, 8
+            add_amount, remove_amount, add_fulcon_amount = 12, 8, 12
 
 
         model_hyperparameters['n_iterations'] = 10000

@@ -862,10 +862,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         for l_i, (c_depth, p_depth, up_dept) in enumerate(zip(curr_comp, prev_comp, filter_bound_vec)):
             if up_dept > 0:
                 if l_i in self.conv_ids:
-                    total +=  -(max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)*np.log((max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)+1e-5) -mid_point_entropy
+                    total +=  -(max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)*np.log((max(0,c_depth-self.min_filter_threshold)*1.0/up_dept)+1e-10) -mid_point_entropy
                 elif l_i in self.fulcon_ids:
                     total += -(max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept) * np.log(
-                        (max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept)+1e-5) - mid_point_entropy
+                        (max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept)+1e-10) - mid_point_entropy
         return total/self.net_depth
 
     def get_complexity_penanlty_for_each_layer_for_batch(self, s_i, filter_bound_vec):
@@ -1279,16 +1279,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         before_adapt_queue = data['pool_accuracy_before_adapt_queue']
         after_adapt_queue = data['pool_accuracy_after_adapt_queue']
 
-        accuracy_push_reward = self.top_k_accuracy/self.num_classes \
-            if (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0<= self.top_k_accuracy/self.num_classes \
-            else (before_adapt_queue[-2] - before_adapt_queue[-1])/100.0
+        accuracy_push_reward = (2.0*self.top_k_accuracy/self.num_classes) \
+            if before_adapt_queue[-1] > max(before_adapt_queue) else 0
 
         ai_rew = self.get_action_specific_reward(ai)
-        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
-        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
-        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+        #mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])*(before_adapt_queue[-1]-before_adapt_queue[-2])/200.0
+        #mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])*(data['unseen_valid_after'] - data['unseen_valid_before'])/200.0
 
-        #mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
+        mean_accuracy = (before_adapt_queue[-1]+before_adapt_queue[-2])/200.0
+        mean_valid_accuracy = (data['unseen_valid_after'] + data['unseen_valid_before'])/200.0
+
         #immediate_mean_accuracy = (1.0 + ((data['unseen_valid_accuracy'] + data['prev_unseen_valid_accuracy'])/200.0))*\
         #                          (data['unseen_valid_accuracy'] - data['prev_unseen_valid_accuracy']) / 100.0
 
@@ -1297,7 +1297,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy
+
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy + accuracy_push_reward
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:

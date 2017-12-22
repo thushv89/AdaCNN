@@ -1130,9 +1130,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
                 pool_feed_dict.update({tf_learning_rate:model_hyperparameters['start_lr']})
 
-                with tf.control_dependencies(tf_slice_vel_update[current_op]):
-                    _, _ = session.run(tf_slice_optimize[current_op],
-                                       feed_dict=pool_feed_dict)
+                _, _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],
+                                   feed_dict=pool_feed_dict)
 
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
@@ -1309,8 +1308,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                                            tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
 
                 pool_feed_dict.update({tf_learning_rate: model_hyperparameters['start_lr']})
-                with tf.control_dependencies(tf_slice_vel_update[current_op]):
-                    _ = session.run(tf_slice_optimize[current_op],feed_dict=pool_feed_dict)
+
+                _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
 
 
@@ -1497,8 +1496,7 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
                 if adapt_structure:
                     pool_feed_dict.update({tf_learning_rate: current_data_lr * model_hyperparameters['start_lr']})
 
-                with tf.control_dependencies(update_pool_velocity_ops):
-                    _ = session.run(apply_pool_grads_op,feed_dict=pool_feed_dict)
+                _ = session.run([apply_pool_grads_op,update_pool_velocity_ops],feed_dict=pool_feed_dict)
 
 
 def top_n_accuracy(predictions,labels,n):
@@ -2369,10 +2367,9 @@ if __name__ == '__main__':
                     # # Training Phase (Optimization)
                     for _ in range(iterations_per_batch):
                         #print('training on current batch (action type: ', current_action_type, ')')
-                        with tf.control_dependencies(update_train_velocity_op):
-                            _ = session.run(
-                                apply_grads_op, feed_dict=train_feed_dict
-                            )
+                        _ = session.run(
+                            [apply_grads_op,update_train_velocity_op], feed_dict=train_feed_dict
+                        )
 
 
                 t1_train = time.clock()
@@ -2554,7 +2551,7 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, current_data_lr, finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                            layer_specific_actions, _data_lr , _ft_lr = current_action[:-2], current_action[-2], current_action[-1]
                             current_data_lr = 1.0
                             finetune_action = 1.0
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
@@ -2670,7 +2667,7 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, current_data_lr,  finetune_action = current_action[:-2], current_action[-2], current_action[-1]
+                        layer_specific_actions, _data_lr,  _ft_action = current_action[:-2], current_action[-2], current_action[-1]
 
                         logger.info('Finetune rate: %.5f', finetune_action)
                         logger.info('Data train rate: %.5f', current_data_lr)
