@@ -2551,7 +2551,7 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, _data_lr , _ft_lr = current_action[:-2], current_action[-2], current_action[-1]
+                            layer_specific_actions, _ = current_action[:-1], current_action[-1]
                             current_data_lr = 1.0
                             finetune_action = 1.0
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
@@ -2667,7 +2667,7 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, _data_lr,  _ft_action = current_action[:-2], current_action[-2], current_action[-1]
+                        layer_specific_actions, _ = current_action[:-1], current_action[-1]
 
                         logger.info('Finetune rate: %.5f', finetune_action)
                         logger.info('Data train rate: %.5f', current_data_lr)
