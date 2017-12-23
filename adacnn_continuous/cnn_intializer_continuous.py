@@ -65,6 +65,15 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                                          dtype=tf.float32, name=scope.name + '_activations'),
                     validate_shape=False, trainable=False)
 
+                with tf.variable_scope('age', reuse=False):
+                    tf.get_variable(
+                        name=TF_WEIGHTS, initializer=tf.ones(shape=cnn_hyps[op]['weights'], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32,trainable=False)
+
+                    tf.get_variable(
+                        name=TF_BIAS, initializer=tf.ones(shape=cnn_hyps[op]['weights'], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32,trainable=False)
+
                 init_logger.debug('Weights for %s initialized with size %s', op, str(cnn_hyps[op]['weights']))
                 init_logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['weights'][3])
 
@@ -85,10 +94,35 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                                          dtype=tf.float32, name=scope.name + '_activations'),
                     validate_shape=False, trainable=False)
 
+                with tf.variable_scope('age', reuse=False):
+                    tf.get_variable(
+                        name=TF_WEIGHTS, initializer=tf.ones(shape=[cnn_hyps[op]['in'], cnn_hyps[op]['out']], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32, trainable=False)
+
+                    tf.get_variable(
+                        name=TF_BIAS, initializer=tf.ones(shape=[cnn_hyps[op]['out']], dtype=tf.float32),
+                        validate_shape=False, dtype=tf.float32, trainable=False)
+
                 init_logger.debug('Weights for %s initialized with size %d,%d',
                              op, cnn_hyps[op]['in'], cnn_hyps[op]['out'])
                 init_logger.debug('Biases for %s initialized with size %d', op, cnn_hyps[op]['out'])
 
+
+def initialze_age_tensors(cnn_ops, cnn_hyps):
+
+    age_tensors_weights = {}
+    age_tensors_biases = {}
+    for op in cnn_ops:
+
+        if 'conv' in op:
+            age_tensors_weights[op]=tf.ones(shape=cnn_hyps[op]['weights'],dtype=tf.float32)
+            age_tensors_biases[op] = tf.ones(shape=cnn_hyps[op]['weights'],dtype=tf.float32)
+
+        if 'fulcon' in op:
+            age_tensors_weights[op] = tf.ones(shape=[cnn_hyps[op]['in'],cnn_hyps[op]['out']], dtype=tf.float32)
+            age_tensors_biases[op] = tf.ones(shape=[cnn_hyps[op]['out']], dtype=tf.float32)
+
+    return age_tensors_weights, age_tensors_biases
 
 
 def define_velocity_vectors(main_scope, cnn_ops, cnn_hyperparameters):

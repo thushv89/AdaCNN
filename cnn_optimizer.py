@@ -74,10 +74,15 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
 
             with tf.variable_scope(op, reuse=True):
                 w,b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
+                with tf.variable_scope('age', reuse=True):
+                    age_w, age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
                 print(v.name, ', ', w.name)
                 if v.name == w.name:
 
                     print('\tFound match')
+
                     with tf.variable_scope(TF_WEIGHTS, reuse=True):
 
                         vel = tf.get_variable(TF_TRAIN_MOMENTUM)
@@ -87,11 +92,12 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
                                       (1.0 - research_parameters['momentum']) * g ** 2)
                         )
 
-                        adaptive_w_lr = learning_rate / tf.sqrt(vel + rms_epsilon)
+                        adaptive_w_lr = learning_rate / (tf.sqrt(vel + rms_epsilon)*age_w)
 
                         grads_and_vars.append((g * adaptive_w_lr, w))
                 print(v.name, ', ', b.name)
                 if v.name == b.name:
+
                     with tf.variable_scope(TF_BIAS, reuse=True):
 
                         print('\tFound match')
@@ -102,7 +108,7 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
                                       (1.0 - research_parameters['momentum']) * g ** 2)
                         )
 
-                        adaptive_b_lr = learning_rate / tf.sqrt(vel + rms_epsilon)
+                        adaptive_b_lr = learning_rate / (tf.sqrt(vel + rms_epsilon)*age_b)
                         grads_and_vars.append((g * adaptive_b_lr, b))
 
     return optimizer.apply_gradients(grads_and_vars), vel_update_ops
@@ -125,6 +131,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
         for (g,v) in grads_and_vars_vanilla:
             with tf.variable_scope(op, reuse=True):
                 w,b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
                 print(v.name, ', ', w.name)
                 if v.name == w.name:
 
@@ -138,7 +145,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
                                       (1.0 - research_parameters['momentum']) * g ** 2)
                         )
 
-                        adaptive_w_lr = learning_rate / tf.sqrt(vel + rms_epsilon)
+                        adaptive_w_lr = learning_rate / (tf.sqrt(vel + rms_epsilon))
                         grads_and_vars.append((g * adaptive_w_lr, w))
 
                 print(v.name, ', ', b.name)
@@ -154,7 +161,7 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
                                       (1.0 - research_parameters['momentum']) * g ** 2)
                         )
 
-                        adaptive_b_lr = learning_rate / tf.sqrt(vel + rms_epsilon)
+                        adaptive_b_lr = learning_rate / (tf.sqrt(vel + rms_epsilon))
                         grads_and_vars.append((g * adaptive_b_lr, b))
 
     return optimizer.apply_gradients(grads_and_vars), vel_update_ops
@@ -194,6 +201,8 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
         if 'conv' in tmp_op:
             with tf.variable_scope(tmp_op, reuse=True) as scope:
                 w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                with tf.variable_scope('age', reuse=True):
+                    age_w, age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
 
                 for (g, v) in avg_grad_and_vars:
                     if v.name == w.name:
@@ -278,8 +287,8 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                     vel_update_ops.append(
                         tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum']) * grads_b**2))
 
-                    adaptive_w_lr = learning_rate / tf.sqrt(w_vel + rms_epsilon)
-                    adaptive_b_lr = learning_rate / tf.sqrt(b_vel + rms_epsilon)
+                    adaptive_w_lr = learning_rate / (tf.sqrt(w_vel + rms_epsilon)*age_w)
+                    adaptive_b_lr = learning_rate / (tf.sqrt(b_vel + rms_epsilon)*age_b)
 
                 grad_ops.append(optimizer.apply_gradients([(grads_w * adaptive_w_lr, w), (grads_b * adaptive_b_lr, b)]))
 
@@ -293,6 +302,10 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
 
             with tf.variable_scope(tmp_op, reuse=True) as scope:
                 w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
+                with tf.variable_scope('age', reuse=True):
+                    age_w, age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
                 for (g, v) in avg_grad_and_vars:
                     if v.name == w.name:
                         grads_w = g * tf_scale_parameter[lyr_i]
@@ -384,8 +397,8 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                     vel_update_ops.append(
                         tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1.0 - research_parameters['momentum']) * grads_b**2))
 
-                    adaptive_w_lr = learning_rate / tf.sqrt(w_vel + rms_epsilon)
-                    adaptive_b_lr = learning_rate / tf.sqrt(b_vel + rms_epsilon)
+                    adaptive_w_lr = learning_rate / (tf.sqrt(w_vel + rms_epsilon)*age_w)
+                    adaptive_b_lr = learning_rate / (tf.sqrt(b_vel + rms_epsilon)*age_b)
 
                 grad_ops.append(optimizer.apply_gradients(
                     [(grads_w*adaptive_w_lr, w), (grads_b * adaptive_b_lr, b)]))
@@ -397,6 +410,9 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
 
             with tf.variable_scope(tmp_op, reuse=True) as scope:
                 w, b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                with tf.variable_scope('age', reuse=True):
+                    age_w, age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+
                 for (g, v) in avg_grad_and_vars:
                     if v.name == w.name:
                         grads_w = g
@@ -424,8 +440,9 @@ def optimize_masked_momentum_gradient_end_to_end(optimizer, filter_indices_to_re
                     vel_update_ops.append(
                         tf.assign(b_vel, research_parameters['momentum'] * b_vel + (1-research_parameters['momentum'])*grads_b**2))
 
-                    adaptive_w_lr = learning_rate / tf.sqrt(w_vel + rms_epsilon)
-                    adaptive_b_lr = learning_rate / tf.sqrt(b_vel + rms_epsilon)
+                    adaptive_w_lr = learning_rate / (tf.sqrt(w_vel + rms_epsilon)*age_w)
+                    adaptive_b_lr = learning_rate / (tf.sqrt(b_vel + rms_epsilon)*age_b)
+
                 grad_ops.append(optimizer.apply_gradients(
                     [(grads_w * adaptive_w_lr, w), (grads_b * adaptive_b_lr, b)]))
 

@@ -196,6 +196,7 @@ tf_indices, tf_indices_to_rm, tf_replicative_factor_vec, tf_indices_size = None,
 tf_update_hyp_ops = {}
 tf_action_info = None
 tf_weights_this,tf_bias_this = None, None
+tf_age_weights_this,tf_age_bias_this, tf_age_weights_next = None, None, None
 tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
 tf_weight_shape,tf_in_size, tf_out_size = None, None, None
 increment_global_step_op = None
@@ -739,6 +740,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_weights_next = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
                                                  name='new_weights_next')
 
+                tf_age_weights_this = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
+                                                 name='new_weights_current')
+                tf_age_bias_this = tf.placeholder(shape=(None,), dtype=tf.float32, name='new_bias_current')
+                tf_age_weights_next = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
+                                                 name='new_weights_next')
+
                 tf_wvelocity_this = tf.placeholder(shape=[None, None, None, None], dtype=tf.float32,
                                                    name='new_weights_velocity_current')
                 tf_bvelocity_this = tf.placeholder(shape=(None,), dtype=tf.float32,
@@ -770,10 +777,10 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                     # Convolution related adaptation operations
                     if 'conv' in tmp_op:
                         tf_update_hyp_ops[tmp_op] = ada_cnn_adapter.update_tf_hyperparameters(tmp_op, tf_weight_shape, tf_in_size, tf_out_size)
-                        tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(tmp_op, tf_action_info, tf_weights_this,
-                                                                     tf_bias_this, tf_weights_next,
-                                                                     tf_wvelocity_this, tf_bvelocity_this,
-                                                                     tf_wvelocity_next,tf_replicative_factor_vec, tf_act_this)
+                        tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_with_action(
+                            tmp_op, tf_action_info, tf_weights_this, tf_bias_this, tf_weights_next,
+                            tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next,tf_replicative_factor_vec, tf_act_this,
+                            tf_age_weights_this,tf_age_bias_this, tf_age_weights_next)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
@@ -791,7 +798,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                         if tmp_op!='fulcon_out':
                             tf_add_filters_ops[tmp_op] = ada_cnn_adapter.add_to_fulcon_with_action(
                                 tmp_op, tf_action_info,tf_weights_this, tf_bias_this, tf_weights_next,
-                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec, tf_act_this
+                                tf_wvelocity_this,tf_bvelocity_this, tf_wvelocity_next, tf_replicative_factor_vec, tf_act_this,
+                                tf_age_weights_this, tf_age_bias_this, tf_age_weights_next
                             )
 
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
@@ -1032,7 +1040,19 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                             amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32) if last_conv_id != current_op else
                         np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
                                         cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32),
-                        tf_act_this: new_act_this
+                        tf_act_this: new_act_this,
+                        tf_age_weights_this: np.zeros(shape=(
+                            cnn_hyperparameters[current_op]['weights'][0],
+                            cnn_hyperparameters[current_op]['weights'][1],
+                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),dtype=np.float32),
+                        tf_age_bias_this: np.zeros(shape=(amount_to_add,),dtype=np.float32),
+                        tf_age_weights_next: np.zeros(shape=(
+                            cnn_hyperparameters[next_conv_op]['weights'][0],
+                            cnn_hyperparameters[next_conv_op]['weights'][1],
+                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32) if last_conv_id != current_op else
+                        np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
+                                        cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32)
+
                     })
 
     # change both weights and biase in the current op
@@ -1223,7 +1243,14 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                         tf_wvelocity_next: np.zeros(
                             shape=(amount_to_add, next_weights_shape[1],1,1),
                             dtype=np.float32),
-                        tf_act_this:new_curr_act
+                        tf_act_this:new_curr_act,
+                        tf_age_weights_this:np.zeros(
+                            shape=(curr_weight_shape[0],amount_to_add,1,1),
+                            dtype=np.float32),
+                        tf_age_bias_this: np.zeros(shape=(amount_to_add),dtype=np.float32),
+                        tf_age_weights_next: np.zeros(
+                            shape=(amount_to_add, next_weights_shape[1],1,1),
+                            dtype=np.float32)
                     })
 
     # change both weights and biase in the current op
@@ -1419,7 +1446,6 @@ def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id
             logger.debug('\tCurrent weight vel shape: %s', w_vel.eval().shape)
 
     cnn_hyperparameters[current_op]['out'] -= amount_to_rmv
-
 
     logger.debug('\tSize after feature map reduction: %s,%s', current_op,
                  tf.shape(current_op_weights).eval())
@@ -2024,6 +2050,8 @@ if __name__ == '__main__':
         tf_cnn_hyperparameters = cnn_intializer_continuous.init_tf_hyperparameters(cnn_ops, cnn_hyperparameters)
         logger.info('Defining Weights and Bias for CNN operations')
         _ = cnn_intializer_continuous.initialize_cnn_with_ops(cnn_ops, cnn_hyperparameters)
+        age_tensors_weights, age_tensors_biases = cnn_intializer_continuous.initialze_age_tensors(cnn_ops, cnn_hyperparameters)
+
         logger.info('Following parameters defined')
         logger.info([v.name for v in tf.trainable_variables()])
         logger.info('='*80)
