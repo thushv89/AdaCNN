@@ -71,7 +71,7 @@ def initialize_cnn_with_ops(cnn_ops, cnn_hyps):
                         validate_shape=False, dtype=tf.float32,trainable=False)
 
                     tf.get_variable(
-                        name=TF_BIAS, initializer=tf.ones(shape=cnn_hyps[op]['weights'], dtype=tf.float32),
+                        name=TF_BIAS, initializer=tf.ones(shape=[cnn_hyps[op]['weights'][3]], dtype=tf.float32),
                         validate_shape=False, dtype=tf.float32,trainable=False)
 
                 init_logger.debug('Weights for %s initialized with size %s', op, str(cnn_hyps[op]['weights']))
@@ -640,6 +640,14 @@ def reset_cnn(cnn_hyps,cnn_ops):
 
                 reset_ops.append(tf.assign(bias, new_bias, validate_shape=False))
 
+                with tf.variable_scope('age'):
+                    age_w, age_b = tf.get_variable(TF_WEIGHTS),tf.get_variable(TF_BIAS)
+                    new_age_weights = tf.ones(cnn_hyps[op]['weights'],tf.float32)
+                    new_age_bias = tf.ones([cnn_hyps[op]['weights'][3]],tf.float32)
+
+                reset_ops.append(tf.assign(age_w, new_age_weights, validate_shape=False))
+                reset_ops.append(tf.assign(age_b, new_age_bias, validate_shape=False))
+
                 with tf.variable_scope(TF_BIAS) as child_scope:
                     b_vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                     pool_b_vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -686,6 +694,14 @@ def reset_cnn(cnn_hyps,cnn_ops):
                     new_b_vel = tf.zeros(shape=[cnn_hyps[op]['out']], dtype=tf.float32)
                     reset_ops.append(tf.assign(b_vel, new_b_vel, validate_shape=False))
                     reset_ops.append(tf.assign(pool_b_vel, new_b_vel, validate_shape=False))
+
+                with tf.variable_scope('age'):
+                    age_w, age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                    new_age_weights = tf.ones(shape=[cnn_hyps[op]['in'], cnn_hyps[op]['out']], dtype=tf.float32)
+                    new_age_bias = tf.ones(shape=[cnn_hyps[op]['out']], dtype=tf.float32)
+
+                    reset_ops.append(tf.assign(age_w, new_age_weights, validate_shape=False))
+                    reset_ops.append(tf.assign(age_b, new_age_bias, validate_shape=False))
 
     return reset_ops
 
