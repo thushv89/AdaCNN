@@ -584,8 +584,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
 
         # We remove the entropy for learning rates, because this pushes the learning rate towards 0.5 quickly
-        glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
-        entropy = -mu_s * tf.log((mu_s + 1e-8)) * glob_act_turn_off_vec
+        #glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
+        offset_vec = np.asarray([0.0 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
+            self.global_actions)]).reshape(1, -1)
+        devide_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [2.0 for _ in range(
+            self.global_actions)]).reshape(1, -1)
+        entropy = -((mu_s+offset_vec)/devide_vec) * tf.log(((mu_s+offset_vec+ 1e-8)/devide_vec )) #* glob_act_turn_off_vec
 
         d_H_over_d_ThetaMu = tf.gradients(ys=entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,

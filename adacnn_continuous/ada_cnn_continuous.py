@@ -558,6 +558,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global pool_pred, augmented_pool_data_batch, augmented_pool_label_batch
     global tf_update_hyp_ops, tf_action_info
     global tf_weights_this,tf_bias_this, tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next
+    global tf_age_weights_this, tf_age_bias_this, tf_age_weights_next
     global tf_weight_shape,tf_in_size, tf_out_size
     global increment_global_step_op,tf_learning_rate
     global tf_act_this
@@ -1021,7 +1022,6 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
             count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
 
-
     _ = session.run(tf_add_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, amount_to_add]),
@@ -1043,19 +1043,19 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                                         cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32),
                         tf_act_this: new_act_this,
 
-                        tf_age_weights_this: np.zeros(shape=(
+                        tf_age_weights_this: np.ones(shape=(
                             cnn_hyperparameters[current_op]['weights'][0],
                             cnn_hyperparameters[current_op]['weights'][1],
                             cnn_hyperparameters[current_op]['weights'][2], amount_to_add),dtype=np.float32),
 
-                        tf_age_bias_this: np.zeros(shape=(amount_to_add,),dtype=np.float32),
+                        tf_age_bias_this: np.ones(shape=(amount_to_add,),dtype=np.float32),
 
-                        tf_age_weights_next: np.zeros(shape=(
+                        tf_age_weights_next: np.ones(shape=(
                             cnn_hyperparameters[next_conv_op]['weights'][0],
                             cnn_hyperparameters[next_conv_op]['weights'][1],
                             amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32)
                         if last_conv_id != current_op else
-                        np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
+                        np.ones(shape=(final_2d_width * final_2d_width * amount_to_add,
                                         cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32)
 
                     })
@@ -1250,11 +1250,11 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                             shape=(amount_to_add, next_weights_shape[1],1,1),
                             dtype=np.float32),
                         tf_act_this:new_curr_act,
-                        tf_age_weights_this:np.zeros(
+                        tf_age_weights_this:np.ones(
                             shape=(curr_weight_shape[0],amount_to_add,1,1),
                             dtype=np.float32),
-                        tf_age_bias_this: np.zeros(shape=(amount_to_add),dtype=np.float32),
-                        tf_age_weights_next: np.zeros(
+                        tf_age_bias_this: np.ones(shape=(amount_to_add),dtype=np.float32),
+                        tf_age_weights_next: np.ones(
                             shape=(amount_to_add, next_weights_shape[1],1,1),
                             dtype=np.float32)
                     })
