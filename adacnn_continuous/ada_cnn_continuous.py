@@ -1344,8 +1344,6 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
                 _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
 
-
-
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
 
@@ -1809,9 +1807,12 @@ def reset_cnn_after_adapt():
     logger.info('=' * 80)
     logger.info('End of %d episolde (full epoch)', epoch)
     logger.info('Epsilon: %.5f', start_eps)
+    cnn_structure_logger.info('# RESET CNN')
     session.run(tf_reset_cnn)
     _, init_cnn_hyperparameters, _ = utils.get_ops_hyps_from_string(dataset_info, cnn_string)
+
     cnn_hyperparameters = dict(init_cnn_hyperparameters)
+
     print(cnn_hyperparameters)
     print(init_cnn_hyperparameters)
     for op in cnn_ops:
@@ -1821,7 +1822,9 @@ def reset_cnn_after_adapt():
         elif 'fulcon' in op:
             session.run(tf_update_hyp_ops[op], feed_dict={tf_in_size: init_cnn_hyperparameters[op]['in'],
                                                           tf_out_size: init_cnn_hyperparameters[op]['out']})
+
     print(session.run(tf_cnn_hyperparameters))
+
     session.run(tower_logits, feed_dict=train_feed_dict)
     # hard_pool_ft.reset_pool()
     # hard_pool_valid.reset_pool()
@@ -2412,6 +2415,13 @@ if __name__ == '__main__':
                     logger.critical('Diverged (NaN detected) (batchID) %d (last Cost) %.3f', batch_id,
                                     train_losses[-1])
                     reset_cnn_after_adapt()
+                    model_hyperparameters['add_amount'] = model_hyperparameters['add_amount'] - 1
+                    model_hyperparameters['add_fulcon_amount'] = model_hyperparameters['add_fulcon_amount'] - 1
+                    logger.critical(
+                        'Stepping down add amounts: %d(conv) %d(fulcon)',
+                        model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount']
+                                    )
+                    adapter.update_add_amounts(model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount'])
                     
 
                 train_losses.append(l)
@@ -2695,7 +2705,7 @@ if __name__ == '__main__':
                                     'valid_accuracy': unseen_valid_accuracy}
 
                             if np.random.random()<start_eps:
-                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data)
+                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch)
                             else:
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data)
                         else:
@@ -2777,23 +2787,21 @@ if __name__ == '__main__':
 
         # Reset the model every rl epoch except the last one
         if research_parameters['adapt_structure'] and epoch < model_hyperparameters['rl_epochs'] - 1:
-
+            logger.info('End of a trial epoch')
             reset_cnn_after_adapt()
 
         # We use whatever the model found by the last RL episode
-        if research_parameters['adapt_structure'] and epoch == model_hyperparameters['rl_epochs']-1:
+        if research_parameters['adapt_structure'] and epoch == model_hyperparameters['rl_epochs'] + model_hyperparameters['adapt_epochs']-1:
+            logger.info('End of a adapt epoch')
             stop_adapting = True
-            current_data_lr = 1.0
-            finetune_action = 1.0
             prev_train_acc = 0.0
 
         # =======================================================
         # Decay learning rate (if set) Every 2 epochs
         if research_parameters['adapt_structure']:
+            # Decay learning rate only after all the rl_epochs are over.
             if decay_learning_rate and epoch>model_hyperparameters['rl_epochs'] and epoch%2==1:
                 session.run(increment_global_step_op)
-                current_data_lr *= model_hyperparameters['decay_rate']
-                finetune_action *= model_hyperparameters['decay_rate']
 
         else:
             if decay_learning_rate and epoch>0 and epoch%2==1:

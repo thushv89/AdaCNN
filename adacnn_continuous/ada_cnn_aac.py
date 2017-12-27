@@ -790,7 +790,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
 
     def get_best_reward_s_a_r_s_with_experince(self):
-
+        '''
+        Get the experience that has given best rewards so far
+        :return:
+        '''
         x, y, rewards, sj = None, None, None, None
 
         if len(self.experience)<self.batch_size:
@@ -985,6 +988,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # sample a batch from experience
         s_i, a_i , r, s_i_plus_1 = self.get_s_a_r_s_with_experince(experience_batch)
+        # Trying best reward experience to see of that gets out of sudden crashes AdaCNN experience
+        #s_i, a_i, r, s_i_plus_1 = self.get_best_reward_s_a_r_s_with_experince()
 
         self.verbose_logger.debug('Summary of Experience data')
         self.verbose_logger.debug('\ts(t):%s', s_i.shape)
@@ -1040,7 +1045,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.running_mean_action =  0.9 * self.running_mean_action + 0.1 * a_i
         return self.running_mean_action
 
-    def sample_action_stochastic_from_actor(self,data):
+    def sample_action_stochastic_from_actor(self,data, epoch):
+
+        sigma_local = 0.3 * (0.8**epoch)
+        sigma_global = 0.3
 
         state = []
         state.extend(data['filter_counts_list'])
@@ -1063,8 +1071,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers,
                                               mu=np.asarray([0.0 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]),
-                                              theta=[0.5  for _ in range(self.output_size - self.global_actions)] + [0.4 for _ in range(self.global_actions)],
-                                              sigma=np.asarray([0.2 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]))
+                                              theta=[0.3  for _ in range(self.output_size - self.global_actions)] + [0.3 for _ in range(self.global_actions)],
+                                              sigma=np.asarray([sigma_local for _ in range(self.output_size-self.global_actions)] + [sigma_global for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise
 
@@ -1205,6 +1213,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return filter_values + s[self.net_depth:]
 
+    def update_add_amounts(self, new_add_amount, new_fulcon_add_amount):
+        self.add_amount = new_add_amount
+        self.add_fulcon_amount = new_fulcon_add_amount
+
 
     def scale_adaptaion_propotions_to_number_of_filters(self,a):
         adapt_type = a[-1]
@@ -1212,17 +1224,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         new_a = []
         for a_idx, ai in enumerate(a):
             if a_idx< len(self.conv_ids):
-                if adapt_type>.2:
+                if adapt_type>0.1:
                     new_a.append(floor(ai * self.add_amount))
-                elif adapt_type<-.2:
+                elif adapt_type<-0.1:
                     new_a.append(-floor(ai * self.add_amount))
                 else:
                     new_a.append(0)
 
             elif a_idx < len(self.conv_ids + self.fulcon_ids):
-                if adapt_type>.2:
+                if adapt_type>0.1:
                     new_a.append(floor(ai * self.add_fulcon_amount))
-                elif adapt_type<-.2:
+                elif adapt_type<-0.1:
                     new_a.append(-floor(ai * self.add_fulcon_amount))
                 else:
                     new_a.append(0)
