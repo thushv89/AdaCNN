@@ -1135,7 +1135,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     pbatch_train_count = 0
 
     # Train only with half of the batch
-    if hard_pool_ft.get_size() > batch_size:
+    '''if hard_pool_ft.get_size() > batch_size:
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pbatch_data, pbatch_labels = [], []
@@ -1158,7 +1158,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 pool_feed_dict.update({tf_learning_rate:model_hyperparameters['start_lr']})
 
                 _, _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],
-                                   feed_dict=pool_feed_dict)
+                                   feed_dict=pool_feed_dict)'''
 
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
@@ -1322,7 +1322,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
     # Train only newly added parameters
-    if hard_pool_ft.get_size()>batch_size:
+    '''if hard_pool_ft.get_size()>batch_size:
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
             if np.random.random() < research_parameters['finetune_rate']:
                 pbatch_data, pbatch_labels = [], []
@@ -1344,7 +1344,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
                 pool_feed_dict.update({tf_learning_rate: model_hyperparameters['start_lr']})
 
-                _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)
+                _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)'''
 
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
@@ -2420,8 +2420,8 @@ if __name__ == '__main__':
                     logger.critical('Diverged (NaN detected) (batchID) %d (last Cost) %.3f', batch_id,
                                     train_losses[-1])
                     reset_cnn_after_adapt()
-                    model_hyperparameters['add_amount'] = model_hyperparameters['add_amount'] - 1
-                    model_hyperparameters['add_fulcon_amount'] = model_hyperparameters['add_fulcon_amount'] - 1
+                    #model_hyperparameters['add_amount'] = model_hyperparameters['add_amount'] - 1
+                    #model_hyperparameters['add_fulcon_amount'] = model_hyperparameters['add_fulcon_amount'] - 1
                     logger.critical(
                         'Stepping down add amounts: %d(conv) %d(fulcon)',
                         model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount']
