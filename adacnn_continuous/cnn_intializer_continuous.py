@@ -706,6 +706,19 @@ def reset_cnn(cnn_hyps,cnn_ops):
     return reset_ops
 
 
+def reset_age_variables(cnn_ops):
+
+    reset_ops = []
+    for op in cnn_ops:
+        if 'conv' in op or 'fulcon' in op:
+            with tf.variable_scope(op, reuse=True) as scope:
+                with tf.variable_scope('age',reuse=True):
+                    age_w,age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
+                    reset_ops.append(tf.assign(age_w, age_w/age_w, validate_shape=False))
+                    reset_ops.append(tf.assign(age_b, age_b / age_b, validate_shape=False))
+
+    return reset_ops
+
 
 def init_tf_hyperparameters(cnn_ops, cnn_hyperparameters):
     tf_hyp_list = {}

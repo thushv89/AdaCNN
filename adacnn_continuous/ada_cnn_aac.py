@@ -1152,6 +1152,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         valid_action = action.tolist()
         neg_action = [0.0 for _ in range(self.output_size)]
+        neg_action[-1] =  action[-1]
 
         scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(action)
 
@@ -1199,7 +1200,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             #scaled_pos_action = self.scale_adaptaion_propotions_to_number_of_filters(pos_action)
             #next_pos_state = self.get_next_state_from_state_action(state, scaled_pos_action)
 
-            self.update_experience(state, neg_action, -0.5, next_neg_state)
+            if action[-1]<-0.1:
+                self.update_experience(state, neg_action, -0.5, next_neg_state)
+            elif action[-1]>0.1:
+                self.update_experience(state, neg_action, -0.05, next_neg_state)
             # Let's not have this
             #self.update_experience(state, pos_action, 0.5, next_pos_state)
 
@@ -1291,12 +1295,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.debug('Si,Ai,Sj: %s,%s,%s', si, ai, sj)
 
         comp_gain = self.get_complexity_penalty(data['curr_state'], data['prev_state'], self.filter_bound_vec)
-        layer_order_reward = self.get_ordered_layer_size_reward(data['curr_state'][:self.net_depth], data['prev_state'][:self.net_depth])
 
         before_adapt_queue = data['pool_accuracy_before_adapt_queue']
         after_adapt_queue = data['pool_accuracy_after_adapt_queue']
 
-        accuracy_push_reward = (2.0*self.top_k_accuracy/self.num_classes) \
+        accuracy_push_reward = (before_adapt_queue[-1]/100.0)*(2.0*self.top_k_accuracy/self.num_classes) \
             if before_adapt_queue[-1] > max(before_adapt_queue) else 0
 
         ai_rew = self.get_action_specific_reward(ai)
@@ -1311,11 +1314,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.info('Complexity reward: %.5f', comp_gain)
         self.verbose_logger.info('Pool Accuracy (gain): %.5f ', mean_accuracy)
-        self.verbose_logger.info('Layer order penalty: %.5f', layer_order_reward)
         self.verbose_logger.info('Valid Accuracy (gain): %.5f', mean_valid_accuracy)
+        self.verbose_logger.info('Accuracy push reward: %.5f', accuracy_push_reward)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy + accuracy_push_reward
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy + comp_gain #+ accuracy_push_reward
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:

@@ -212,6 +212,7 @@ perf_logger = None
 
 # Reset CNN
 tf_reset_cnn, tf_reset_cnn_custom = None, None
+tf_reset_age = None
 prune_reward_experience = []
 
 
@@ -544,7 +545,7 @@ def get_activation_dictionary(activation_list, cnn_ops, conv_op_ids):
 
 def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters):
     global optimizer
-    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_reset_cnn_custom, tf_prune_cnn_hyperparameters
+    global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_reset_age, tf_reset_cnn_custom, tf_prune_cnn_hyperparameters
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
     global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
@@ -763,6 +764,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_replicative_factor_vec = tf.placeholder(dtype=tf.float32, shape=[None], name='tf_replicative_factor')
 
                 tf_reset_cnn = cnn_intializer_continuous.reset_cnn(init_cnn_hyperparameters, cnn_ops)
+                tf_reset_age = cnn_intializer_continuous.reset_age_variables(cnn_ops)
 
                 for op in cnn_ops:
                     if 'pool' in op:
@@ -2122,8 +2124,11 @@ if __name__ == '__main__':
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='cifar-100':
         n_tasks = 4
-        labels_per_task = 50
-        labels_of_each_task = [list(range(0,50)),list(range(25,75)),list(range(50,100)),list(range(75,100))+list(range(0,25))]
+        labels_per_task = 75
+        labels_of_each_task = [list(range(0,75)),
+                               list(range(75,100))+list(range(0,50)),
+                               list(range(50,100))+list(range(0,25)),
+                               list(range(25,100))]
     elif datatype=='imagenet-250':
         # override settings
         n_tasks = 2
@@ -2586,7 +2591,7 @@ if __name__ == '__main__':
 
                     # ==================================================================
                     # Actual Adaptations
-                    if (start_adapting and not stop_adapting) and batch_id > 0 and \
+                    if (start_adapting and not stop_adapting) and batch_id > 200 and \
                                             batch_id % interval_parameters['policy_interval'] == 4:
 
                         # ==================================================================
@@ -2793,6 +2798,7 @@ if __name__ == '__main__':
         # We use whatever the model found by the last RL episode
         if research_parameters['adapt_structure'] and epoch == model_hyperparameters['rl_epochs'] + model_hyperparameters['adapt_epochs']-1:
             logger.info('End of a adapt epoch')
+            session.run(tf_reset_age)
             stop_adapting = True
             prev_train_acc = 0.0
 
