@@ -964,7 +964,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if random_add<0.25:
+        if random_add<0.1:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -1205,7 +1205,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if random_add<0.25:
+        if random_add<0.1:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -2726,6 +2726,7 @@ if __name__ == '__main__':
                         running_binned_data_dist_vector = np.zeros(
                             (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
 
+                        random_add = np.random.random()
                         for li, la in enumerate(layer_specific_actions):
 
                             layer_id_for_action = None
@@ -2743,7 +2744,6 @@ if __name__ == '__main__':
                                     break
 
                             if ai>0.0:
-                                random_add = np.random.random()
                                 if 'conv' in current_op:
                                     run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, epoch, random_add)
                                 elif 'fulcon' in current_op:
