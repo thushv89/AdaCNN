@@ -964,7 +964,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if random_add<0.1:
+        if random_add<0.0:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -1008,7 +1008,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         # Random initialization
         else:
             print('Random Initialization')
-            rand_scale = 0.0001
+            rand_scale = 0.001
             new_curr_weights = np.random.uniform(low=-rand_scale, high=rand_scale, size=(
             curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
             new_curr_bias = np.random.uniform(low=-rand_scale, high=rand_scale, size=(amount_to_add))
@@ -1205,7 +1205,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if random_add<0.1:
+        if random_add<0.0:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -1228,7 +1228,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         else:
-            rand_scale = 0.0001
+            rand_scale = 0.001
             new_curr_weights = np.random.uniform(low=-rand_scale,high=rand_scale,size=(curr_weight_shape[0],amount_to_add,1,1))
             new_curr_bias = np.random.uniform(low=-rand_scale,high=rand_scale,size=(amount_to_add))
 
@@ -1605,181 +1605,6 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
     return new_data_prior
 
 
-def init_tf_prune_cnn_hyperparameters():
-    '''
-    Initialize prune CNN hyperparameters with placeholders for each weight shape
-    :return:
-    '''
-    global tf_prune_cnn_hyperparameters
-
-    for op in cnn_ops:
-        if 'conv' in op:
-            tf_prune_cnn_hyperparameters[op] = {'weights':
-                                   tf.placeholder(shape=[4],dtype=tf.int32)
-                               }
-
-        if 'fulcon' in op:
-
-            tf_prune_cnn_hyperparameters[op] = {'in': tf.placeholder(shape=None, dtype=tf.int32),
-                               'out': tf.placeholder(shape=None, dtype=tf.int32)
-                                   }
-
-
-def get_pruned_cnn_hyperparameters(current_cnn_hyperparams,prune_factor):
-    '''
-    Get pruned hyperparameters by pruning the current architecture with a factor
-    Should look like below
-    pruned_cnn_hyps = {conv_0:{'weights':[x,y,z,w]},'fulcon_out':{'in':x,'out':y}}
-    :param current_cnn_hyperparams: Current CNN weight shapes
-    :param prune_factor: How much of the network is to prune
-    :return:
-    '''
-    global cnn_ops,first_fc,final_2d_width,model_hyperparameters
-    pruned_cnn_hyps = {}
-    prev_op = None
-    prev_fulcon_op = None
-    for op in cnn_ops:
-        if 'pool' in op:
-            pruned_cnn_hyps[op] = dict(current_cnn_hyperparams[op])
-
-        if 'conv' in op:
-
-            if op=='conv_0':
-                pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
-                                       'stride': list(current_cnn_hyperparams[op]['stride']),
-                                       'padding': 'SAME'}
-                pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
-                                              int(pruned_cnn_hyps[op]['weights'][3]*prune_factor)])
-
-            else:
-                pruned_cnn_hyps[op] = {'weights': list(current_cnn_hyperparams[op]['weights']),
-                                       'stride': list(current_cnn_hyperparams[op]['stride']),
-                                       'padding': 'SAME'}
-                pruned_cnn_hyps[op]['weights'][2] = pruned_cnn_hyps[prev_op]['weights'][3]
-                pruned_cnn_hyps[op]['weights'][3] = max([model_hyperparameters['filter_min_threshold'],
-                                                         int(pruned_cnn_hyps[op]['weights'][3] * prune_factor)])
-            prev_op = op
-
-        if 'fulcon' in op:
-
-            # if first fc is fulcon_out
-            if op==first_fc and op=='fulcon_out':
-                pruned_cnn_hyps[op] = {'in':current_cnn_hyperparams[op]['in'],
-                                       'out': current_cnn_hyperparams[op]['out']}
-                pruned_cnn_hyps[op]['in']=final_2d_width*final_2d_width*pruned_cnn_hyps[prev_op]['weights'][3]
-            # if first_fc is not fulcon_out
-            elif op==first_fc:
-                pruned_cnn_hyps[op] = {'in': current_cnn_hyperparams[op]['in'],
-                                       'out': max([model_hyperparameters['fulcon_min_threshold'],
-                                                   int(current_cnn_hyperparams[op]['out'] * prune_factor)])}
-                pruned_cnn_hyps[op]['in'] = final_2d_width * final_2d_width * pruned_cnn_hyps[prev_op]['weights'][3]
-            # for all layers not first_fc and fulcon_out
-            elif op != 'fulcon_out':
-                pruned_cnn_hyps[op] = {'in': pruned_cnn_hyps[prev_fulcon_op]['out'],
-                                       'out': max([model_hyperparameters['fulcon_min_threshold'],
-                                                   int(current_cnn_hyperparams[op]['out'] * prune_factor)])}
-            # for fulcon_out if fulcon_out is not first_fc
-            else:
-                pruned_cnn_hyps[op] = {'in': pruned_cnn_hyps[prev_fulcon_op]['out'],
-                                       'out': current_cnn_hyperparams[op]['out']}
-            prev_fulcon_op = op
-
-    return pruned_cnn_hyps
-
-
-def get_pruned_ids_feed_dict(cnn_hyps,pruned_cnn_hyps,weight_means):
-    global tf_retain_id_placeholders, cnn_ops,num_channels,final_2d_width,first_fc
-
-    retain_ids_feed_dict = {}
-    prev_op = None
-    for op in cnn_ops:
-        logger.info('Calculating prune ids for %s (op) %s (prev_op)',op,prev_op)
-        if 'pool' in op:
-            continue
-        elif 'conv' in op:
-
-            # Out pruning
-            amount_to_retain_out_ch = pruned_cnn_hyps[op]['weights'][3]
-            logger.info('\tAmount of filers to retain for %s: %d (out)',op,amount_to_retain_out_ch)
-            op_weight_means = weight_means[op]
-            op_retain_ids_out = np.argsort(op_weight_means).ravel()[-amount_to_retain_out_ch:]
-            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']: op_retain_ids_out})
-
-            # In pruning
-            if prev_op is not None:
-                assert pruned_cnn_hyps[op]['weights'][2] == pruned_cnn_hyps[prev_op]['weights'][3]
-                amount_to_retain_in_ch = pruned_cnn_hyps[op]['weights'][2]
-                prev_op_weight_means = weight_means[prev_op]
-                op_retain_ids_in = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch:]
-                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
-                logger.info('\tAmount of filers to retain for %s: %d (in)', op, amount_to_retain_in_ch)
-            else:
-                op_retain_ids_in = np.arange(pruned_cnn_hyps[cnn_ops[0]]['weights'][2])
-                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
-
-            prev_op = op
-
-        elif 'fulcon' in op:
-            # Out pruning
-            amount_to_retain_out_ch = pruned_cnn_hyps[op]['out']
-            logger.info('\tAmount of filers to retain for %s: %d (out)', op, amount_to_retain_out_ch)
-            op_weight_means = weight_means[op]
-            op_retain_ids_out = np.argsort(op_weight_means).ravel()[-amount_to_retain_out_ch:]
-            retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['out']:op_retain_ids_out})
-
-            # In Pruning
-            if op==first_fc:
-                amount_to_retain_in_ch_slices = pruned_cnn_hyps[prev_op]['weights'][3]
-                logger.info('\tAmount of filers to retain for %s: %d (in slices)', op, amount_to_retain_in_ch_slices)
-                prev_op_weight_means = weight_means[prev_op]
-                op_retain_slice_ids = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch_slices:]
-
-                op_retain_ids_in = []
-                for slice_id in op_retain_slice_ids:
-                    op_retain_ids_in.extend(list(range(slice_id*(final_2d_width*final_2d_width),(slice_id+1)*(final_2d_width*final_2d_width))))
-
-                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, len(op_retain_ids_in))
-                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: np.asarray(op_retain_ids_in)})
-
-            else:
-                amount_to_retain_in_ch = pruned_cnn_hyps[op]['in']
-                logger.info('\tAmount of filers to retain for %s: %d (in ids)', op, amount_to_retain_in_ch)
-                prev_op_weight_means = weight_means[prev_op]
-                op_retain_ids_in = np.argsort(prev_op_weight_means).ravel()[-amount_to_retain_in_ch:]
-                retain_ids_feed_dict.update({tf_retain_id_placeholders[op]['in']: op_retain_ids_in})
-
-            prev_op = op
-
-    return retain_ids_feed_dict
-
-
-def get_pruned_cnn_hyp_feed_dict(prune_hyps):
-    '''
-    Prepare the feed dict to be fed when running the pruning op
-    :param prune_hyps:
-    :return:
-    '''
-    global tf_prune_cnn_hyperparameters,cnn_ops
-    feed_dict = {}
-    for op in cnn_ops:
-        if 'conv' in op:
-            feed_dict.update(
-                {tf_prune_cnn_hyperparameters[op]['weights']:
-                     prune_hyps[op]['weights']}
-            )
-        if 'fulcon' in op:
-            feed_dict.update(
-                {tf_prune_cnn_hyperparameters[op]['in']:
-                 prune_hyps[op]['in']}
-            )
-            feed_dict.update(
-                {tf_prune_cnn_hyperparameters[op]['out']:
-                     prune_hyps[op]['out']}
-            )
-
-    return feed_dict
-
-
 def calculate_pool_accuracy(hard_pool):
     '''
     Calculates the mini-batch wise accuracy for all the data points in the pool
@@ -2083,7 +1908,7 @@ if __name__ == '__main__':
         current_adaptive_dropout = get_adaptive_dropout()
         state_history_length = 2
         growth_adapter = ada_cnn_aac.AdaCNNAdaptingAdvantageActorCritic(
-            discount_rate=0.75,
+            discount_rate=0.9,
             filter_vector=filter_vector,
             conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
             n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
@@ -2710,7 +2535,8 @@ if __name__ == '__main__':
                                     'valid_accuracy': unseen_valid_accuracy}
 
                             if np.random.random()<start_eps:
-                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch)
+                                normalized_batch_id = ((task * n_iter_per_task) + batch_id)*1.0/(n_tasks*n_iter_per_task)
+                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch, normalized_batch_id)
                             else:
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data)
                         else:

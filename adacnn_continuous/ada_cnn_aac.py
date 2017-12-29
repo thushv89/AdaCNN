@@ -110,7 +110,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
-        self.entropy_beta = 0.05
+        self.entropy_beta = 0.01
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -551,7 +551,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate)
         grads = optimizer.compute_gradients(loss,var_list=self.get_all_variables(constants.TF_CRITIC_SCOPE,False))
 
         optimize = optimizer.apply_gradients(grads)
@@ -598,6 +598,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
         d_mu_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_mu_over_d_ThetaMu,25.0)
+        d_H_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_H_over_d_ThetaMu, 10.0)
+
         grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
 
         #grads,_ = tf.clip_by_global_norm(grads,25.0)
@@ -606,7 +608,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         #grads = [(tf.clip_by_value(d_mu, -25.0, 25.0), v) for d_mu, v in
         #         zip(d_mu_over_d_ThetaMu, theta_mu)]
-        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/10.0).apply_gradients(grads)
+        grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate/2.0).apply_gradients(grads)
 
         #grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.sqrt(tf.reduce_mean([tf.reduce_sum(g**2) for (g,_) in grads]))
@@ -1045,10 +1047,18 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.running_mean_action =  0.9 * self.running_mean_action + 0.1 * a_i
         return self.running_mean_action
 
-    def sample_action_stochastic_from_actor(self,data, epoch):
+    def get_adapt_type(self, batch_id_normalized, phase):
+        return np.sin(batch_id_normalized*2.0*np.pi+(phase*np.pi))
 
-        sigma_local = 0.3 * (0.8**epoch)
+    def sample_action_stochastic_from_actor(self,data, epoch, batch_id_normalized):
+
+        sigma_local = 0.3
         sigma_global = 0.3
+
+        if epoch%2==0:
+            phase = 0.0
+        else:
+            phase = 0.5
 
         state = []
         state.extend(data['filter_counts_list'])
@@ -1077,13 +1087,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         cont_actions_all_layers += exp_noise
 
         # Otherwise can go above 1
-        cont_actions_all_layers = np.clip(cont_actions_all_layers,-1.0,1.0)
-        cont_actions_all_layers[:len(self.conv_ids)+len(self.fulcon_ids)] = np.clip(cont_actions_all_layers[:len(self.conv_ids)+len(self.fulcon_ids)],0.0,1.0)
+        cont_actions_all_layers = np.clip(cont_actions_all_layers,0.0,1.0)
+        cont_actions_all_layers[-1] = self.get_adapt_type(batch_id_normalized,phase)
+
 
         self.verbose_logger.info('Action before checking validity')
         self.verbose_logger.info(cont_actions_all_layers)
 
-        valid_action = self.get_new_valid_action_when_stochastic(
+        valid_action = self.get_new_valid_action(
              cont_actions_all_layers, data, state
         )
 
@@ -1121,7 +1132,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Action before checking validity')
         self.verbose_logger.info(cont_actions_all_layers)
 
-        valid_action = self.get_new_valid_action_when_stochastic(
+        valid_action = self.get_new_valid_action(
             cont_actions_all_layers, data, state
         )
 
@@ -1146,7 +1157,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('\t%s (scaled)',scaled_a)
         return state, scaled_a, valid_action
 
-    def get_new_valid_action_when_stochastic(self, action, data, state):
+    def get_new_valid_action(self, action, data, state):
 
         self.verbose_logger.debug('Getting new valid action (stochastic)')
 
@@ -1158,21 +1169,20 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         atleast_one_invalid_action = False
         for a_idx, (a, scl_a) in enumerate(zip(valid_action,scaled_a)):
-            layer_id_for_action = None
 
             # For Convolution layers
             if a_idx < len(self.conv_ids):
                 layer_id_for_action = self.conv_ids[a_idx]
-                self.verbose_logger.debug('Checking validity for action id %d and layer_id %d (conv)',a_idx,layer_id_for_action)
+                self.verbose_logger.info('Checking validity for action id %d and layer_id %d (conv)',a_idx,layer_id_for_action)
 
                 next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + scl_a
-                self.verbose_logger.debug('\tTrying to add %d',scl_a)
-                self.verbose_logger.debug('\tNext layer complexity: %d (min: %d), (max: %d)',next_layer_complexity, self.min_filter_threshold, self.filter_bound_vec[layer_id_for_action])
+                self.verbose_logger.info('\tTrying to add %d',scl_a)
+                self.verbose_logger.info('\tNext layer complexity: %d (min: %d), (max: %d)',next_layer_complexity, self.min_filter_threshold, self.filter_bound_vec[layer_id_for_action])
 
-                if next_layer_complexity < self.min_filter_threshold or next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
+                if next_layer_complexity <= self.min_filter_threshold or next_layer_complexity >= self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
                     neg_action[a_idx] = a
-                    valid_action[a_idx] *= 0.0
+                    valid_action[a_idx] = 0.0
                     atleast_one_invalid_action = True
             # For fully-connected layers
             elif a_idx < len(self.conv_ids) + len(self.fulcon_ids):
@@ -1183,11 +1193,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 next_layer_complexity = data['filter_counts_list'][layer_id_for_action] + scl_a
                 self.verbose_logger.debug('\tTrying to add %d', scl_a)
                 self.verbose_logger.debug('\tNext layer complexity: %d', next_layer_complexity)
-                if next_layer_complexity < self.min_fulcon_threshold or \
-                                next_layer_complexity > self.filter_bound_vec[layer_id_for_action]:
+                if next_layer_complexity <= self.min_fulcon_threshold or \
+                                next_layer_complexity >= self.filter_bound_vec[layer_id_for_action]:
                     self.verbose_logger.debug('\tAction Invalid')
                     neg_action[a_idx] = a
-                    valid_action[a_idx] *= 0.0
+                    valid_action[a_idx] = 0.0
                     atleast_one_invalid_action = True
             # For finetune action there is no invalid state
             else:
@@ -1229,17 +1239,30 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         for a_idx, ai in enumerate(a):
             if a_idx< len(self.conv_ids):
                 if adapt_type>0.1:
-                    new_a.append(floor(ai * self.add_amount))
+                    # only use max function if the actual amount is greater than or equal to 1
+                    if floor(ai * self.add_amount) >= 1.0:
+                        new_a.append(max(floor(ai * self.add_amount),2))
+                    else:
+                        new_a.append(0)
                 elif adapt_type<-0.1:
-                    new_a.append(-floor(ai * self.add_amount))
+                    if floor(ai * self.add_amount) >= 1.0:
+                        new_a.append(-max(floor(ai * self.add_amount),2))
+                    else:
+                        new_a.append(0)
                 else:
                     new_a.append(0)
 
             elif a_idx < len(self.conv_ids + self.fulcon_ids):
                 if adapt_type>0.1:
-                    new_a.append(floor(ai * self.add_fulcon_amount))
+                    if floor(ai * self.add_fulcon_amount) >= 1.0:
+                        new_a.append(max(floor(ai * self.add_fulcon_amount),2))
+                    else:
+                        new_a.append(0)
                 elif adapt_type<-0.1:
-                    new_a.append(-floor(ai * self.add_fulcon_amount))
+                    if floor(ai * self.add_fulcon_amount) >= 1.0:
+                        new_a.append(-max(floor(ai * self.add_fulcon_amount),2))
+                    else:
+                        new_a.append(0)
                 else:
                     new_a.append(0)
 
