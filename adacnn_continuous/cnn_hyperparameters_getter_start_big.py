@@ -103,7 +103,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     else:
         model_hyperparameters['dropout_rate'] = 0.1
         model_hyperparameters['in_dropout_rate'] = 0.0
-    model_hyperparameters['use_dropout'] = True
+    model_hyperparameters['use_dropout'] = False
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
@@ -125,7 +125,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-    model_hyperparameters['include_l2_loss'] = True
+    model_hyperparameters['include_l2_loss'] = False
     model_hyperparameters['beta'] = 0.0005
     model_hyperparameters['use_loc_res_norm'] = False
 

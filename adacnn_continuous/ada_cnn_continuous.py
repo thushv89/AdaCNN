@@ -1352,7 +1352,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
     global current_adaptive_dropout
 
-    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3])),replace=False,size=(amount_to_rmv))
+    #start_rm_idx = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3]-amount_to_rmv)))
+    start_rm_idx = 0
+    rm_indices = np.array(list(range(start_rm_idx,start_rm_idx+amount_to_rmv)))
     logger.info('Running remove operation for %s by removing %d filetrs from %d (total)',
                 current_op, amount_to_rmv,cnn_hyperparameters[current_op]['weights'][3])
     logger.debug('Removing indices')
@@ -1431,7 +1433,10 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
 def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
 
     global current_adaptive_dropout
-    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv))
+    #start_rm_idx = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'] - amount_to_rmv)))
+    start_rm_idx = 0
+    rm_indices = np.array(list(range(start_rm_idx, start_rm_idx + amount_to_rmv)))
+    #rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv))
 
     logger.info('Running remove (fulcon) operation for %s by removing %d from %d',
                 current_op, amount_to_rmv, cnn_hyperparameters[current_op]['out'])
@@ -1511,24 +1516,24 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
     if hard_pool_ft.get_size() > batch_size:
         # Train with latter half of the data
         for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < rate:
-                #print('fintuning network (pool_id: ',pool_id,')')
-                pool_feed_dict = {}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-                for gpu_id in range(num_gpus):
-                    pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                   pool_id + gpu_id + 1) * batch_size,
-                                  :, :, :]
-                    pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                    pool_id + gpu_id + 1) * batch_size,
-                                    :]
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels})
+            #if np.random.random() < 0.5:
+            #print('fintuning network (pool_id: ',pool_id,')')
+            pool_feed_dict = {}
+            pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+            for gpu_id in range(num_gpus):
+                pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
+                                                                               pool_id + gpu_id + 1) * batch_size,
+                              :, :, :]
+                pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
+                                                                                pool_id + gpu_id + 1) * batch_size,
+                                :]
+                pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
+                                       tf_pool_label_batch[gpu_id]: pbatch_labels})
 
-                if adapt_structure:
-                    pool_feed_dict.update({tf_learning_rate: current_data_lr * model_hyperparameters['start_lr']})
+            if adapt_structure:
+                pool_feed_dict.update({tf_learning_rate: rate * model_hyperparameters['start_lr']})
 
-                _ = session.run([apply_pool_grads_op,update_pool_velocity_ops],feed_dict=pool_feed_dict)
+            _ = session.run([apply_pool_grads_op,update_pool_velocity_ops],feed_dict=pool_feed_dict)
 
 
 def top_n_accuracy(predictions,labels,n):
@@ -2076,7 +2081,7 @@ if __name__ == '__main__':
             # max_pool_accuracy = 0.0
 
             research_parameters['momentum']=0.9
-            research_parameters['pool_momentum']=0.9
+            research_parameters['pool_momentum']=0.0
 
             cnn_optimizer.update_hyperparameters(research_parameters)
 
@@ -2425,7 +2430,7 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, _ = current_action[:-1], current_action[-1]
+                            layer_specific_actions, adapt_type = current_action[:-1], current_action[-1]
                             current_data_lr = 1.0
                             finetune_action = 1.0
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
@@ -2542,7 +2547,7 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, _ = current_action[:-1], current_action[-1]
+                        layer_specific_actions, adapt_type = current_action[:-1], current_action[-1]
 
                         logger.info('Finetune rate: %.5f', finetune_action)
                         logger.info('Data train rate: %.5f', current_data_lr)
@@ -2569,20 +2574,20 @@ if __name__ == '__main__':
                                     last_conv_id = tmp_op
                                     break
 
-                            if ai>0.0:
+                            if ai > 0.0:
                                 if 'conv' in current_op:
                                     run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, epoch, random_add)
                                 elif 'fulcon' in current_op:
                                     run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai, epoch, random_add)
 
-                            elif ai <0.0:
+                            elif ai < 0.0:
                                 if 'conv' in current_op:
                                     run_actual_remove_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,abs(ai))
                                 elif 'fulcon' in current_op:
                                     run_actual_remove_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id,hard_pool_ft,abs(ai))
 
-                        if finetune_action>0.0:
-                            # pooling takes place here
+                        # pooling takes place here
+                        if adapt_type>0.0:
                             run_actual_finetune_operation(hard_pool_ft,finetune_action)
 
                         # ==================================================================
@@ -2594,7 +2599,7 @@ if __name__ == '__main__':
                         # ==================================================================
 
                         unseen_valid_after_predictions = session.run(valid_predictions_op, feed_dict=feed_valid_dict)
-                        if num_labels>25:
+                        if num_labels > 25:
                             unseen_valid_after_accuracy = top_n_accuracy(unseen_valid_after_predictions, batch_valid_labels,5)
                         else:
                             unseen_valid_after_accuracy = accuracy(unseen_valid_after_predictions, batch_valid_labels)
@@ -2626,6 +2631,8 @@ if __name__ == '__main__':
             logger.info('End of a adapt epoch')
             session.run(tf_reset_age)
             stop_adapting = True
+            # We start using dropout once adaptations are finished
+            model_hyperparameters['use_dropout'] = True
             prev_train_acc = 0.0
 
         # =======================================================
