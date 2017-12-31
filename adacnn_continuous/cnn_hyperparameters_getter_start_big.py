@@ -92,7 +92,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['adapt_structure'] = adapt_structure
     model_hyperparameters['batch_size'] = 64  # number of datapoints in a single batch
-    model_hyperparameters['start_lr'] = 0.0005
+    model_hyperparameters['start_lr'] = 0.0002
     model_hyperparameters['min_learning_rate'] = 0.00001
     model_hyperparameters['decay_learning_rate'] = True
     model_hyperparameters['decay_rate'] = 0.75
@@ -103,7 +103,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     else:
         model_hyperparameters['dropout_rate'] = 0.1
         model_hyperparameters['in_dropout_rate'] = 0.0
-    model_hyperparameters['use_dropout'] = False
+    model_hyperparameters['use_dropout'] = True
     model_hyperparameters['check_early_stopping_from'] = 5
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
@@ -111,8 +111,8 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['epochs'] = 6
     if adapt_structure:
         model_hyperparameters['rl_epochs'] = 5
+        model_hyperparameters['adapt_epochs'] = model_hyperparameters['epochs'] // 2
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
-        model_hyperparameters['adapt_epochs'] = model_hyperparameters['epochs']//2
 
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.9
@@ -125,7 +125,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     if not (adapt_structure and use_pooling):
         model_hyperparameters['iterations_per_batch'] = 2
 
-    model_hyperparameters['include_l2_loss'] = False
+    model_hyperparameters['include_l2_loss'] = True
     model_hyperparameters['beta'] = 0.0005
     model_hyperparameters['use_loc_res_norm'] = False
 

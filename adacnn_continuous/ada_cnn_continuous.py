@@ -1353,8 +1353,12 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
     global current_adaptive_dropout
 
     #start_rm_idx = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3]-amount_to_rmv)))
-    start_rm_idx = 0
-    rm_indices = np.array(list(range(start_rm_idx,start_rm_idx+amount_to_rmv)))
+    #start_rm_idx = 0
+    #rm_indices = np.array(list(range(start_rm_idx,start_rm_idx+amount_to_rmv)))
+
+    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3])), replace=False,
+                                  size=(amount_to_rmv))
+
     logger.info('Running remove operation for %s by removing %d filetrs from %d (total)',
                 current_op, amount_to_rmv,cnn_hyperparameters[current_op]['weights'][3])
     logger.debug('Removing indices')
@@ -1434,9 +1438,9 @@ def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id
 
     global current_adaptive_dropout
     #start_rm_idx = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'] - amount_to_rmv)))
-    start_rm_idx = 0
-    rm_indices = np.array(list(range(start_rm_idx, start_rm_idx + amount_to_rmv)))
-    #rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv))
+    #start_rm_idx = 0
+    #rm_indices = np.array(list(range(start_rm_idx, start_rm_idx + amount_to_rmv)))
+    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv))
 
     logger.info('Running remove (fulcon) operation for %s by removing %d from %d',
                 current_op, amount_to_rmv, cnn_hyperparameters[current_op]['out'])
@@ -1571,7 +1575,7 @@ def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparam
     hyp_logger.info(model_hyperparameters)
 
 
-def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_iterations,labels_of_each_task,n_labels):
+def change_data_prior_to_introduce_new_labels_over_time(data_priors,n_tasks,n_iterations,labels_of_each_task,n_labels):
     '''
     We consider a group of labels as one task
     :param data_prior: probabilities for each class
@@ -1599,7 +1603,7 @@ def change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_ite
         logger.info('Preparing data from index %d to index %d',start_idx,end_idx)
 
         for dist_i in range(start_idx,end_idx):
-            new_data_prior[dist_i,labels_of_each_task[task_id]] = data_prior[dist_i]
+            new_data_prior[dist_i,labels_of_each_task[task_id]] = data_priors[task_id][dist_i]
             if print_i < 2:
                 logger.info('Sample label sequence')
                 logger.info(new_data_prior[dist_i])
@@ -1950,15 +1954,18 @@ if __name__ == '__main__':
                                             dataset_info['dataset_name'], session)
 
     labels_per_task = num_labels // n_tasks
+    n_iter_per_task = n_iterations // n_tasks
+
     if datatype=='cifar-10':
         labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
     elif datatype=='cifar-100':
         n_tasks = 4
-        labels_per_task = 75
-        labels_of_each_task = [list(range(0,75)),
-                               list(range(75,100))+list(range(0,50)),
-                               list(range(50,100))+list(range(0,25)),
-                               list(range(25,100))]
+        labels_per_task = [25,50,75,100]
+        labels_of_each_task = [list(range(0,25)),
+                               list(range(0,50)),
+                               list(range(0,75)),
+                               list(range(0,100))]
+
     elif datatype=='imagenet-250':
         # override settings
         n_tasks = 2
@@ -1966,13 +1973,20 @@ if __name__ == '__main__':
         labels_of_each_task = [list(range(0, 250)),list(range(0, 250))]
 
     if behavior=='non-stationary':
-        data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
+        #data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
+        # Creating priors per task
+        data_prior_per_task = []
+        for n_l in labels_per_task:
+            data_prior_per_task.append(label_sequence_generator.create_prior(n_iter_per_task,behavior,n_l,data_fluctuation))
     elif behavior=='stationary':
-        data_prior = np.ones((n_iterations, labels_per_task)) * (1.0 / labels_per_task)
+        # data_prior = np.ones((n_iterations, labels_per_task)) * (1.0 / labels_per_task)
+        data_prior_per_task = []
+        for n_l in labels_per_task:
+            data_prior_per_task.append(label_sequence_generator.create_prior(n_iter_per_task,behavior,n_l,data_fluctuation))
     else:
         raise NotImplementedError
 
-    data_prior = change_data_prior_to_introduce_new_labels_over_time(data_prior,n_tasks,n_iterations,labels_of_each_task,num_labels)
+    data_prior = change_data_prior_to_introduce_new_labels_over_time(data_prior_per_task,n_tasks,n_iterations,labels_of_each_task,num_labels)
 
     logger.debug('CNN_HYPERPARAMETERS')
     logger.debug('\t%s\n', tf_cnn_hyperparameters)
@@ -2021,7 +2035,6 @@ if __name__ == '__main__':
     # need to have a starting value because if the algorithm choose to add the data to validation set very first step
     train_accuracy = 0
 
-    n_iter_per_task = n_iterations//n_tasks
 
     prev_binned_data_dist_vector = None
     running_binned_data_dist_vector = np.zeros((model_hyperparameters['binned_data_dist_length']),dtype=np.float32)
@@ -2587,7 +2600,7 @@ if __name__ == '__main__':
                                     run_actual_remove_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id,hard_pool_ft,abs(ai))
 
                         # pooling takes place here
-                        if adapt_type>0.0:
+                        if adapt_type>-0.1:
                             run_actual_finetune_operation(hard_pool_ft,finetune_action)
 
                         # ==================================================================
@@ -2627,7 +2640,7 @@ if __name__ == '__main__':
             reset_cnn_after_adapt()
 
         # We use whatever the model found by the last RL episode
-        if research_parameters['adapt_structure'] and epoch == model_hyperparameters['rl_epochs'] + model_hyperparameters['adapt_epochs']-1:
+        if research_parameters['adapt_structure'] and epoch >= model_hyperparameters['rl_epochs'] + model_hyperparameters['adapt_epochs']-1:
             logger.info('End of a adapt epoch')
             session.run(tf_reset_age)
             stop_adapting = True

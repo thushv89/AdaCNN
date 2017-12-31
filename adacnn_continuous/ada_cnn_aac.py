@@ -1341,7 +1341,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Accuracy push reward: %.5f', accuracy_push_reward)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy + comp_gain #+ accuracy_push_reward
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 2.0 * comp_gain #+ accuracy_push_reward
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
