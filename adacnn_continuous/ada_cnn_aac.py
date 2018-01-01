@@ -1052,13 +1052,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     def sample_action_stochastic_from_actor(self,data, epoch, batch_id_normalized):
 
-        sigma_local = 0.3
+        sigma_local = 0.1
         sigma_global = 0.3
 
         if epoch%2==0:
-            phase = 0.0
-        else:
             phase = 0.5
+        else:
+            phase = 0.0
 
         state = []
         state.extend(data['filter_counts_list'])
@@ -1080,8 +1080,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         self.verbose_logger.info('Obtained deterministic action: %s',cont_actions_all_layers)
         exp_noise = self.exploration_noise_OU(cont_actions_all_layers,
-                                              mu=np.asarray([0.0 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]),
-                                              theta=[0.3  for _ in range(self.output_size - self.global_actions)] + [0.3 for _ in range(self.global_actions)],
+                                              mu=np.asarray([0.5 for _ in range(self.output_size-self.global_actions)] + [0.2 for _ in range(self.global_actions)]),
+                                              theta=[0.2  for _ in range(self.output_size - self.global_actions)] + [0.3 for _ in range(self.global_actions)],
                                               sigma=np.asarray([sigma_local for _ in range(self.output_size-self.global_actions)] + [sigma_global for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
         cont_actions_all_layers += exp_noise

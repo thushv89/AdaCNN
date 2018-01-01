@@ -45,8 +45,8 @@ def add_with_action(
     global cnn_hyperparameters, cnn_ops
     global logger
 
-    age_epsilon = 0.1
-    max_age = 5.0
+    age_epsilon = 0.01
+    max_age = 2.0
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
     update_ops = []
 
@@ -192,8 +192,8 @@ def add_to_fulcon_with_action(
 
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
     update_ops = []
-    age_epsilon = 0.1
-    max_age=5.0
+    age_epsilon = 0.01
+    max_age=2.0
     # find the id of the last conv operation of the net
     next_fulcon_id = None
     for tmp_op in reversed(cnn_ops):
@@ -291,8 +291,8 @@ def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
     global cnn_hyperparameters, cnn_ops
     global logger
 
-    age_epsilon = 0.1
-    max_age = 5.0
+    age_epsilon = 0.02
+    max_age = 2.0
     first_fc = 'fulcon_out' if 'fulcon_0' not in cnn_ops else 'fulcon_0'
     update_ops = []
 
@@ -462,8 +462,8 @@ def remove_from_fulcon(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
     global cnn_hyperparameters, cnn_ops
     global logger
 
-    age_epsilon = 0.1
-    max_age = 5.0
+    age_epsilon = 0.02
+    max_age = 2.0
     update_ops = []
 
     for tmp_op in reversed(cnn_ops):

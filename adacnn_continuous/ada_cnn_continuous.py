@@ -1578,12 +1578,13 @@ def logging_hyperparameters(hyp_logger, cnn_hyperparameters, research_hyperparam
 def change_data_prior_to_introduce_new_labels_over_time(data_priors,n_tasks,n_iterations,labels_of_each_task,n_labels):
     '''
     We consider a group of labels as one task
-    :param data_prior: probabilities for each class
-    :param n_slices:
-    :param n_iterations:
+    :param data_priors: a list of n_tasks elements. Each element is of size [n_iter_per_task,num_labels],
+    with zeros for non-existing labels
+    :param n_tasks: Number of tasks (a task as a specific proportion of labels)
+    :param n_iterations: Full number of iterations in an epoch
     :return:
     '''
-    assert len(data_prior)==n_iterations
+    assert sum([len(dp) for dp in data_priors])==n_iterations
     iterations_per_task = n_iterations//n_tasks
 
     # Calculates the starting and ending positions of each task in the total iterations
@@ -1602,15 +1603,15 @@ def change_data_prior_to_introduce_new_labels_over_time(data_priors,n_tasks,n_it
         start_idx, end_idx = iterations_start_index_of_task[task_id], iterations_start_index_of_task[task_id+1]
         logger.info('Preparing data from index %d to index %d',start_idx,end_idx)
 
-        for dist_i in range(start_idx,end_idx):
-            new_data_prior[dist_i,labels_of_each_task[task_id]] = data_priors[task_id][dist_i]
+        for dist_i,local_i in zip(range(start_idx,end_idx),range(0,iterations_per_task)):
+            new_data_prior[dist_i,labels_of_each_task[task_id]] = data_priors[task_id][local_i]
             if print_i < 2:
                 logger.info('Sample label sequence')
-                logger.info(new_data_prior[dist_i])
+                logger.info(new_data_prior[local_i])
             print_i += 1
 
-    assert new_data_prior.shape[0]==len(data_prior)
-    del data_prior
+    assert new_data_prior.shape[0]==sum([len(dp) for dp in data_priors])
+    del data_priors
     return new_data_prior
 
 
@@ -2600,8 +2601,8 @@ if __name__ == '__main__':
                                     run_actual_remove_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id,hard_pool_ft,abs(ai))
 
                         # pooling takes place here
-                        if adapt_type>-0.1:
-                            run_actual_finetune_operation(hard_pool_ft,finetune_action)
+                        #if adapt_type>-0.1:
+                        run_actual_finetune_operation(hard_pool_ft,finetune_action)
 
                         # ==================================================================
                         # Calculating pool accuracy (After Adaptation)
