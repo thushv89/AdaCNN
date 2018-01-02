@@ -966,6 +966,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 logger.debug('\tCurrent weight vel shape: %s',w_vel.shape)
             curr_bias = tf.get_variable(TF_BIAS).eval()
             logger.debug('\tCurrent bias size: %s', curr_bias.shape)
+            with tf.variable_scope(TF_BIAS, reuse=True):
+                b_vel = tf.get_variable(constants.TF_TRAIN_MOMENTUM).eval()
+
             curr_act = tf.get_variable(TF_ACTIVAIONS_STR).eval()
             logger.debug('\tCurrent mean activation size: %s', curr_act.shape)
 
@@ -976,19 +979,28 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             with tf.variable_scope(next_conv_op, reuse=True):
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
                 logger.debug('\tNext weight size: %s', next_weights.shape)
+
+                with tf.variable_scope(TF_WEIGHTS, reuse=True):
+                    next_w_vel = tf.get_variable(constants.TF_TRAIN_MOMENTUM).eval()
+                    logger.debug('\tNext weight vel shape: %s', next_w_vel.shape)
+
         else:
             with tf.variable_scope(first_fc, reuse=True):
                 next_weights = tf.get_variable(TF_WEIGHTS).eval()
                 logger.debug('\tNext weight size: %s', next_weights.shape)
 
+                with tf.variable_scope(TF_WEIGHTS, reuse=True):
+                    next_w_vel = tf.get_variable(constants.TF_TRAIN_MOMENTUM).eval()
+                    logger.debug('\tNext weight vel shape: %s', next_w_vel.shape)
+
         curr_weight_shape = curr_weights.shape
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if random_add<0.2:
+        if random_add<0.5:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
-            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
+            #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
 
@@ -998,17 +1010,21 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
 
             count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
-            
-            new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
+
+            new_curr_weights = curr_weights[:,:,:,rand_indices_1]
             new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
+            new_curr_w_vel = w_vel[:,:,:,rand_indices_1]
 
-            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+            new_curr_bias = curr_bias[rand_indices_1]
+            new_curr_b_vel = b_vel[rand_indices_1]
 
-            new_act_this = (curr_act[rand_indices_1] + curr_act[rand_indices_2]) / 2.0
+            new_act_this = curr_act[rand_indices_1]
+
 
             if last_conv_id != current_op:
-                new_next_weights = (next_weights[:,:,rand_indices_1,:] + next_weights[:,:,rand_indices_2,:])/2.0
-                #new_next_weights = next_weights[:, :, rand_indices, :]
+                new_next_weights = next_weights[:,:,rand_indices_1,:]
+                new_next_w_vel = next_w_vel[:,:,rand_indices_1,:]
+
             else:
                 low_bound_1 = (rand_indices_1*final_2d_width*final_2d_width).tolist()
                 upper_bound_1 = ((rand_indices_1+1) * final_2d_width * final_2d_width).tolist()
@@ -1016,14 +1032,12 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
                 all_indices_1 = [np.arange(l,u) for (l,u) in low_up_bounds_1]
                 all_indices_1 = np.stack(all_indices_1).ravel()
 
-                low_bound_2 = (rand_indices_2 * final_2d_width * final_2d_width).tolist()
-                upper_bound_2 = ((rand_indices_2 + 1) * final_2d_width * final_2d_width).tolist()
-                low_up_bounds_2 = list(zip(low_bound_2, upper_bound_2))
-                all_indices_2 = [np.arange(l, u) for (l, u) in low_up_bounds_2]
-                all_indices_2 = np.stack(all_indices_2).ravel()
 
-                new_next_weights = (next_weights[all_indices_1,:] + next_weights[all_indices_2,:])/2.0
+                new_next_weights = next_weights[all_indices_1,:]
                 new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+                new_next_w_vel = next_w_vel[all_indices_1,:]
+                new_next_w_vel = np.expand_dims(np.expand_dims(new_next_w_vel,-1),-1)
+
 
         # Random initialization
         else:
@@ -1031,17 +1045,29 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             rand_scale = 0.001
             new_curr_weights = np.random.uniform(low=-rand_scale, high=rand_scale, size=(
             curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
-            new_curr_bias = np.random.uniform(low=-rand_scale, high=rand_scale, size=(amount_to_add))
 
+            new_curr_w_vel = np.zeros(shape=(
+                            cnn_hyperparameters[current_op]['weights'][0],
+                            cnn_hyperparameters[current_op]['weights'][1],
+                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),dtype=np.float32)
+            new_curr_bias = np.random.uniform(low=-rand_scale, high=rand_scale, size=(amount_to_add))
+            new_curr_b_vel = np.zeros(shape=(amount_to_add,),dtype=np.float32)
             new_act_this = np.zeros(shape=(amount_to_add), dtype=np.float32)
 
             if last_conv_id != current_op:
 
                 new_next_weights = np.random.uniform(low=-rand_scale, high=rand_scale,
                                                      size=(next_weights_shape[0],next_weights_shape[1],amount_to_add, next_weights_shape[3]))
+                new_next_w_vel = np.zeros(shape=(
+                            cnn_hyperparameters[next_conv_op]['weights'][0],
+                            cnn_hyperparameters[next_conv_op]['weights'][1],
+                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32)
             else:
                 new_next_weights = np.random.uniform(low=-rand_scale, high=rand_scale,
                                                      size=(amount_to_add *final_2d_width *final_2d_width, next_weights_shape[1],1,1))
+                new_next_w_vel = np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
+                                        cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32)
+
             count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],
@@ -1052,17 +1078,9 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
 
                         tf_weights_next: new_next_weights,
                         tf_replicative_factor_vec: count_vec,
-                        tf_wvelocity_this: np.zeros(shape=(
-                            cnn_hyperparameters[current_op]['weights'][0],
-                            cnn_hyperparameters[current_op]['weights'][1],
-                            cnn_hyperparameters[current_op]['weights'][2], amount_to_add),dtype=np.float32),
-                        tf_bvelocity_this: np.zeros(shape=(amount_to_add,),dtype=np.float32),
-                        tf_wvelocity_next: np.zeros(shape=(
-                            cnn_hyperparameters[next_conv_op]['weights'][0],
-                            cnn_hyperparameters[next_conv_op]['weights'][1],
-                            amount_to_add, cnn_hyperparameters[next_conv_op]['weights'][3]),dtype=np.float32) if last_conv_id != current_op else
-                        np.zeros(shape=(final_2d_width * final_2d_width * amount_to_add,
-                                        cnn_hyperparameters[first_fc]['out'], 1, 1),dtype=np.float32),
+                        tf_wvelocity_this: new_curr_w_vel,
+                        tf_bvelocity_this: new_curr_b_vel,
+                        tf_wvelocity_next: new_next_w_vel,
                         tf_act_this: new_act_this,
 
                         tf_age_weights_this: np.ones(shape=(
@@ -1211,6 +1229,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                 w_vel = tf.get_variable(constants.TF_TRAIN_MOMENTUM).eval()
                 logger.debug('\tCurrent weight vel shape: %s',w_vel.shape)
             curr_bias = tf.get_variable(TF_BIAS).eval()
+            with tf.variable_scope(TF_BIAS, reuse=True):
+                b_vel = tf.get_variable(constants.TF_TRAIN_MOMENTUM).eval()
+
             logger.debug('\tCurrent bias shape: %s', curr_bias.shape)
             curr_act = tf.get_variable(TF_ACTIVAIONS_STR).eval()
             logger.debug('\tCurrent mean activation shape: %s', curr_act.shape)
@@ -1221,13 +1242,15 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         with tf.variable_scope(next_fulcon_op, reuse=True):
             next_weights = tf.get_variable(TF_WEIGHTS).eval()
 
+            with tf.variable_scope(TF_WEIGHTS, reuse=True):
+                next_w_vel = tf.get_variable(constants.TF_TRAIN_MOMENTUM).eval()
+
         curr_weight_shape = curr_weights.shape
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if random_add<0.2:
+        if random_add<0.5:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
-            rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
             #print('allindices plus rand',all_indices_plus_rand.shape)
@@ -1238,12 +1261,12 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)
 
 
-            new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
-            new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
+            new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices_1],-1),-1)
+            new_curr_bias = curr_bias[rand_indices_1]
 
-            new_curr_act = (curr_act[rand_indices_1] + curr_act[rand_indices_2]) / 2.0
+            new_curr_act = curr_act[rand_indices_1]
 
-            new_next_weights = (next_weights[rand_indices_1,:] + next_weights[rand_indices_2,:])/2.0
+            new_next_weights = next_weights[rand_indices_1,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
 
         else:
