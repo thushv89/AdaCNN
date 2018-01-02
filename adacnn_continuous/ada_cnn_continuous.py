@@ -937,7 +937,7 @@ def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
 
     return new_curr_weights
 
-def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add, epoch, random_add):
+def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add, norm_batch_id, random_add):
     '''
     Run the add operation using the given Session
     :param session:
@@ -997,7 +997,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if random_add<0.5:
+        if random_add<0.75*norm_batch_id:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -1042,7 +1042,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         # Random initialization
         else:
             print('Random Initialization')
-            rand_scale = 0.001
+            rand_scale = 0.01
             new_curr_weights = np.random.uniform(low=-rand_scale, high=rand_scale, size=(
             curr_weight_shape[0], curr_weight_shape[1], curr_weight_shape[2], amount_to_add))
 
@@ -1201,7 +1201,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
 
-def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add,epoch, random_add):
+def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add,norm_batch_id, random_add):
     '''
     Run the add operation using the given Session
     :param session:
@@ -1249,7 +1249,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if random_add<0.5:
+        if random_add<0.75*norm_batch_id:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
@@ -1262,21 +1262,28 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
 
 
             new_curr_weights = np.expand_dims(np.expand_dims(curr_weights[:,rand_indices_1],-1),-1)
+            new_curr_w_vel = np.expand_dims(np.expand_dims(w_vel[:,rand_indices_1],-1),-1)
             new_curr_bias = curr_bias[rand_indices_1]
-
+            new_curr_b_vel = b_vel[rand_indices_1]
             new_curr_act = curr_act[rand_indices_1]
 
             new_next_weights = next_weights[rand_indices_1,:]
             new_next_weights = np.expand_dims(np.expand_dims(new_next_weights,-1),-1)
+            new_next_w_vel = np.expand_dims(np.expand_dims(next_w_vel[rand_indices_1,:],-1),-1)
 
         else:
-            rand_scale = 0.001
+            rand_scale = 0.01
             new_curr_weights = np.random.uniform(low=-rand_scale,high=rand_scale,size=(curr_weight_shape[0],amount_to_add,1,1))
+            new_curr_w_vel = np.zeros(
+                            shape=(curr_weight_shape[0],amount_to_add,1,1),
+                            dtype=np.float32)
             new_curr_bias = np.random.uniform(low=-rand_scale,high=rand_scale,size=(amount_to_add))
+            new_curr_b_vel = np.zeros(shape=(amount_to_add),dtype=np.float32)
 
             new_curr_act = np.zeros(shape=(amount_to_add), dtype=np.float32)
 
             new_next_weights = np.random.uniform(low=-rand_scale,high=rand_scale,size=(amount_to_add,next_weights_shape[1],1,1))
+            new_next_w_vel = np.zeros(shape=(amount_to_add, next_weights_shape[1],1,1),dtype=np.float32)
             count_vec = np.ones((curr_weight_shape[1]+amount_to_add),dtype=np.float32)
 
     _ = session.run(tf_add_filters_ops[current_op],
@@ -1286,13 +1293,9 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
                         tf_bias_this: new_curr_bias,
                         tf_replicative_factor_vec: count_vec,
                         tf_weights_next: new_next_weights,
-                        tf_wvelocity_this: np.zeros(
-                            shape=(curr_weight_shape[0],amount_to_add,1,1),
-                            dtype=np.float32),
-                        tf_bvelocity_this: np.zeros(shape=(amount_to_add),dtype=np.float32),
-                        tf_wvelocity_next: np.zeros(
-                            shape=(amount_to_add, next_weights_shape[1],1,1),
-                            dtype=np.float32),
+                        tf_wvelocity_this: new_curr_w_vel,
+                        tf_bvelocity_this: new_curr_b_vel,
+                        tf_wvelocity_next: new_next_w_vel,
                         tf_act_this:new_curr_act,
                         tf_age_weights_this:np.ones(
                             shape=(curr_weight_shape[0],amount_to_add,1,1),
@@ -2601,6 +2604,7 @@ if __name__ == '__main__':
                         # For epoch 0 and 1
                         # Epoch 0: Randomly grow the network
                         # Epoch 1: Deterministically grow the network
+                        normalized_batch_id = ((task * n_iter_per_task) + batch_id) * 1.0 / (n_tasks * n_iter_per_task)
                         if not adapt_randomly:
                             data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
                                     'binned_data_dist': running_binned_data_dist_vector.tolist(),
@@ -2608,7 +2612,7 @@ if __name__ == '__main__':
                                     'valid_accuracy': unseen_valid_accuracy}
 
                             if np.random.random()<start_eps:
-                                normalized_batch_id = ((task * n_iter_per_task) + batch_id)*1.0/(n_tasks*n_iter_per_task)
+
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch, normalized_batch_id)
                             else:
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data)
@@ -2625,7 +2629,6 @@ if __name__ == '__main__':
                         running_binned_data_dist_vector = np.zeros(
                             (model_hyperparameters['binned_data_dist_length']), dtype=np.float32)
 
-                        random_add = np.random.random()
                         for li, la in enumerate(layer_specific_actions):
 
                             layer_id_for_action = None
@@ -2642,11 +2645,12 @@ if __name__ == '__main__':
                                     last_conv_id = tmp_op
                                     break
 
+                            random_add = np.random.random()
                             if ai > 0.0:
                                 if 'conv' in current_op:
-                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, epoch, random_add)
+                                    run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, normalized_batch_id, random_add)
                                 elif 'fulcon' in current_op:
-                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai, epoch, random_add)
+                                    run_actual_add_operation_for_fulcon(session,current_op,layer_id_for_action, last_conv_id, hard_pool_ft,ai, normalized_batch_id, random_add)
 
                             elif ai < 0.0:
                                 if 'conv' in current_op:

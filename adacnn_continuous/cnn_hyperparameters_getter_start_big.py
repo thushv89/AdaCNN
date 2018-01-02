@@ -111,7 +111,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['epochs'] = 6
     if adapt_structure:
         model_hyperparameters['rl_epochs'] = 5
-        model_hyperparameters['adapt_epochs'] = model_hyperparameters['epochs'] // 2
+        model_hyperparameters['adapt_epochs'] = 0
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
 
     model_hyperparameters['n_iterations'] = 5000
