@@ -289,7 +289,7 @@ def add_to_fulcon_with_action(
 
 
 
-def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm):
+def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm, tf_weight_bump_factor):
     global cnn_hyperparameters, cnn_ops
     global logger
 
@@ -348,7 +348,7 @@ def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
         tf_age_new_weights = tf_age_new_weights - age_epsilon
         tf_age_new_weights = tf.clip_by_value(tf_age_new_weights, min_age, max_age)
 
-        update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
+        update_ops.append(tf.assign(w, tf_new_weights*tf_weight_bump_factor, validate_shape=False))
         update_ops.append(tf.assign(age_w, tf_age_new_weights, validate_shape=False))
 
         tf_new_biases = tf.reshape(tf.gather(b, tf_indices_to_keep),[-1])
@@ -358,7 +358,7 @@ def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
         tf_age_new_biases = tf_age_new_biases - age_epsilon
         tf_age_new_biases = tf.clip_by_value(tf_age_new_biases,min_age,max_age)
 
-        update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+        update_ops.append(tf.assign(b, tf_new_biases*tf_weight_bump_factor, validate_shape=False))
         update_ops.append(tf.assign(age_b, tf_age_new_biases, validate_shape=False))
 
         tf_new_acts = tf.reshape(tf.gather(act, tf_indices_to_keep),[-1])
@@ -461,7 +461,7 @@ def remove_with_action(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
     return update_ops, tf_indices_to_rm
 
 
-def remove_from_fulcon(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm):
+def remove_from_fulcon(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm,tf_weight_bump_factor):
     global cnn_hyperparameters, cnn_ops
     global logger
 
@@ -518,7 +518,7 @@ def remove_from_fulcon(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
         tf_age_new_weights = tf_age_new_weights - age_epsilon
         tf_age_new_weights = tf.clip_by_value(tf_age_new_weights, min_age, max_age)
 
-        update_ops.append(tf.assign(w, tf_new_weights, validate_shape=False))
+        update_ops.append(tf.assign(w, tf_new_weights*tf_weight_bump_factor, validate_shape=False))
         update_ops.append(tf.assign(age_w, tf_age_new_weights, validate_shape=False))
 
         tf_new_biases = tf.reshape(tf.gather(b, tf_indices_to_keep), shape=[-1], name='new_bias')
@@ -527,7 +527,7 @@ def remove_from_fulcon(op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to
         tf_age_new_biases = tf_age_new_biases - age_epsilon
         tf_age_new_biases = tf.clip_by_value(tf_age_new_biases,min_age,max_age)
 
-        update_ops.append(tf.assign(b, tf_new_biases, validate_shape=False))
+        update_ops.append(tf.assign(b, tf_new_biases*tf_weight_bump_factor, validate_shape=False))
         update_ops.append(tf.assign(age_b, tf_age_new_biases, validate_shape=False))
 
         tf_new_acts = tf.reshape(tf.gather(act, tf_indices_to_keep),[-1])

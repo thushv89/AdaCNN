@@ -197,6 +197,7 @@ tf_update_hyp_ops = {}
 tf_action_info = None
 tf_weights_this,tf_bias_this = None, None
 tf_age_weights_this,tf_age_bias_this, tf_age_weights_next = None, None, None
+tf_weight_bump_factor = None
 tf_weights_next,tf_wvelocity_this, tf_bvelocity_this, tf_wvelocity_next = None, None, None, None
 tf_weight_shape,tf_in_size, tf_out_size = None, None, None
 increment_global_step_op = None
@@ -564,7 +565,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global increment_global_step_op,tf_learning_rate
     global tf_act_this
     global logger
-
+    global tf_weight_bump_factor
     # custom momentum optimizing we calculate momentum manually
     logger.info('Defining Optimizer')
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=1.0)
@@ -731,6 +732,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                 tf_indices_size = tf.placeholder(tf.int32)
                 tf_indices_to_rm = tf.placeholder(dtype=tf.int32, shape=[None], name = 'indices_to_rm')
 
+                tf_weight_bump_factor = tf.placeholder(dtype=tf.float32, shape=None, name='weight_bump_factor')
+
                 tf_action_info = tf.placeholder(shape=[3], dtype=tf.int32,
                                                 name='tf_action')  # [op_id,action_id,amount] (action_id 0 - add, 1 -remove)
 
@@ -791,7 +794,10 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             tf_learning_rate, global_step
                         )
 
-                        tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_with_action(tmp_op, tf_action_info, tf_cnn_hyperparameters, tf_indices_to_rm)
+                        tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_with_action(
+                            tmp_op, tf_action_info, tf_cnn_hyperparameters,
+                            tf_indices_to_rm,tf_weight_bump_factor
+                        )
 
                     # Fully connected realted adaptation operations
                     elif 'fulcon' in tmp_op:
@@ -812,9 +818,9 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                 tf_learning_rate, global_step
                             )
 
-                            tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_from_fulcon(tmp_op, tf_action_info,
-                                                                                           tf_cnn_hyperparameters,
-                                                                                           tf_indices_to_rm)
+                            tf_rm_filters_ops[tmp_op] = ada_cnn_adapter.remove_from_fulcon(
+                                tmp_op, tf_action_info,tf_cnn_hyperparameters,tf_indices_to_rm,tf_weight_bump_factor
+                            )
 
 def check_several_conditions_with_assert(num_gpus):
     batches_in_chunk = model_hyperparameters['chunk_size']//model_hyperparameters['batch_size']
@@ -890,6 +896,21 @@ def get_adaptive_dropout():
     return dropout_rate*(dropout_factor**1)
 
 
+def get_weight_bump_factor(current_op,rmv_amount):
+    global cnn_hyperparameters,cnn_ops
+
+    for op in cnn_ops:
+        if op==current_op:
+            if rmv_amount==0.0:
+                return 1.0
+
+            if 'conv' in op:
+                rmv_amount = abs(rmv_amount)
+                return (cnn_hyperparameters[op]['weights'][3]*1.0/(cnn_hyperparameters[op]['weights'][3]-rmv_amount))
+            elif 'fulcon' in op:
+                rmv_amount = abs(rmv_amount)
+                return (cnn_hyperparameters[op]['out'] * 1.0 / (
+                        cnn_hyperparameters[op]['out'] - rmv_amount))
 
 def get_new_distorted_weights(new_curr_weights,curr_weight_shape):
     if np.random.random() < 0.25:
@@ -964,7 +985,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if random_add<0.0:
+        if random_add<0.2:
             print('Net2Net Initialization')
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
@@ -977,8 +998,7 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
             #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
 
             count_vec = np.ones((curr_weight_shape[3] + amount_to_add), dtype=np.float32)
-            print('count vec',count_vec.shape)
-            print(count_vec)
+            
             new_curr_weights = (curr_weights[:,:,:,rand_indices_1] + curr_weights[:,:,:,rand_indices_2])/2.0
             new_curr_weights = get_new_distorted_weights(new_curr_weights,curr_weight_shape)
 
@@ -1205,7 +1225,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if random_add<0.0:
+        if random_add<0.2:
             rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
             rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(), size=amount_to_add, replace=True)
 
@@ -1217,8 +1237,7 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
             #count_vec = np.concatenate([count_vec,(count_vec[rand_indices_1]+count_vec[rand_indices_2])/2.0])
             count_vec = np.ones((curr_weight_shape[1] + amount_to_add), dtype=np.float32)
 
-            print('count vec',count_vec.shape)
-            print(count_vec)
+
             new_curr_weights = np.expand_dims(np.expand_dims((curr_weights[:,rand_indices_1]+curr_weights[:,rand_indices_2])/2.0,-1),-1)
             new_curr_bias = (curr_bias[rand_indices_1] + curr_bias[rand_indices_2])/2.0
 
@@ -1356,18 +1375,24 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
     #start_rm_idx = 0
     #rm_indices = np.array(list(range(start_rm_idx,start_rm_idx+amount_to_rmv)))
 
-    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3])), replace=False,
-                                  size=(amount_to_rmv))
+    p = np.array(list(range(1,cnn_hyperparameters[current_op]['weights'][3]+1)),dtype=np.float32)\
+        /np.sum(list(range(1,cnn_hyperparameters[current_op]['weights'][3]+1)))
 
-    logger.info('Running remove operation for %s by removing %d filetrs from %d (total)',
-                current_op, amount_to_rmv,cnn_hyperparameters[current_op]['weights'][3])
+    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['weights'][3])), replace=False,
+                                  size=(amount_to_rmv), p=p)
+
+    bump_factor = get_weight_bump_factor(current_op,amount_to_rmv)
+
+    logger.info('Running remove operation for %s by removing %d filetrs from %d (total) and bump(%.3f)',
+                current_op, amount_to_rmv,cnn_hyperparameters[current_op]['weights'][3],bump_factor)
     logger.debug('Removing indices')
     logger.debug('\t%s', rm_indices)
 
     _ = session.run(tf_rm_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, amount_to_rmv]),
-                        tf_indices_to_rm: rm_indices
+                        tf_indices_to_rm: rm_indices,
+                        tf_weight_bump_factor:bump_factor
                     })
 
     with tf.variable_scope(TF_GLOBAL_SCOPE, reuse=True):
@@ -1440,17 +1465,23 @@ def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id
     #start_rm_idx = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'] - amount_to_rmv)))
     #start_rm_idx = 0
     #rm_indices = np.array(list(range(start_rm_idx, start_rm_idx + amount_to_rmv)))
-    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv))
 
-    logger.info('Running remove (fulcon) operation for %s by removing %d from %d',
-                current_op, amount_to_rmv, cnn_hyperparameters[current_op]['out'])
+    p = np.array(list(range(1, cnn_hyperparameters[current_op]['out'] + 1)), dtype=np.float32) \
+        / np.sum(list(range(1, cnn_hyperparameters[current_op]['out'] + 1)))
+
+    rm_indices = np.random.choice(list(range(cnn_hyperparameters[current_op]['out'])), replace=False, size=(amount_to_rmv), p=p)
+    bump_factor = get_weight_bump_factor(current_op, amount_to_rmv)
+
+    logger.info('Running remove (fulcon) operation for %s by removing %d from %d and bump(%.3f)',
+                current_op, amount_to_rmv, cnn_hyperparameters[current_op]['out'], bump_factor)
     logger.debug('Removing indices')
     logger.debug('\t%s',rm_indices)
 
     _ = session.run(tf_rm_filters_ops[current_op],
                     feed_dict={
                         tf_action_info: np.asarray([li, 1, amount_to_rmv]),
-                        tf_indices_to_rm: rm_indices
+                        tf_indices_to_rm: rm_indices,
+                        tf_weight_bump_factor: bump_factor
                     })
 
     with tf.variable_scope(TF_GLOBAL_SCOPE + TF_SCOPE_DIVIDER + current_op, reuse=True):
