@@ -258,7 +258,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                 tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
                                      tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
                                                act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (
-                                               1 - act_decay) * tf.reduce_mean(tf.abs(w), axis=[0, 1, 2])))
+                                               1 - act_decay) * tf.reduce_mean(tf.abs(w**2), axis=[0, 1, 2])))
 
                 x = utils.lrelu(x + b, name=scope.name + '/top')
 
@@ -299,7 +299,7 @@ def inference(dataset, tf_cnn_hyperparameters, training):
                     tf.add_to_collection(tf.GraphKeys.UPDATE_OPS,
                                          tf.assign(tf.get_variable(TF_ACTIVAIONS_STR),
                                                    act_decay * tf.get_variable(TF_ACTIVAIONS_STR) + (
-                                                       1 - act_decay) * tf.reduce_mean(tf.abs(w), axis=[0])))
+                                                       1 - act_decay) * tf.reduce_mean(tf.abs(w**2), axis=[0])))
 
                     x = utils.lrelu(tf.matmul(x, w) + b, name=scope.name + '/top')
                     if training and use_dropout:
@@ -619,8 +619,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                 # Training data opearations
                 logger.info('\tDefining logit operations')
-                tower_logit_op = inference(tf_train_data_batch[-1],
-                                                                    tf_cnn_hyperparameters, True)
+                tower_logit_op = inference(tf_train_data_batch[-1],tf_cnn_hyperparameters, True)
                 tower_logits.append(tower_logit_op)
 
 
@@ -678,7 +677,8 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # Train data operations
         # avg_grad_and_vars = [(avggrad0,var0),(avggrad1,var1),...]
         tf_avg_grad_and_vars = average_gradients(tower_grads)
-        apply_grads_op, update_train_velocity_op = cnn_optimizer.apply_gradient_with_rmsprop(optimizer, tf_learning_rate,
+        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+            apply_grads_op, update_train_velocity_op = cnn_optimizer.apply_gradient_with_rmsprop(optimizer, tf_learning_rate,
                                                                                              global_step,
                                                                                              tf_avg_grad_and_vars)
         concat_loss_vec_op = concat_loss_vector_towers(tower_loss_vectors)
@@ -997,9 +997,12 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
         next_weights_shape = next_weights.shape
 
         #Net2Net type initialization
-        if random_add<0.75*norm_batch_id:
+        if random_add<0.5:
             print('Net2Net Initialization')
-            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
+            high_act_indices = np.argsort(curr_act)[curr_act.size//2:]
+            #rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(),size=amount_to_add,replace=True)
+
+            rand_indices_1 = np.random.choice(high_act_indices, size=amount_to_add,replace=True)
             #rand_indices_2 = np.random.choice(np.arange(curr_weights.shape[3]).tolist(), size=amount_to_add, replace=True)
 
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[3]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
@@ -1249,9 +1252,11 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
         next_weights_shape = next_weights.shape
 
         # Net2Net Initialization
-        if random_add<0.75*norm_batch_id:
-            rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
-
+        if random_add<0.5:
+            high_act_indices = np.argsort(curr_act)[curr_act.size // 2:]
+            #rand_indices_1 = np.random.choice(np.arange(curr_weights.shape[1]).tolist(),size=amount_to_add,replace=True)
+            rand_indices_1 = np.random.choice(high_act_indices, size=amount_to_add,
+                                              replace=True)
             #all_indices_plus_rand = np.concatenate([np.arange(0,curr_weights.shape[1]).ravel(), np.asarray(rand_indices_1).ravel(), np.asarray(rand_indices_2).ravel()])
             #print('allindices plus rand',all_indices_plus_rand.shape)
             #ind_counter = Counter(all_indices_plus_rand.tolist())
@@ -2705,6 +2710,7 @@ if __name__ == '__main__':
             stop_adapting = True
             # We start using dropout once adaptations are finished
             model_hyperparameters['use_dropout'] = True
+            current_adaptive_dropout = 0.5
             prev_train_acc = 0.0
 
         # =======================================================

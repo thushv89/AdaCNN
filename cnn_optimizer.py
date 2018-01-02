@@ -78,10 +78,7 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
                 with tf.variable_scope('age', reuse=True):
                     age_w, age_b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
 
-                print(v.name, ', ', w.name)
                 if v.name == w.name:
-
-                    print('\tFound match')
 
                     with tf.variable_scope(TF_WEIGHTS, reuse=True):
 
@@ -95,12 +92,11 @@ def apply_gradient_with_rmsprop(optimizer, learning_rate, global_step, grads_and
                         adaptive_w_lr = learning_rate / (tf.sqrt(vel + rms_epsilon)*age_w)
 
                         grads_and_vars.append((g * adaptive_w_lr, w))
-                print(v.name, ', ', b.name)
+
                 if v.name == b.name:
 
                     with tf.variable_scope(TF_BIAS, reuse=True):
 
-                        print('\tFound match')
                         vel = tf.get_variable(TF_TRAIN_MOMENTUM)
                         vel_update_ops.append(
                             tf.assign(vel,
