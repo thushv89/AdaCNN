@@ -198,20 +198,20 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
         if not adapt_structure:
             cnn_string = "C,3,1,64#C,3,1,64#P,2,2,0#C,3,1,128#C,3,1,128#P,2,2,0" \
-                         "#C,3,1,256#C,3,1,256#P,2,2,0#C,3,1,256" \
-                         "#C,3,1,256#P,2,2,0#C,3,1,256#C,3,1,256" \
-                         "#PG,2,2,0#FC,2048,0,0#FC,2048,0,0#FC,250,0,0#Terminate,0,0,0"
+                         "#C,3,1,256#C,3,1,256#P,2,2,0#C,3,1,512" \
+                         "#C,3,1,512#P,2,2,0#C,3,1,512#C,3,1,512" \
+                         "#PG,2,2,0#FC,4096,0,0#FC,4096,0,0#FC,1000,0,0#Terminate,0,0,0"
         else:
-            cnn_string = "C,3,1,48#C,3,1,48#P,2,2,0#C,3,1,48#C,3,1,48" \
-                         "#P,2,2,0#C,3,1,48#C,3,1,48" \
-                         "#P,2,2,0#C,3,1,48#C,3,1,48" \
-                         "#P,2,2,0#C,3,1,48#C,3,1,48" \
-                         "#PG,2,2,0#FC,128,0,0#FC,128,0,0#FC,125,0,0#Terminate,0,0,0"
+            cnn_string = "C,3,1,48#C,3,1,48#P,2,2,0#C,3,1,64#C,3,1,64" \
+                         "#P,2,2,0#C,3,1,128#C,3,1,128" \
+                         "#P,2,2,0#C,3,1,128#C,3,1,128" \
+                         "#P,2,2,0#C,3,1,128#C,3,1,128" \
+                         "#PG,2,2,0#FC,512,0,0#FC,512,0,0#FC,250,0,0#Terminate,0,0,0"
 
-            filter_vector = [64, 64, 0, 128, 128, 0, 256, 256, 0, 256, 256, 0, 256, 256, 0, 2048, 2048,250]
-            filter_min_threshold = 32
-            fulcon_min_threshold = 100
-            add_amount, remove_amount, add_fulcon_amount = 16, 8, 64
+            filter_vector = [64, 64, 0, 128, 128, 0, 256, 256, 0, 512, 512, 0, 512, 512, 0, 4096, 4096,1000]
+            filter_min_threshold = 47
+            fulcon_min_threshold = 48
+            add_amount, remove_amount, add_fulcon_amount = 12, 8, 12
 
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
