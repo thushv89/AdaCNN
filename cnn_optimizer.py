@@ -128,10 +128,8 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
             with tf.variable_scope(op, reuse=True):
                 w,b = tf.get_variable(TF_WEIGHTS), tf.get_variable(TF_BIAS)
 
-                print(v.name, ', ', w.name)
                 if v.name == w.name:
 
-                    print('\tFound match')
                     with tf.variable_scope(TF_WEIGHTS, reuse=True):
 
                         vel = tf.get_variable(TF_POOL_MOMENTUM)
@@ -144,10 +142,8 @@ def apply_pool_gradient_with_rmsprop(optimizer, learning_rate, global_step, grad
                         adaptive_w_lr = learning_rate / (tf.sqrt(vel + rms_epsilon))
                         grads_and_vars.append((g * adaptive_w_lr, w))
 
-                print(v.name, ', ', b.name)
                 if v.name == b.name:
 
-                    print('\tFound match')
                     with tf.variable_scope(TF_BIAS, reuse=True):
 
                         vel = tf.get_variable(TF_POOL_MOMENTUM)

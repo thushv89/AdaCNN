@@ -108,7 +108,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['accuracy_drop_cap'] = 3
     model_hyperparameters['iterations_per_batch'] = 1
 
-    model_hyperparameters['epochs'] = 6
+    model_hyperparameters['epochs'] = 5
     if adapt_structure:
         model_hyperparameters['rl_epochs'] = 5
         model_hyperparameters['adapt_epochs'] = 0

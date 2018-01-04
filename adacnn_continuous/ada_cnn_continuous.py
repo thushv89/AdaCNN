@@ -2227,7 +2227,7 @@ if __name__ == '__main__':
                         dist_str = ''
                         for li in range(num_labels):
                             dist_str += str(cnt[li] / len(label_seq)) + ',' if li in cnt else str(0) + ','
-                        class_dist_logger.info('%d,%s', batch_id, dist_str)
+                        #class_dist_logger.info('%d,%s', batch_id, dist_str)
 
                     # calculate binned data distribution and running average of that for RL state
                     cnt = Counter(np.argmax(batch_labels[-1], axis=1))
