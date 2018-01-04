@@ -830,8 +830,8 @@ def get_pool_valid_accuracy(hard_pool_valid):
     for pool_id in range(0,(hard_pool_valid.get_size() // batch_size)):
         pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
         pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
-        pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
-                          tf_pool_label_batch[0]: pbatch_labels}
+        pool_feed_dict = {tf_pool_data_batch: pbatch_data,
+                          tf_pool_label_batch: pbatch_labels}
 
         p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
         tmp_pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
@@ -1624,8 +1624,8 @@ def calculate_pool_accuracy(hard_pool):
     for pool_id in range(hard_pool.get_size() // batch_size):
         pbatch_data = pool_dataset[pool_id * batch_size:(pool_id + 1) * batch_size, :, :, :]
         pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size, :]
-        pool_feed_dict = {tf_pool_data_batch[0]: pbatch_data,
-                          tf_pool_label_batch[0]: pbatch_labels}
+        pool_feed_dict = {tf_pool_data_batch: pbatch_data,
+                          tf_pool_label_batch: pbatch_labels}
         p_predictions = session.run(pool_pred, feed_dict=pool_feed_dict)
         if num_labels <= 25:
             pool_accuracy.append(accuracy(p_predictions, pbatch_labels))
@@ -2119,8 +2119,9 @@ if __name__ == '__main__':
                 # ========================================================
                 # Creating data batchs for the towers
 
-                label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior,
-                                                                                     batch_size, num_labels)
+                label_seq = label_sequence_generator.sample_label_sequence_for_batch(
+                    n_iterations, data_prior, batch_size, num_labels
+                )
 
                 # Get current batch of data nd labels (training)
                 batch_data, batch_labels = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
