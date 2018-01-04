@@ -164,11 +164,10 @@ num_gpus = -1
 optimizer, custom_lr = None,None
 tf_learning_rate = None
 # Optimizer (Data) Related
-tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, \
-update_train_velocity_op, mean_loss_op = None,None,None,None,None
+tf_avg_grad_and_vars, apply_grads_op, update_train_velocity_op = None,None,None
 
 # Optimizer (Pool) Related
-tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss = None, None, None, None
+apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss = None, None, None
 
 # Data related
 tf_train_data_batch, tf_train_label_batch, tf_data_weights = [], [], []
@@ -180,9 +179,9 @@ tf_pool_data_batch, tf_pool_label_batch = [], []
 pool_pred, augmented_pool_data_batch, augmented_pool_label_batch = None, [],[]
 
 # Logit related
-tower_grads, tower_loss_vectors, tower_losses, tower_predictions = [], [], [], []
-tower_pool_grads, tower_pool_losses = [], []
-tower_logits = []
+tf_grads, tf_loss_vector, tf_loss, tf_predictions = None, None,None, None
+tf_pool_grad, tf_pool_loss = None, None
+tf_logits = None
 tf_dropout_rate = None
 
 # Test/Valid related
@@ -365,7 +364,7 @@ def tower_loss(dataset, labels, weighted, tf_data_weights, tf_cnn_hyperparameter
     return total_loss
 
 
-def calc_loss_vector(scope, dataset, labels, tf_cnn_hyperparameters):
+def calc_loss_vector(dataset, labels, tf_cnn_hyperparameters):
     logits = inference(dataset, tf_cnn_hyperparameters, True)
     return tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels, name=TF_LOSS_VEC_STR)
 
@@ -549,12 +548,12 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     global tf_train_data_batch, tf_train_label_batch, tf_data_weights, tf_reset_cnn, tf_reset_age, tf_reset_cnn_custom, tf_prune_cnn_hyperparameters
     global tf_test_dataset,tf_test_labels
     global tf_pool_data_batch, tf_pool_label_batch
-    global tower_grads, tower_loss_vectors, tower_losses, tower_predictions
-    global tower_pool_grads, tower_pool_losses, tower_logits,tf_dropout_rate
+    global tf_grads, tf_loss_vector, tf_loss, tf_predictions
+    global tf_pool_grad, tf_pool_loss, tf_logits,tf_dropout_rate
     global tf_add_filters_ops, tf_rm_filters_ops, tf_replace_ind_ops, tf_slice_optimize, tf_slice_vel_update
     global tf_indices, tf_indices_to_rm, tf_replicative_factor_vec, tf_indices_size, tf_weight_mean_ops, tf_retain_id_placeholders
-    global tf_avg_grad_and_vars, apply_grads_op, concat_loss_vec_op, update_train_velocity_op, mean_loss_op
-    global tf_pool_avg_gradvars, apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
+    global tf_avg_grad_and_vars, apply_grads_op, update_train_velocity_op
+    global apply_pool_grads_op, update_pool_velocity_ops, mean_pool_loss
     global valid_loss_op,valid_predictions_op, test_predicitons_op
     global tf_valid_data_batch,tf_valid_label_batch
     global pool_pred, augmented_pool_data_batch, augmented_pool_label_batch
@@ -587,87 +586,67 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                                          name='TestDataset')
     tf_test_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TestLabels')
 
-    # Tower-Like Calculations
-    # Calculate logits (train and pool),
-    # Calculate gradients (train and pool)
-    # Tower_grads will contain
-    # [[(grad0gpu0,var0gpu0),...,(gradNgpu0,varNgpu0)],...,[(grad0gpuD,var0gpuD),...,(gradNgpuD,varNgpuD)]]
+    logger.info('Defining TF operations for GPU ID: 0')
+    with tf.device('/gpu:0'):
 
-    for gpu_id in range(num_gpus):
-        logger.info('Defining TF operations for GPU ID: %d', gpu_id)
-        with tf.device('/gpu:%d' % gpu_id):
-            with tf.name_scope('%s_%d' % (TOWER_NAME, gpu_id)) as scope:
-                tf.get_variable_scope().reuse_variables()
-                # Input train data
-                logger.info('\tDefning Training Data placeholders and weights')
-                if datatype != 'imagenet-250':
-                    tf_train_data_batch.append(tf.placeholder(tf.float32,
-                                                              shape=(
-                                                                  batch_size, image_size, image_size, num_channels),
-                                                              name='TrainDataset'))
-                else:
-                    tf_train_data_batch.append(tf.placeholder(tf.float32,
-                                                              shape=(
-                                                                  batch_size, resize_to, resize_to, num_channels),
-                                                              name='TrainDataset'))
+        tf.get_variable_scope().reuse_variables()
+        # Input train data
+        logger.info('\tDefning Training Data placeholders and weights')
+        if datatype != 'imagenet-250':
+            tf_train_data_batch = tf.placeholder(
+                tf.float32, shape=(batch_size, image_size, image_size, num_channels),
+                name='TrainDataset'
+            )
+        else:
+            tf_train_data_batch = tf.placeholder(
+                tf.float32, shape=(batch_size, resize_to, resize_to, num_channels),
+                name='TrainDataset'
+            )
 
-                tf_train_label_batch.append(
-                    tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TrainLabels'))
+        tf_train_label_batch = tf.placeholder(tf.float32, shape=(batch_size, num_labels), name='TrainLabels')
 
+        tf_data_weights = tf.placeholder(tf.float32, shape=(batch_size), name='TrainWeights')
 
-                tf_data_weights.append(tf.placeholder(tf.float32, shape=(batch_size), name='TrainWeights'))
+        # Training data opearations
+        logger.info('\tDefining logit operations')
+        tf_logits = inference(tf_train_data_batch,tf_cnn_hyperparameters, True)
 
-                # Training data opearations
-                logger.info('\tDefining logit operations')
-                tower_logit_op = inference(tf_train_data_batch[-1],tf_cnn_hyperparameters, True)
-                tower_logits.append(tower_logit_op)
+        logger.info('\tDefine Loss for each tower')
+        tf_loss = tower_loss(tf_train_data_batch, tf_train_label_batch, True,
+                                   tf_data_weights, tf_cnn_hyperparameters)
 
+        tf_loss_vector = calc_loss_vector(tf_train_data_batch, tf_train_label_batch,
+                                             tf_cnn_hyperparameters)
 
-                logger.info('\tDefine Loss for each tower')
-                tf_tower_loss = tower_loss(tf_train_data_batch[-1], tf_train_label_batch[-1], True,
-                                           tf_data_weights[-1], tf_cnn_hyperparameters)
+        logger.info('\tGradient calculation opeartions for tower')
+        tf_grads = cnn_optimizer.gradients(optimizer, tf_loss, global_step,tf_learning_rate)
 
-                tower_losses.append(tf_tower_loss)
-                tf_tower_loss_vec = calc_loss_vector(scope, tf_train_data_batch[-1], tf_train_label_batch[-1],
-                                                     tf_cnn_hyperparameters)
-                tower_loss_vectors.append(tf_tower_loss_vec)
+        logger.info('\tPrediction operations for tower')
+        tf_predictions = predict_with_dataset(tf_train_data_batch, tf_cnn_hyperparameters)
 
-                logger.info('\tGradient calculation opeartions for tower')
-                tower_grad = cnn_optimizer.gradients(optimizer, tf_tower_loss, global_step,tf_learning_rate)
-                tower_grads.append(tower_grad)
+        # Pooling data operations
+        logger.info('\tPool related operations')
+        if datatype!='imagenet-250':
+            tf_pool_data_batch = tf.placeholder(
+                tf.float32, shape=(None, image_size, image_size, num_channels),
+                name='PoolDataset'
+            )
+        else:
+            tf_pool_data_batch = tf.placeholder(
+                tf.float32, shape=(None, resize_to, resize_to, num_channels),
+                name='PoolDataset'
+            )
+        tf_pool_label_batch = tf.placeholder(tf.float32, shape=(None, num_labels), name='PoolLabels')
 
-                logger.info('\tPrediction operations for tower')
-                tower_pred = predict_with_dataset(tf_train_data_batch[-1], tf_cnn_hyperparameters)
-                tower_predictions.append(tower_pred)
+        # Used for augmenting the pool data
 
-                # Pooling data operations
-                logger.info('\tPool related operations')
-                if datatype!='imagenet-250':
-                    tf_pool_data_batch.append(tf.placeholder(tf.float32,
-                                                             shape=(
-                                                                 None, image_size, image_size, num_channels),
-                                                             name='PoolDataset'))
-                else:
-                    tf_pool_data_batch.append(tf.placeholder(tf.float32,
-                                                             shape=(
-                                                                 None, resize_to, resize_to, num_channels),
-                                                             name='PoolDataset'))
-                tf_pool_label_batch.append(
-                    tf.placeholder(tf.float32, shape=(None, num_labels), name='PoolLabels'))
+        augmented_pool_data_batch = tf_augment_data_with(tf_pool_data_batch,datatype)
+        augmented_pool_label_batch = tf_pool_label_batch
 
-                # Used for augmenting the pool data
-
-                augmented_pool_data_batch.append(tf_augment_data_with(tf_pool_data_batch[-1],datatype))
-                augmented_pool_label_batch.append(tf_pool_label_batch[-1])
-
-                with tf.name_scope('pool') as scope:
-                    #single_pool_logit_op = inference(tf_pool_data_batch[-1],tf_cnn_hyperparameters, True)
-
-                    single_pool_loss = tower_loss(augmented_pool_data_batch[-1], augmented_pool_label_batch[-1], False, None,
-                                                  tf_cnn_hyperparameters)
-                    tower_pool_losses.append(single_pool_loss)
-                    single_pool_grad = cnn_optimizer.gradients(optimizer, single_pool_loss, global_step, tf_learning_rate)
-                    tower_pool_grads.append(single_pool_grad)
+        with tf.name_scope('pool') as scope:
+            tf_pool_loss = tower_loss(augmented_pool_data_batch, augmented_pool_label_batch, False, None,
+                                          tf_cnn_hyperparameters)
+            tf_pool_grad = cnn_optimizer.gradients(optimizer, tf_pool_loss, global_step, tf_learning_rate)
 
     logger.info('GLOBAL_VARIABLES (all)')
     logger.info('\t%s\n', [v.name for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)])
@@ -675,25 +654,16 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
     with tf.device('/gpu:0'):
         logger.info('Tower averaging for Gradients for Training data')
         # Train data operations
-        # avg_grad_and_vars = [(avggrad0,var0),(avggrad1,var1),...]
-        tf_avg_grad_and_vars = average_gradients(tower_grads)
-        #with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
         apply_grads_op, update_train_velocity_op = cnn_optimizer.apply_gradient_with_rmsprop(optimizer, tf_learning_rate,
                                                                                          global_step,
-                                                                                         tf_avg_grad_and_vars)
-        concat_loss_vec_op = concat_loss_vector_towers(tower_loss_vectors)
-        mean_loss_op = tf.reduce_mean(tower_losses)
+                                                                                         tf_grads)
 
         logger.info('Tower averaging for Gradients for Pool data')
         # Pool data operations
-        tf_pool_avg_gradvars = average_gradients(tower_pool_grads)
         apply_pool_grads_op, update_pool_velocity_ops = cnn_optimizer.apply_pool_gradient_with_rmsprop(
-            optimizer,tf_learning_rate,global_step,tf_pool_avg_gradvars)
+            optimizer,tf_learning_rate,global_step,tf_pool_grad
+        )
 
-        mean_pool_loss = tf.reduce_mean(tower_pool_losses)
-
-        # Weight mean calculation for pruning
-        tf_weight_mean_ops = get_weights_mean_for_pruning()
 
     with tf.device('/gpu:0'):
 
@@ -702,8 +672,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
         # GLOBAL: Tensorflow operations for hard_pool
         with tf.name_scope('pool') as scope:
             tf.get_variable_scope().reuse_variables()
-            print(len(tf_pool_label_batch))
-            pool_pred = predict_with_dataset(tf_pool_data_batch[0], tf_cnn_hyperparameters)
+            pool_pred = predict_with_dataset(tf_pool_data_batch, tf_cnn_hyperparameters)
 
         # GLOBAL: Tensorflow operations for test data
         # Valid data (Next train batch) Unseen
@@ -790,7 +759,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
 
                         tf_slice_optimize[tmp_op], tf_slice_vel_update[tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient(
                             optimizer, tf_indices,
-                            tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
+                            tmp_op, tf_pool_grad, tf_cnn_hyperparameters,
                             tf_learning_rate, global_step
                         )
 
@@ -814,7 +783,7 @@ def define_tf_ops(global_step, tf_cnn_hyperparameters, init_cnn_hyperparameters)
                             tf_slice_optimize[tmp_op], tf_slice_vel_update[
                                 tmp_op] = cnn_optimizer.optimize_masked_momentum_gradient_for_fulcon(
                                 optimizer, tf_indices,
-                                tmp_op, tf_pool_avg_gradvars, tf_cnn_hyperparameters,
+                                tmp_op, tf_pool_grad, tf_cnn_hyperparameters,
                                 tf_learning_rate, global_step
                             )
 
@@ -1190,36 +1159,8 @@ def run_actual_add_operation(session, current_op, li, last_conv_id, hard_pool_ft
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-    _ = session.run([tower_logits], feed_dict=train_feed_dict)
-    pbatch_train_count = 0
+    _ = session.run([tf_logits], feed_dict=train_feed_dict)
 
-    # Train only with half of the batch
-    '''if hard_pool_ft.get_size() > batch_size:
-        for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
-                pbatch_data, pbatch_labels = [], []
-
-                pool_feed_dict = {
-                    tf_indices: np.arange(cnn_hyperparameters[current_op]['weights'][3] - amount_to_add,
-                                          cnn_hyperparameters[current_op]['weights'][3])}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-
-                for gpu_id in range(num_gpus):
-                    pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                        pool_id + gpu_id + 1) * batch_size,
-                                       :, :, :])
-                    pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                         pool_id + gpu_id + 1) * batch_size,
-                                         :])
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
-
-                pool_feed_dict.update({tf_learning_rate:model_hyperparameters['start_lr']})
-
-                _, _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],
-                                   feed_dict=pool_feed_dict)'''
-
-    _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
 
 def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft,amount_to_add,norm_batch_id, random_add):
@@ -1393,34 +1334,8 @@ def run_actual_add_operation_for_fulcon(session, current_op, li, last_conv_id, h
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
     train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-    _ = session.run([tower_logits], feed_dict=train_feed_dict)
+    _ = session.run([tf_logits], feed_dict=train_feed_dict)
 
-    # Train only newly added parameters
-    '''if hard_pool_ft.get_size()>batch_size:
-        for pool_id in range(0, (hard_pool_ft.get_size() // batch_size) - 1, num_gpus):
-            if np.random.random() < research_parameters['finetune_rate']:
-                pbatch_data, pbatch_labels = [], []
-
-                pool_feed_dict = {
-                    tf_indices: np.arange(cnn_hyperparameters[current_op]['out'] - amount_to_add,
-                                          cnn_hyperparameters[current_op]['out'])}
-                pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-
-                for gpu_id in range(num_gpus):
-                    pbatch_data.append(pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                                        pool_id + gpu_id + 1) * batch_size,
-                                       :, :, :])
-                    pbatch_labels.append(pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                         pool_id + gpu_id + 1) * batch_size,
-                                         :])
-                    pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data[-1],
-                                           tf_pool_label_batch[gpu_id]: pbatch_labels[-1]})
-
-                pool_feed_dict.update({tf_learning_rate: model_hyperparameters['start_lr']})
-
-                _ = session.run([tf_slice_optimize[current_op],tf_slice_vel_update[current_op]],feed_dict=pool_feed_dict)'''
-
-    _ = session.run([tower_logits], feed_dict=train_feed_dict)
 
 
 def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
@@ -1511,7 +1426,7 @@ def run_actual_remove_operation(session, current_op, li, last_conv_id, hard_pool
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
 
-    _ = session.run([tower_logits], feed_dict=train_feed_dict)
+    _ = session.run([tf_logits], feed_dict=train_feed_dict)
 
 
 def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id, hard_pool_ft, amount_to_rmv):
@@ -1589,7 +1504,7 @@ def run_actual_remove_operation_for_fulcon(session, current_op, li, last_conv_id
     current_adaptive_dropout = get_adaptive_dropout()
     # This is a pretty important step
     # Unless you run this onces, the sizes of weights do not change
-    _ = session.run([tower_logits], feed_dict=train_feed_dict)
+    _ = session.run([tf_logits], feed_dict=train_feed_dict)
 
 
 def run_actual_finetune_operation(hard_pool_ft,rate):
@@ -1610,15 +1525,11 @@ def run_actual_finetune_operation(hard_pool_ft,rate):
             #print('fintuning network (pool_id: ',pool_id,')')
             pool_feed_dict = {}
             pool_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
-            for gpu_id in range(num_gpus):
-                pbatch_data = pool_dataset[(pool_id + gpu_id) * batch_size:(
-                                                                               pool_id + gpu_id + 1) * batch_size,
-                              :, :, :]
-                pbatch_labels = pool_labels[(pool_id + gpu_id) * batch_size:(
-                                                                                pool_id + gpu_id + 1) * batch_size,
-                                :]
-                pool_feed_dict.update({tf_pool_data_batch[gpu_id]: pbatch_data,
-                                       tf_pool_label_batch[gpu_id]: pbatch_labels})
+
+            pbatch_data = pool_dataset[(pool_id ) * batch_size:(pool_id + 1) * batch_size,:, :, :]
+            pbatch_labels = pool_labels[pool_id * batch_size:(pool_id + 1) * batch_size,:]
+            pool_feed_dict.update({tf_pool_data_batch: pbatch_data,
+                                   tf_pool_label_batch: pbatch_labels})
 
             if adapt_structure:
                 pool_feed_dict.update({tf_learning_rate: rate * model_hyperparameters['start_lr']})
@@ -1748,7 +1659,7 @@ def reset_cnn_after_adapt():
 
     print(session.run(tf_cnn_hyperparameters))
 
-    session.run(tower_logits, feed_dict=train_feed_dict)
+    session.run(tf_logits, feed_dict=train_feed_dict)
     # hard_pool_ft.reset_pool()
     # hard_pool_valid.reset_pool()
     start_adapting = False
@@ -2012,7 +1923,7 @@ if __name__ == '__main__':
             batch_size=64, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.0005,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.005,
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2191,7 +2102,7 @@ if __name__ == '__main__':
 
             # we stop 'num_gpus' items before the ideal number of training batches
             # because we always keep num_gpus items for valid data in memory
-            for batch_id in range(0, n_iter_per_task - num_gpus, num_gpus):
+            for batch_id in range(n_iter_per_task):
 
                 global_batch_id = (n_iterations * epoch) + (task*n_iter_per_task) + batch_id
                 global_trial_phase = (global_batch_id * 1.0 / n_iterations)
@@ -2201,66 +2112,64 @@ if __name__ == '__main__':
 
                 # We load 1 extra batch (chunk_size+1) because we always make the valid batch the batch_id+1
 
-                # Feed dicitonary with placeholders for each tower
-                batch_data, batch_labels, batch_weights = [], [], []
+                batch_data, batch_labels, batch_weights = None, None, None
                 train_feed_dict = {}
                 train_feed_dict.update({tf_dropout_rate:current_adaptive_dropout})
+
                 # ========================================================
                 # Creating data batchs for the towers
-                for gpu_id in range(num_gpus):
-                    label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior,
-                                                                                         batch_size, num_labels)
 
-                    # Get current batch of data nd labels (training)
-                    b_d, b_l = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
-                    batch_data.append(b_d)
-                    batch_labels.append(b_l)
+                label_seq = label_sequence_generator.sample_label_sequence_for_batch(n_iterations, data_prior,
+                                                                                     batch_size, num_labels)
 
+                # Get current batch of data nd labels (training)
+                batch_data, batch_labels = data_gen.generate_data_with_label_sequence(train_dataset, train_labels, label_seq, dataset_info)
 
-                    if batch_id == 0:
-                        logger.info('\tDataset shape: %s', b_d.shape)
-                        logger.info('\tLabels shape: %s', b_l.shape)
+                if batch_id == 0:
+                    logger.info('\tDataset shape: %s', batch_data.shape)
+                    logger.info('\tLabels shape: %s', batch_labels.shape)
 
-                    # log class distribution
-                    if (batch_id + gpu_id) % research_parameters['log_distribution_every'] == 0:
-                        cnt = Counter(label_seq)
-                        dist_str = ''
-                        for li in range(num_labels):
-                            dist_str += str(cnt[li] / len(label_seq)) + ',' if li in cnt else str(0) + ','
-                        #class_dist_logger.info('%d,%s', batch_id, dist_str)
+                # log class distribution
+                if batch_id % research_parameters['log_distribution_every'] == 0:
+                    cnt = Counter(label_seq)
+                    dist_str = ''
+                    for li in range(num_labels):
+                        dist_str += str(cnt[li] / len(label_seq)) + ',' if li in cnt else str(0) + ','
+                    #class_dist_logger.info('%d,%s', batch_id, dist_str)
 
-                    # calculate binned data distribution and running average of that for RL state
-                    cnt = Counter(np.argmax(batch_labels[-1], axis=1))
-                    label_count_sorted = np.asarray([cnt[ci] if ci in cnt.keys() else 0.0 for ci in range(num_labels)])*1.0/batch_size
-                    if model_hyperparameters['binned_data_dist_length'] != num_labels:
-                        split_label_count_sorted = np.split(label_count_sorted,model_hyperparameters['binned_data_dist_length'])
-                        label_count_sorted = np.asarray([np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted])
+                # calculate binned data distribution and running average of that for RL state
+                cnt = Counter(np.argmax(batch_labels, axis=1))
+                label_count_sorted = np.asarray([cnt[ci] if ci in cnt.keys() else 0.0 for ci in range(num_labels)])*1.0/batch_size
+                if model_hyperparameters['binned_data_dist_length'] != num_labels:
+                    split_label_count_sorted = np.split(label_count_sorted,model_hyperparameters['binned_data_dist_length'])
+                    label_count_sorted = np.asarray([np.asscalar(np.sum(lbl_cnt)) for lbl_cnt in split_label_count_sorted])
 
-                    running_binned_data_dist_vector = binned_data_dist_decay * np.asarray(label_count_sorted) + (1.0-binned_data_dist_decay) * running_binned_data_dist_vector
-                    # Do this only in the first epoch as the data is repeated there onwards
-                    if epoch==0:
-                        if batch_id%10==0:
-                            data_dist_summ = session.run(tf_summary_data_dist_writer, feed_dict={tf_summary_data_dist:np.asarray(label_count_sorted)})
-                            summary_writer.add_summary(data_dist_summ, global_step=global_batch_id)
+                running_binned_data_dist_vector = binned_data_dist_decay * np.asarray(label_count_sorted) + (1.0-binned_data_dist_decay) * running_binned_data_dist_vector
+                # Do this only in the first epoch as the data is repeated there onwards
+                if epoch==0:
+                    if batch_id%10==0:
+                        data_dist_summ = session.run(tf_summary_data_dist_writer, feed_dict={tf_summary_data_dist:np.asarray(label_count_sorted)})
+                        summary_writer.add_summary(data_dist_summ, global_step=global_batch_id)
 
-                    if behavior == 'non-stationary':
-                        batch_w = np.zeros((batch_size,))
-                        batch_labels_int = np.argmax(batch_labels[-1], axis=1)
+                if behavior == 'non-stationary':
+                    batch_weights = np.zeros((batch_size,))
+                    batch_labels_int = np.argmax(batch_labels, axis=1)
 
-                        for li in range(num_labels):
-                            batch_w[np.where(batch_labels_int == li)[0]] = max(1.0 - (cnt[li] * 1.0 / batch_size),
-                                                                               1.0 / num_labels)
-                        batch_weights.append(batch_w)
+                    for li in range(num_labels):
+                        batch_weights[np.where(batch_labels_int == li)[0]] = max(1.0 - (cnt[li] * 1.0 / batch_size),
+                                                                           1.0 / num_labels)
 
-                    elif behavior == 'stationary':
-                        batch_weights.append(np.ones((batch_size,)))
-                    else:
-                        raise NotImplementedError
+                elif behavior == 'stationary':
+                    batch_weights = np.ones((batch_size,))
 
-                    train_feed_dict.update({
-                        tf_train_data_batch[gpu_id]: batch_data[-1], tf_train_label_batch[gpu_id]: batch_labels[-1],
-                        tf_data_weights[gpu_id]: batch_weights[-1]
-                    })
+                else:
+                    raise NotImplementedError
+
+                train_feed_dict.update({
+                    tf_train_data_batch: batch_data,
+                    tf_train_label_batch: batch_labels,
+                    tf_data_weights: batch_weights
+                })
                 # =========================================================
 
                 t0_train = time.clock()
@@ -2268,13 +2177,12 @@ if __name__ == '__main__':
                 # =========================================================
                 # Training Phase (Calculate loss and predictions)
 
-                l, super_loss_vec, train_predictions = session.run(
-                    [mean_loss_op, concat_loss_vec_op,
-                     tower_predictions], feed_dict=train_feed_dict
+                l, loss_vec, train_predictions = session.run(
+                    [tf_loss, tf_loss_vector,
+                     tf_predictions], feed_dict=train_feed_dict
                 )
 
-                train_accuracy = np.mean(
-                    [accuracy(train_predictions[gid], batch_labels[gid]) for gid in range(num_gpus)]) / 100.0
+                train_accuracy = accuracy(train_predictions, batch_labels) / 100.0
                 current_train_acc = train_accuracy
                 # =========================================================
 
@@ -2286,54 +2194,29 @@ if __name__ == '__main__':
                 if adapt_structure and np.random.random()<0.05*(valid_acc_decay**(epoch)):
                         #print('Only collecting valid data')
                         # Concatenate current 'num_gpus' batches to a single matrix
-                        single_iteration_batch_data, single_iteration_batch_labels = None, None
-                        for gpu_id in range(num_gpus):
 
-                            if single_iteration_batch_data is None and single_iteration_batch_labels is None:
-                                single_iteration_batch_data, single_iteration_batch_labels = batch_data[gpu_id], \
-                                                                                             batch_labels[gpu_id]
-                            else:
-                                single_iteration_batch_data = np.append(single_iteration_batch_data, batch_data[gpu_id],
-                                                                        axis=0)
-                                single_iteration_batch_labels = np.append(single_iteration_batch_labels,
-                                                                          batch_labels[gpu_id], axis=0)
-
-                        hard_pool_valid.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                          super_loss_vec,
+                        hard_pool_valid.add_hard_examples(batch_data, batch_labels,
+                                                          loss_vec,
                                                           max(0.05, prev_train_acc - current_train_acc))
 
                         logger.debug('Pooling data summary')
-                        logger.debug('\tData batch size %d', single_iteration_batch_data.shape[0])
+                        logger.debug('\tData batch size %d', batch_data.shape[0])
                         logger.debug('\tAccuracy %.3f', train_accuracy)
                         logger.debug('\tPool size (Valid): %d', hard_pool_valid.get_size())
 
                 else:
 
-                    # Concatenate current 'num_gpus' batches to a single matrix
-                    single_iteration_batch_data, single_iteration_batch_labels = None, None
-                    for gpu_id in range(num_gpus):
-
-                        if single_iteration_batch_data is None and single_iteration_batch_labels is None:
-                            single_iteration_batch_data, single_iteration_batch_labels = batch_data[gpu_id], \
-                                                                                         batch_labels[gpu_id]
-                        else:
-                            single_iteration_batch_data = np.append(single_iteration_batch_data, batch_data[gpu_id],
-                                                                    axis=0)
-                            single_iteration_batch_labels = np.append(single_iteration_batch_labels,
-                                                                      batch_labels[gpu_id], axis=0)
-
                     # Higer rates of accumulating data causes the pool to lose uniformity
                     if np.random.random()<0.05:
                         if adapt_structure or (rigid_pooling and rigid_pool_type == 'smart'):
                             #print('add examples to hard pool ft')
-                            hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                           super_loss_vec, max(0.05,prev_train_acc-current_train_acc))
+                            hard_pool_ft.add_hard_examples(batch_data, batch_labels,
+                                                           loss_vec, max(0.05,prev_train_acc-current_train_acc))
 
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
                         elif (not adapt_structure) and rigid_pooling and rigid_pool_type=='naive':
                             #print('add examples to rigid pooling naive')
-                            hard_pool_ft.add_hard_examples(single_iteration_batch_data, single_iteration_batch_labels,
-                                                              super_loss_vec,1.0)
+                            hard_pool_ft.add_hard_examples(batch_data, batch_labels,loss_vec,1.0)
 
                             logger.debug('\tPool size (FT): %d', hard_pool_ft.get_size())
 
@@ -2352,7 +2235,7 @@ if __name__ == '__main__':
 
                 if np.isnan(l):
                     logger.critical('Diverged (NaN detected) (batchID) %d (last Cost) %.3f', batch_id,
-                                    train_losses[-1])
+                                    train_losses)
                     reset_cnn_after_adapt()
                     #model_hyperparameters['add_amount'] = model_hyperparameters['add_amount'] - 1
                     #model_hyperparameters['add_fulcon_amount'] = model_hyperparameters['add_fulcon_amount'] - 1
@@ -2361,11 +2244,8 @@ if __name__ == '__main__':
                         model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount']
                                     )
                     adapter.update_add_amounts(model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount'])
-                    
 
-                train_losses.append(l)
                 prev_train_acc = current_train_acc
-
 
                 # =============================================================
                 # log hard_pool distribution over time
@@ -2503,7 +2383,7 @@ if __name__ == '__main__':
 
                     # reset variables
                     mean_train_loss = 0.0
-                    train_losses = []
+
 
                 # =======================================================================
                 # Adaptations Phase of AdaCNN
