@@ -1920,10 +1920,10 @@ if __name__ == '__main__':
             conv_ids=convolution_op_ids, fulcon_ids=fulcon_op_ids, net_depth=layer_count,
             n_conv=len(convolution_op_ids), n_fulcon=len(fulcon_op_ids),
             epsilon=0.5,
-            batch_size=64, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
+            batch_size=16, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.005,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001,
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -1951,11 +1951,12 @@ if __name__ == '__main__':
                                             image_size, dataset_info['n_channels'], dataset_info['resize_to'],
                                             dataset_info['dataset_name'], session)
 
-    labels_per_task = num_labels // n_tasks
-    n_iter_per_task = n_iterations // n_tasks
 
     if datatype=='cifar-10':
-        labels_of_each_task = [list(range(i*labels_per_task,(i+1)*labels_per_task)) for i in range(n_tasks)]
+        n_tasks = 2
+        labels_per_task = [5,10]
+        labels_of_each_task = [list(range(0,5)),list(range(0,10))]
+
     elif datatype=='cifar-100':
         n_tasks = 4
         labels_per_task = [25,50,75,100]
@@ -1973,6 +1974,8 @@ if __name__ == '__main__':
             list(range(0, 150)), list(range(0, 200)),
             list(range(0, 250))
                                ]
+
+    n_iter_per_task = n_iterations // n_tasks
 
     if behavior=='non-stationary':
         #data_prior = label_sequence_generator.create_prior(n_iterations,behavior,labels_per_task,data_fluctuation)
@@ -2182,7 +2185,7 @@ if __name__ == '__main__':
                     [tf_loss, tf_loss_vector,
                      tf_predictions], feed_dict=train_feed_dict
                 )
-
+                train_losses.append(l)
                 train_accuracy = accuracy(train_predictions, batch_labels) / 100.0
                 current_train_acc = train_accuracy
                 # =========================================================
@@ -2372,23 +2375,21 @@ if __name__ == '__main__':
 
                 # ====================================================================
 
-                    if research_parameters['adapt_structure'] and \
-                            not start_adapting and \
-                            batch_id > research_parameters['start_adapting_after']:
-                        start_adapting = True
-                        logger.info('=' * 80)
-                        logger.info('Loss Stabilized: Starting structural adaptations...')
-                        logger.info('=' * 80)
-
                     previous_loss = mean_train_loss
-
                     # reset variables
                     mean_train_loss = 0.0
-
+                    train_losses = []
 
                 # =======================================================================
                 # Adaptations Phase of AdaCNN
                 if research_parameters['adapt_structure']:
+
+                    # Force to start adapting after 'start_adapting_after' batches
+                    if not start_adapting and global_batch_id > research_parameters['start_adapting_after']:
+                        start_adapting = True
+                        logger.info('=' * 80)
+                        logger.info('Loss Stabilized: Starting structural adaptations...')
+                        logger.info('=' * 80)
 
                     # ==============================================================
                     # Before starting the adaptations
@@ -2619,7 +2620,11 @@ if __name__ == '__main__':
             stop_adapting = True
             # We start using dropout once adaptations are finished
             model_hyperparameters['use_dropout'] = True
-            current_adaptive_dropout = 0.5
+
+            # if dataset is not stationary stick to the small dropout rate
+            if behavior == 'stationary':
+                current_adaptive_dropout = 0.5
+
             prev_train_acc = 0.0
 
         # =======================================================

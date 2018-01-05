@@ -62,7 +62,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.state_history_length = params['state_history_length']
 
         # Loggers
-        self.verbose_logger, self.q_logger, self.reward_logger, self.action_logger = None, None, None, None
+        self.verbose_logger, self.q_logger, self.reward_logger, self.action_logger, self.det_action_logger = None, None, None, None, None
         self.setup_loggers()
 
         # RL Agent Input/Output sizes
@@ -265,6 +265,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         actionHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'actions.log', mode='w')
         actionHandler.setFormatter(logging.Formatter('%(message)s'))
         self.action_logger.addHandler(actionHandler)
+
+        self.det_action_logger = logging.getLogger('deterministic_action_logger')
+        self.det_action_logger.propagate = False
+        self.det_action_logger.setLevel(logging.INFO)
+        detActionHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'det_actions.log', mode='w')
+        detActionHandler.setFormatter(logging.Formatter('%(message)s'))
+        self.det_action_logger.addHandler(detActionHandler)
 
         self.advantage_logger = logging.getLogger('adavantage_logger')
         self.advantage_logger.propagate = False
@@ -871,7 +878,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             return total * (self.top_k_accuracy/self.num_classes)
         else:
             return 0.0'''
-        mid_point_entropy = 0.17*2.0
+        mid_point_entropy = 0.3466
         for l_i, (c_depth, p_depth, up_dept) in enumerate(zip(curr_comp, prev_comp, filter_bound_vec)):
             if up_dept > 0:
                 if l_i in self.conv_ids:
@@ -879,7 +886,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 elif l_i in self.fulcon_ids:
                     total += -(max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept) * np.log(
                         (max(0,c_depth - self.min_fulcon_threshold) * 1.0 / up_dept)+1e-10) - mid_point_entropy
-        return total/self.net_depth
+        return total*1.0/(len(self.conv_ids) + len(self.fulcon_ids))
 
     def get_complexity_penanlty_for_each_layer_for_batch(self, s_i, filter_bound_vec):
         '''
@@ -1048,7 +1055,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         return self.running_mean_action
 
     def get_adapt_type(self, batch_id_normalized, phase):
-        return np.sin(batch_id_normalized*2.0*np.pi+(phase*np.pi))
+        sin_val = np.sin(batch_id_normalized*2.0*np.pi+(phase*np.pi))
+        return np.sign(sin_val) * np.min([0.2,np.abs(sin_val)])
 
     def sample_action_stochastic_from_actor(self,data, epoch, batch_id_normalized):
 
@@ -1084,7 +1092,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                               theta=[0.2  for _ in range(self.output_size - self.global_actions)] + [0.3 for _ in range(self.global_actions)],
                                               sigma=np.asarray([sigma_local for _ in range(self.output_size-self.global_actions)] + [sigma_global for _ in range(self.global_actions)]))
         self.verbose_logger.info('Adding exploration noise: %s',exp_noise)
-        cont_actions_all_layers += exp_noise
+        cont_actions_all_layers[:-1] += exp_noise[:-1]
 
         # Otherwise can go above 1
         cont_actions_all_layers = np.clip(cont_actions_all_layers,0.0,1.0)
@@ -1146,6 +1154,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         str_actions = ','.join([str(a) for a in cont_actions_all_layers.ravel().tolist()])
         self.q_logger.info(str_q_vals)
         self.action_logger.info(str_actions)
+        self.det_action_logger.info(str_actions)
 
         self.summary_writer.add_summary(summ,global_step=self.sample_action_global_step)
 
@@ -1301,7 +1310,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 self.verbose_logger.info('\tTrained Actor')
                 act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices])
                 self.verbose_logger.info('\tTrained Critic')
-                exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
+                #exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices])
 
             else:
@@ -1341,7 +1350,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Accuracy push reward: %.5f', accuracy_push_reward)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 2.0 * comp_gain #+ accuracy_push_reward
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 3.0 * comp_gain #+ accuracy_push_reward
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
