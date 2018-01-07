@@ -1923,7 +1923,7 @@ if __name__ == '__main__':
             batch_size=16, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001,
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.00025, # used to be 0.001 for 200 policy_interval
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2240,6 +2240,7 @@ if __name__ == '__main__':
                 if np.isnan(l):
                     logger.critical('Diverged (NaN detected) (batchID) %d (last Cost) %.3f', batch_id,
                                     train_losses)
+                    did_cnn_reset = True
                     reset_cnn_after_adapt()
                     #model_hyperparameters['add_amount'] = model_hyperparameters['add_amount'] - 1
                     #model_hyperparameters['add_fulcon_amount'] = model_hyperparameters['add_fulcon_amount'] - 1
@@ -2248,6 +2249,8 @@ if __name__ == '__main__':
                         model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount']
                                     )
                     adapter.update_add_amounts(model_hyperparameters['add_amount'],model_hyperparameters['add_fulcon_amount'])
+                else:
+                    did_cnn_reset = False
 
                 prev_train_acc = current_train_acc
 
@@ -2416,7 +2419,9 @@ if __name__ == '__main__':
                         # ==================================================================
                         if (not adapt_randomly) and current_state:
 
-                            layer_specific_actions, adapt_type = current_action[:-1], current_action[-1]
+                            layer_specific_actions, _ = current_action[:-3], current_action[-3:]
+
+
                             current_data_lr = 1.0
                             finetune_action = 1.0
                             assert len(layer_specific_actions)==len(convolution_op_ids)+len(fulcon_op_ids),'Number of layer specific ations did not match actual conv and fulcon layer count'
@@ -2457,7 +2462,8 @@ if __name__ == '__main__':
                                                    'pool_accuracy_after_adapt_queue': pool_acc_after_adapt_queue,
                                                    'unseen_valid_before': unseen_valid_accuracy,
                                                    'unseen_valid_after': unseen_valid_after_accuracy,
-                                                   'batch_id': global_batch_id})
+                                                   'batch_id': global_batch_id,'did_cnn_reset':did_cnn_reset}
+                                                       )
                             # ===================================================================================
 
                             cnn_structure_logger.info(
@@ -2534,7 +2540,7 @@ if __name__ == '__main__':
                         else:
                             raise NotImplementedError
 
-                        layer_specific_actions, adapt_type = current_action[:-1], current_action[-1]
+                        layer_specific_actions, _ = current_action[:-3], current_action[-3:]
 
                         logger.info('Finetune rate: %.5f', finetune_action)
                         logger.info('Data train rate: %.5f', current_data_lr)

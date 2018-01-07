@@ -68,9 +68,9 @@ def get_interval_related_hyperparameters(dataset_name):
         interval_parameters['orig_finetune_interval'] = 200
 
     if dataset_name == 'cifar-100':
-        interval_parameters['policy_interval'] = 200
+        interval_parameters['policy_interval'] = 100
         interval_parameters['finetune_interval'] = 200
-        interval_parameters['orig_finetune_interval'] = 200
+        interval_parameters['orig_finetune_interval'] = 100
 
     elif dataset_name == 'imagenet-250':
         interval_parameters['policy_interval'] = 200
@@ -110,13 +110,13 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['epochs'] = 5
     if adapt_structure:
-        model_hyperparameters['rl_epochs'] = 11
+        model_hyperparameters['rl_epochs'] = 21
         model_hyperparameters['adapt_epochs'] = 0
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
 
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.9
-    model_hyperparameters['eps_decay'] = 0.8
+    model_hyperparameters['eps_decay'] = 0.9
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001
@@ -183,7 +183,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
             filter_min_threshold = 47
             fulcon_min_threshold = 48
             filter_vector = [64, 128, 256, 256, 0, 512, 512, 512, 512, 0, 4096, 4096, 1000]
-            add_amount, remove_amount, add_fulcon_amount = 16, 12, 96
+            add_amount, remove_amount, add_fulcon_amount = 16, 12, 48
 
         model_hyperparameters['n_iterations'] = 10000
         model_hyperparameters['n_tasks'] = 4
