@@ -584,12 +584,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
 
         # We remove the entropy for learning rates, because this pushes the learning rate towards 0.5 quickly
-        glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
+        #glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
         #offset_vec = np.asarray([0.0 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
         #    self.global_actions)]).reshape(1, -1)
         #devide_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [2.0 for _ in range(
         #    self.global_actions)]).reshape(1, -1)
-        entropy = - glob_act_turn_off_vec * mu_s * tf.log(mu_s+ 1e-8) #* glob_act_turn_off_vec
+        entropy = -  mu_s * tf.log(mu_s+ 1e-8) #* glob_act_turn_off_vec
 
         d_H_over_d_ThetaMu = tf.gradients(ys=entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
@@ -597,12 +597,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                      grad_ys = [-g for g in d_Q_over_a])
 
         #grads = list(zip(d_mu_over_d_ThetaMu + d_H_over_d_ThetaMu ,theta_mu))
-        d_mu_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_mu_over_d_ThetaMu,10.0)
-        d_H_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_H_over_d_ThetaMu, 2.0)
+        #d_mu_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_mu_over_d_ThetaMu,10.0)
+        #d_H_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_H_over_d_ThetaMu, 2.0)
 
         grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
 
-        #grads,_ = tf.clip_by_global_norm(grads,25.0)
+        grads,_ = tf.clip_by_global_norm(grads,10.0)
 
         grads = list(zip(grads,theta_mu))
 
@@ -1360,7 +1360,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Accuracy push reward: %.5f', accuracy_push_reward)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy + comp_gain - 0.25 * param_penalty #+ accuracy_push_reward
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 2.0 * comp_gain - 0.2 * param_penalty #+ accuracy_push_reward
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
