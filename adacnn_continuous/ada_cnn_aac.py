@@ -257,7 +257,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         rewarddistHandler = logging.FileHandler(self.sub_persist_dir + os.sep + 'action_reward_.log', mode='w')
         rewarddistHandler.setFormatter(logging.Formatter('%(message)s'))
         self.reward_logger.addHandler(rewarddistHandler)
-        self.reward_logger.info('#global_time_stamp:batch_id:action_list:prev_pool_acc:pool_acc:reward')
+        self.reward_logger.info('#epoch:batch_id:action_list:prev_pool_acc:pool_acc:reward')
 
         self.action_logger = logging.getLogger('action_logger')
         self.action_logger.propagate = False
@@ -348,40 +348,33 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                         all_vars.append(tf.get_variable(initializer=bias_rand,name=constants.TF_BIAS))
                     else:
                         with tf.variable_scope('except_ft'):
-                            weights_rand = tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
+                            exp_ft_weights_rand = tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
                                                                stddev=2. / self.actor_layer_info[li])
-                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01, shape=[self.actor_layer_info[li + 1]-self.global_actions])
-                            all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
-                            all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+                            exp_ft_bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01, shape=[self.actor_layer_info[li + 1]-self.global_actions])
+                            all_vars.append(tf.get_variable(initializer=exp_ft_weights_rand, name=constants.TF_WEIGHTS))
+                            all_vars.append(tf.get_variable(initializer=exp_ft_bias_rand, name=constants.TF_BIAS))
 
                         with tf.variable_scope('ft'):
-                            weights_rand = tf.truncated_normal(
+                            ft_weights_rand = tf.truncated_normal(
                                 [self.actor_layer_info[li], self.global_actions],
                                 stddev=2. / self.actor_layer_info[li])
-                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
+                            ft_bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
                                                           shape=[self.global_actions])
-                            all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
-                            all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
+                            all_vars.append(tf.get_variable(initializer=ft_weights_rand, name=constants.TF_WEIGHTS))
+                            all_vars.append(tf.get_variable(initializer=ft_bias_rand, name=constants.TF_BIAS))
 
 
                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE):
                         if self.layer_scopes[li] != self.layer_scopes[-1]:
-                            all_vars.append(tf.get_variable(
-                                initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]],
-                                                     dtype=tf.float32), name=constants.TF_WEIGHTS))
-                            all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]]),
-                                                            name=constants.TF_BIAS))
+                            all_vars.append(tf.get_variable(initializer=weights_rand, name=constants.TF_WEIGHTS))
+                            all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
                         else:
                             with tf.variable_scope('except_ft'):
-                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
-                                                                dtype=tf.float32),name=constants.TF_WEIGHTS))
-                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.actor_layer_info[li + 1]-self.global_actions]), name=constants.TF_BIAS))
+                                all_vars.append(tf.get_variable(initializer=exp_ft_weights_rand,name=constants.TF_WEIGHTS))
+                                all_vars.append(tf.get_variable(initializer=exp_ft_bias_rand, name=constants.TF_BIAS))
                             with tf.variable_scope('ft'):
-                                all_vars.append(tf.get_variable(
-                                    initializer=tf.zeros([self.actor_layer_info[li], self.global_actions],
-                                                         dtype=tf.float32), name=constants.TF_WEIGHTS))
-                                all_vars.append(tf.get_variable(initializer=tf.zeros([self.global_actions]),
-                                                                name=constants.TF_BIAS))
+                                all_vars.append(tf.get_variable(initializer=ft_weights_rand, name=constants.TF_WEIGHTS))
+                                all_vars.append(tf.get_variable(initializer=ft_bias_rand,name=constants.TF_BIAS))
 
         with tf.variable_scope(constants.TF_CRITIC_SCOPE):
             # Defining critic network
@@ -863,7 +856,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         total = 0.0
         for l_i, (c_depth,up_bound) in enumerate(zip(curr_comp, filter_bound_vec)):
             if l_i in self.conv_ids or l_i in self.fulcon_ids:
-                total += c_depth*1.0/up_bound
+                total += (c_depth*1.0/up_bound)**2
 
         return total/(len(self.conv_ids)+len(self.fulcon_ids))
 
@@ -1064,15 +1057,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         sin_val = np.sin(batch_id_normalized*2.0*np.pi+(phase*np.pi))
         return np.sign(sin_val) * np.min([0.2,np.abs(sin_val)])
 
-    def sample_action_stochastic_from_actor(self,data, epoch, batch_id_normalized):
+    def sample_action_stochastic_from_actor(self,data, epoch, iteration):
 
         sigma_local = 0.4
         sigma_global = 0.3
-
-        if epoch%2==0:
-            phase = 0.5
-        else:
-            phase = 0.0
+        #mu_global = [0.36,0.33,0.31]
 
         state = []
         state.extend(data['filter_counts_list'])
@@ -1116,7 +1105,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Action chosen stochastic')
         self.verbose_logger.info('\t%s',valid_action)
 
-        str_actions = ','.join([str(a) for a in cont_actions_all_layers.ravel().tolist()])
+        str_actions = str(epoch) + ','+ str(iteration) + ',' + ','.join([str(a) for a in cont_actions_all_layers.ravel().tolist()])
         self.action_logger.info(str_actions)
 
         scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
@@ -1126,7 +1115,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return state, scaled_a,valid_action
 
-    def sample_action_deterministic_from_actor(self,data):
+    def sample_action_deterministic_from_actor(self,data, epoch, iteration):
 
         state = []
         state.extend(data['filter_counts_list'])
@@ -1157,8 +1146,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         summ = self.session.run(self.every_action_sampled_summ,feed_dict={self.tf_summary_action_mean_ph:cont_actions_all_layers,
                                                                         self.tf_summary_q_ph:q_vals_for_action.ravel()})
 
-        str_q_vals = ','.join([str(q) for q in q_vals_for_action.ravel().tolist()])
-        str_actions = ','.join([str(a) for a in cont_actions_all_layers.ravel().tolist()])
+        str_q_vals = str(epoch) + ','+ str(iteration) + ','  + ','.join([str(q) for q in q_vals_for_action.ravel().tolist()])
+        str_actions = str(epoch) + ','+ str(iteration) + ',' + ','.join([str(a) for a in cont_actions_all_layers.ravel().tolist()])
         self.q_logger.info(str_q_vals)
         self.action_logger.info(str_actions)
         self.det_action_logger.info(str_actions)
@@ -1399,7 +1388,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         #    reward = -1e-3# * max(self.same_action_count+1,5)
 
         self.reward_logger.info("%d:%d:%s:%.3f:%.3f:%.5f",
-                                self.train_global_step, data['batch_id'], ai,
+                                data['epoch'], data['batch_id'], ai,
                                 before_adapt_queue[-2], before_adapt_queue[-1],
                                 reward)
 

@@ -110,13 +110,13 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['epochs'] = 5
     if adapt_structure:
-        model_hyperparameters['rl_epochs'] = 21
+        model_hyperparameters['rl_epochs'] = 15
         model_hyperparameters['adapt_epochs'] = 0
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
 
     model_hyperparameters['n_iterations'] = 5000
     model_hyperparameters['start_eps'] = 0.9
-    model_hyperparameters['eps_decay'] = 0.9
+    model_hyperparameters['eps_decay'] = 0.8
     model_hyperparameters['validation_set_accumulation_decay'] = 0.9
     model_hyperparameters['lrn_radius'] = 5
     model_hyperparameters['lrn_alpha'] = 0.0001

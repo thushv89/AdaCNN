@@ -1923,7 +1923,7 @@ if __name__ == '__main__':
             batch_size=16, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.00025, # used to be 0.001 for 200 policy_interval
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001, # used to be 0.001 for 200 policy_interval
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2108,6 +2108,7 @@ if __name__ == '__main__':
             for batch_id in range(n_iter_per_task):
 
                 global_batch_id = (n_iterations * epoch) + (task*n_iter_per_task) + batch_id
+                unnormalized_batc_id = (task * n_iter_per_task) + batch_id
                 global_trial_phase = (global_batch_id * 1.0 / n_iterations)
                 local_trial_phase = batch_id * 1.0/n_iter_per_task
 
@@ -2462,7 +2463,7 @@ if __name__ == '__main__':
                                                    'pool_accuracy_after_adapt_queue': pool_acc_after_adapt_queue,
                                                    'unseen_valid_before': unseen_valid_accuracy,
                                                    'unseen_valid_after': unseen_valid_after_accuracy,
-                                                   'batch_id': global_batch_id,'did_cnn_reset':did_cnn_reset}
+                                                   'epoch':epoch,'batch_id': unnormalized_batc_id,'did_cnn_reset':did_cnn_reset}
                                                        )
                             # ===================================================================================
 
@@ -2526,6 +2527,7 @@ if __name__ == '__main__':
                         # Epoch 0: Randomly grow the network
                         # Epoch 1: Deterministically grow the network
                         normalized_batch_id = ((task * n_iter_per_task) + batch_id) * 1.0 / (n_tasks * n_iter_per_task)
+
                         if not adapt_randomly:
                             data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
                                     'binned_data_dist': running_binned_data_dist_vector.tolist(),
@@ -2534,9 +2536,9 @@ if __name__ == '__main__':
 
                             if np.random.random()<start_eps:
 
-                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch, normalized_batch_id)
+                                current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch, unnormalized_batc_id)
                             else:
-                                current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data)
+                                current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data, epoch, unnormalized_batc_id)
                         else:
                             raise NotImplementedError
 
