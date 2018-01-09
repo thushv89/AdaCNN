@@ -1812,6 +1812,12 @@ if __name__ == '__main__':
         train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
         test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
 
+    elif datatype == 'svhn-10':
+        dataset_file = h5py.File("data" + os.sep + "svhn_10_dataset.hdf5", "r")
+        train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
+        test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
+
+
     elif datatype=='imagenet-250':
         dataset_file = h5py.File(".."+os.sep+"PreprocessingBenchmarkImageDatasets"+ os.sep + "imagenet_small_test" + os.sep + 'imagenet_250_dataset.hdf5', 'r')
         train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
@@ -1964,6 +1970,11 @@ if __name__ == '__main__':
                                list(range(0,50)),
                                list(range(0,75)),
                                list(range(0,100))]
+
+    elif datatype=='svhn-10':
+        n_tasks = 2
+        labels_per_task = [5,10]
+        labels_of_each_task = [list(range(0, 5)), list(range(0, 10))]
 
     elif datatype=='imagenet-250':
         # override settings

@@ -110,7 +110,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.01
-        self.entropy_beta = 0.01
+        self.entropy_beta = 0.02
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -146,6 +146,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_critic_target_out_op, self.tf_actor_target_out_op = None, None
         self.tf_critic_loss_op = None
         self.tf_actor_optimize_op, self.tf_critic_optimize_op = None, None
+        self.actor_lr_decay_step = None
         self.tf_actor_grad_norm, self.tf_critic_grad_norm, self.tf_grads_for_debug = None, None, None
         self.tf_actor_target_update_op, self.tf_critic_target_update_op = None, None
 
@@ -551,7 +552,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         grads = optimizer.compute_gradients(loss,var_list=self.get_all_variables(constants.TF_CRITIC_SCOPE,False))
 
         optimize = optimizer.apply_gradients(grads)
@@ -608,7 +609,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         #grads = [(tf.clip_by_value(d_mu, -25.0, 25.0), v) for d_mu, v in
         #         zip(d_mu_over_d_ThetaMu, theta_mu)]
-        grad_apply_op = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate/5.0).apply_gradients(grads)
+        self.actor_lr_decay_step = tf.placeholder(dtype=tf.float32, shape=None, name='actor_lr_decay')
+        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/(5.0*self.actor_lr_decay_step)).apply_gradients(grads)
 
         #grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.sqrt(tf.reduce_mean([tf.reduce_sum(g**2) for (g,_) in grads]))
@@ -1029,12 +1031,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return crit_grad_norm, critic_loss
 
-    def train_actor(self,experience_batch):
+    def train_actor(self,experience_batch, epoch):
         '''
         Train the actor with a batch sampled from the experience
         Gradient update
         1/N * Sum(d Q(s,a|theta_Q)/d mu(s_i)* d mu(s_i|theta_mu)/d theta_mu)
         :param experience_batch:
+        :param epoch: for learning rate decay used for Actor
         :return:
         '''
         s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
@@ -1042,7 +1045,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
-            self.a_for_grad: a_pred
+            self.a_for_grad: a_pred,
+            self.actor_lr_decay_step: 1
         })
 
         self.verbose_logger.info('Grad Norm (Actor): %.5f',act_grad_norm)
@@ -1316,14 +1320,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 self.verbose_logger.debug('Experience indices: %s', exp_indices)
                 self.verbose_logger.info('\tTrained Actor')
-                act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices])
+                act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices], data['epoch'])
                 self.verbose_logger.info('\tTrained Critic')
                 #exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices])
 
             else:
                 self.verbose_logger.info('\tTrained Actor')
-                act_grad_norm, policy_loss, entropy = self.train_actor(self.experience)
+                act_grad_norm, policy_loss, entropy = self.train_actor(self.experience, data['epoch'])
                 self.verbose_logger.info('\tTrained Critic')
                 crit_grad_norm, critic_loss = self.train_critic(self.experience)
 

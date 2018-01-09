@@ -63,9 +63,9 @@ def get_interval_related_hyperparameters(dataset_name):
     }
 
     if dataset_name == 'cifar-10':
-        interval_parameters['policy_interval'] = 200
+        interval_parameters['policy_interval'] = 100
         interval_parameters['finetune_interval'] = 200
-        interval_parameters['orig_finetune_interval'] = 200
+        interval_parameters['orig_finetune_interval'] = 100
 
     if dataset_name == 'cifar-100':
         interval_parameters['policy_interval'] = 100
@@ -79,9 +79,9 @@ def get_interval_related_hyperparameters(dataset_name):
 
     elif dataset_name == 'svhn-10':
 
-        interval_parameters['policy_interval'] = 24
-        interval_parameters['finetune_interval'] = 24
-        interval_parameters['orig_finetune_interval'] = 50
+        interval_parameters['policy_interval'] = 100
+        interval_parameters['finetune_interval'] = 200
+        interval_parameters['orig_finetune_interval'] = 100
 
     return interval_parameters
 
@@ -110,7 +110,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['epochs'] = 5
     if adapt_structure:
-        model_hyperparameters['rl_epochs'] = 15
+        model_hyperparameters['rl_epochs'] = 11
         model_hyperparameters['adapt_epochs'] = 0
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
 
@@ -127,9 +127,32 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['include_l2_loss'] = False
     model_hyperparameters['beta'] = 0.0005
+    if not adapt_structure:
+        model_hyperparameters['include_l2_loss'] = True
+
     model_hyperparameters['use_loc_res_norm'] = False
 
     model_hyperparameters['top_k_accuracy'] = 1.0
+
+    if dataset_name == 'svhn-10':
+        pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
+
+        # From: https://arxiv.org/abs/1506.02351
+        if not adapt_structure:
+            cnn_string = "C,5,1,128#P,2,2,0#C,3,1,128#C,3,1,256#P,2,2,0#C,3,1,256" \
+                         "#PG,2,2,0#FC,100,0,0#Terminate,0,0,0"
+        else:
+            cnn_string = "C,5,1,64#P,2,2,0#C,3,1,64#C,3,1,128#P,2,2,0#C,3,1,128" \
+                         "#PG,2,2,0#FC,50,0,0#Terminate,0,0,0"
+
+            filter_min_threshold = 24
+            fulcon_min_threshold = 24
+            filter_vector = [128, 0, 128, 256, 0, 256, 0, 100]
+            add_amount, remove_amount, add_fulcon_amount = 8, 6, 8
+
+        model_hyperparameters['n_tasks'] = 2
+        model_hyperparameters['binned_data_dist_length'] = 10
+        model_hyperparameters['n_iterations'] = 5000
 
     if dataset_name == 'cifar-10':
 
@@ -257,7 +280,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 50000
         test_size = 10000
         n_slices = 1
-        fluctuation = 25
+        fluctuation = 15
 
     elif dataset_name == 'cifar-100':
 
@@ -287,7 +310,7 @@ def get_data_specific_hyperparameters(dataset_name, dataset_behavior, dataset_di
         dataset_size = 73257
         test_size = 26032
         n_slices = 1
-        fluctuation = 25
+        fluctuation = 15
 
     else:
         raise NotImplementedError
