@@ -87,7 +87,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.current_state_history = []
         # Format of {phi(s_t),a_t,r_t,phi(s_t+1)}
         self.experience = []
-        self.rew_experience = []
+        self.adapt_type_experience = []
 
         self.previous_reward = 0
         self.prev_prev_pool_accuracy = 0
@@ -109,8 +109,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.trial_phase_threshold = params['trial_phase_threshold'] # After this threshold all actions will be taken deterministically (e-greedy)
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
-        self.TAU = 0.01
-        self.entropy_beta = 0.02
+        self.TAU = 0.005
+        self.entropy_beta = 0.05
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -349,17 +349,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                         all_vars.append(tf.get_variable(initializer=bias_rand,name=constants.TF_BIAS))
                     else:
                         with tf.variable_scope('except_ft'):
-                            exp_ft_weights_rand = tf.truncated_normal([self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
-                                                               stddev=2. / self.actor_layer_info[li])
-                            exp_ft_bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01, shape=[self.actor_layer_info[li + 1]-self.global_actions])
+                            exp_ft_weights_rand = tf.random_uniform(shape=[self.actor_layer_info[li], self.actor_layer_info[li + 1]-self.global_actions],
+                                                               minval=-0.0001, maxval=0.0001)
+                            exp_ft_bias_rand = tf.random_uniform(minval=-0.0001, maxval=0.0001, shape=[self.actor_layer_info[li + 1]-self.global_actions])
                             all_vars.append(tf.get_variable(initializer=exp_ft_weights_rand, name=constants.TF_WEIGHTS))
                             all_vars.append(tf.get_variable(initializer=exp_ft_bias_rand, name=constants.TF_BIAS))
 
                         with tf.variable_scope('ft'):
-                            ft_weights_rand = tf.truncated_normal(
-                                [self.actor_layer_info[li], self.global_actions],
-                                stddev=2. / self.actor_layer_info[li])
-                            ft_bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
+                            ft_weights_rand = tf.random_uniform(
+                                shape=[self.actor_layer_info[li], self.global_actions],
+                                minval=-0.0001, maxval=0.0001)
+                            ft_bias_rand = tf.random_uniform(minval=-0.0001, maxval=0.0001,
                                                           shape=[self.global_actions])
                             all_vars.append(tf.get_variable(initializer=ft_weights_rand, name=constants.TF_WEIGHTS))
                             all_vars.append(tf.get_variable(initializer=ft_bias_rand, name=constants.TF_BIAS))
@@ -382,9 +382,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             for li in range(len(self.critic_layer_info) - 1):
                 if li != 1:
                     with tf.variable_scope(self.layer_scopes[li]):
-                        weights_rand = tf.truncated_normal([self.critic_layer_info[li], self.critic_layer_info[li + 1]],
-                                            stddev=2. / self.actor_layer_info[li])
-                        bias_rand = tf.random_uniform(minval=-0.01,maxval=0.01,shape=[self.critic_layer_info[li + 1]])
+                        if self.layer_scopes[li] == self.layer_scopes[-1]:
+                            weights_rand = tf.random_uniform(minval=-0.001, maxval=0.001,
+                                                             shape=[self.critic_layer_info[li], self.critic_layer_info[li + 1]])
+                            bias_rand = tf.random_uniform(minval=-0.001,maxval=0.001,shape=[self.critic_layer_info[li + 1]])
+                        else:
+                            weights_rand = tf.truncated_normal(
+                                [self.critic_layer_info[li], self.critic_layer_info[li + 1]],
+                                stddev=2. / self.actor_layer_info[li])
+                            bias_rand = tf.random_uniform(minval=-0.01, maxval=0.01,
+                                                          shape=[self.critic_layer_info[li + 1]])
                         all_vars.append(tf.get_variable(initializer=weights_rand,
                                                            name=constants.TF_WEIGHTS))
                         all_vars.append(tf.get_variable(initializer=bias_rand, name=constants.TF_BIAS))
@@ -586,11 +593,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # We remove the entropy for learning rates, because this pushes the learning rate towards 0.5 quickly
         #glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
-        #offset_vec = np.asarray([0.0 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
-        #    self.global_actions)]).reshape(1, -1)
-        #devide_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [2.0 for _ in range(
-        #    self.global_actions)]).reshape(1, -1)
-        entropy = -  mu_s * tf.log(mu_s+ 1e-8) #* glob_act_turn_off_vec
+        offset_vec = np.asarray([0.5 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(
+            self.global_actions)]).reshape(1, -1)
+        devide_vec = np.asarray([1.5 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
+            self.global_actions)]).reshape(1, -1)
+
+        entropy = - ((offset_vec + mu_s)/devide_vec) * tf.log(((offset_vec + mu_s)/devide_vec)+ 1e-8) #* glob_act_turn_off_vec
 
         d_H_over_d_ThetaMu = tf.gradients(ys=entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
@@ -601,6 +609,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         #d_mu_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_mu_over_d_ThetaMu,10.0)
         #d_H_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_H_over_d_ThetaMu, 2.0)
 
+        # The minus sign of entropy is correct here (and tested).
         grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
 
         grads,_ = tf.clip_by_global_norm(grads,10.0)
@@ -760,7 +769,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         amount_to_rmv = len(self.experience) - self.experience_threshold
         if amount_to_rmv>0:
             del self.experience[:amount_to_rmv]
-            del self.rew_experience[:amount_to_rmv]
+            del self.adapt_type_experience[:amount_to_rmv]
         # np.random.shuffle(self.experience) # decorrelation
 
 
@@ -1046,16 +1055,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
             self.a_for_grad: a_pred,
-            self.actor_lr_decay_step: 1
+            self.actor_lr_decay_step: 1.0 #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
         })
 
         self.verbose_logger.info('Grad Norm (Actor): %.5f',act_grad_norm)
 
         return act_grad_norm, policy_loss, entropy
-
-    def get_action_with_running_mean(self, a_i ):
-        self.running_mean_action =  0.9 * self.running_mean_action + 0.1 * a_i
-        return self.running_mean_action
 
     def get_adapt_type(self, batch_id_normalized, phase):
         sin_val = np.sin(batch_id_normalized*2.0*np.pi+(phase*np.pi))
@@ -1317,7 +1322,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
             self.verbose_logger.info("\tSampled a batch of experience")
             if len(self.experience) > self.batch_size:
-                exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
+                #exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
+                exp_indices = self.choose_uniformly_from_experience()
                 self.verbose_logger.debug('Experience indices: %s', exp_indices)
                 self.verbose_logger.info('\tTrained Actor')
                 act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices], data['epoch'])
@@ -1425,16 +1431,43 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.max_pool_accuracy = 0.0
         self.pool_acc_drop_count = 0
 
+    def choose_uniformly_from_experience(self):
+        rmv_action_count, non_action_count = self.batch_size//3, self.batch_size//3
+        add_action_count = self.batch_size - (2*self.batch_size//3)
+
+        #print('Adapt type experience')
+        #print(self.adapt_type_experience)
+
+        if len(self.adapt_type_experience)>self.batch_size*2:
+
+            add_indices = (np.where(np.array(self.adapt_type_experience)==0)[0]).tolist()
+            rmv_indices = (np.where(np.array(self.adapt_type_experience)==1)[0]).tolist()
+            non_indices = (np.where(np.array(self.adapt_type_experience)==2)[0]).tolist()
+            #print('Indices of experience belonging to different actions')
+            #print('Add: ',add_indices)
+            #print('Rmv: ',rmv_indices)
+            #print('Non: ',non_indices)
+
+            sel_add_ind = np.random.choice(add_indices,size=(add_action_count)).tolist()
+            sel_rmv_ind = np.random.choice(rmv_indices, size=(rmv_action_count)).tolist()
+            sel_non_ind = np.random.choice(non_indices, size=(non_action_count)).tolist()
+
+            assert len(sel_add_ind + sel_rmv_ind + sel_non_ind) == self.batch_size
+            return sel_add_ind + sel_rmv_ind + sel_non_ind
+
+        else:
+
+            return np.random.randint(0, len(self.experience), (self.batch_size,))
+
     def update_experience(self,si,ai,reward,sj):
 
 
         # update experience
-
-        #for idx in range(len(self.experience)-5,len(self.experience)):
-        #    self.experience[idx][2] = 0.9 * self.experience[idx][2] + 0.1 * reward
-
         self.experience.append([si, ai, reward, sj, self.train_global_step])
-        self.rew_experience.append(reward)
+        self.adapt_type_experience.append(np.argmax(ai[-self.global_actions:]))
+
+        # make sure both are updated similarly
+        assert len(self.experience)==len(self.adapt_type_experience)
 
         if self.train_global_step < 3:
             self.verbose_logger.debug('Latest Experience: ')
