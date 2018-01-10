@@ -110,7 +110,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.005
-        self.entropy_beta = 0.05
+        self.entropy_beta = 0.001
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -593,9 +593,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # We remove the entropy for learning rates, because this pushes the learning rate towards 0.5 quickly
         #glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
-        offset_vec = np.asarray([0.5 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(
+        offset_vec = np.asarray([0.25 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(
             self.global_actions)]).reshape(1, -1)
-        devide_vec = np.asarray([1.5 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
+        devide_vec = np.asarray([1.25 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
             self.global_actions)]).reshape(1, -1)
 
         entropy = - ((offset_vec + mu_s)/devide_vec) * tf.log(((offset_vec + mu_s)/devide_vec)+ 1e-8) #* glob_act_turn_off_vec
