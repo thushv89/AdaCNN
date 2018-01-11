@@ -78,7 +78,6 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         # Behavior of the RL Agent
 
         # Experience related hyperparameters
-        self.q_length = 25 * self.output_size # length of the experience
         self.state_history_collector = []
         self.state_history_dumped = False
         self.experience_threshold = 1000
@@ -149,7 +148,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.actor_lr_decay_step = None
         self.tf_actor_grad_norm, self.tf_critic_grad_norm, self.tf_grads_for_debug = None, None, None
         self.tf_actor_target_update_op, self.tf_critic_target_update_op = None, None
-
+        self.mu_mask = None
         #Losses
         self.tf_policy_loss, self.tf_entropy = None, None
 
@@ -210,6 +209,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_actor_out_op = self.tf_calc_actor_output(self.tf_state_input, False)
         self.tf_critic_target_out_op = self.tf_calc_critic_output(self.tf_state_input, self.tf_action_input,True)
         self.tf_actor_target_out_op = self.tf_calc_actor_output(self.tf_state_input,True)
+
 
         self.tf_critic_loss_op = self.tf_mse_loss_of_critic(self.tf_y_i_targets, self.tf_critic_out_op)
         self.tf_critic_optimize_op, self.tf_critic_grad_norm = self.tf_momentum_optimize(self.tf_critic_loss_op)
@@ -577,13 +577,16 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     def tf_policy_gradient_optimize(self):
 
+        self.actor_lr_decay_step = tf.placeholder(dtype=tf.float32, shape=None, name='actor_lr_decay')
+        self.mu_mask = tf.placeholder(shape=(None, self.output_size), dtype=tf.float32, name='mu_mask_entropy')
+
         d_Q_over_a = self.tf_critic_gradients()
 
         # grad_ys acts as a way of chaining multiple gradients
         # more info: https://stackoverflow.com/questions/42399401/use-of-grads-ys-parameter-in-tf-gradients-tensorflow
         # Calculates d(a)/d(Theta_mu) * -a
         # this is useful for reverse accumulation i.e. dy/dx = dy/dw1 * dw1/dw2 * dw2/dx
-        mu_s = self.tf_calc_actor_output(self.tf_state_input, False)
+        mu_s = self.tf_calc_actor_output(self.tf_state_input, False) * self.mu_mask
         policy_loss = -tf.reduce_sum(self.tf_calc_critic_output(self.tf_state_input, mu_s, False)*mu_s)
 
         theta_mu = self.get_all_variables(constants.TF_ACTOR_SCOPE, False)
@@ -593,12 +596,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # We remove the entropy for learning rates, because this pushes the learning rate towards 0.5 quickly
         #glob_act_turn_off_vec = np.asarray([1.0 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(self.global_actions)]).reshape(1,-1)
-        offset_vec = np.asarray([0.25 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(
+        offset_vec = np.asarray([0.5 for _ in range(self.output_size - self.global_actions)] + [0.0 for _ in range(
             self.global_actions)]).reshape(1, -1)
-        devide_vec = np.asarray([1.25 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
+        devide_vec = np.asarray([1.5 for _ in range(self.output_size - self.global_actions)] + [1.0 for _ in range(
             self.global_actions)]).reshape(1, -1)
-
-        entropy = - ((offset_vec + mu_s)/devide_vec) * tf.log(((offset_vec + mu_s)/devide_vec)+ 1e-8) #* glob_act_turn_off_vec
+        entropy_mask = tf.reduce_min(self.mu_mask,axis=[1])
+        entropy = - tf.reduce_sum(((mu_s+offset_vec)/devide_vec) * tf.log(((mu_s+offset_vec)/devide_vec)+ 1e-8),axis=[1]) * entropy_mask #* glob_act_turn_off_vec
 
         d_H_over_d_ThetaMu = tf.gradients(ys=entropy, xs=theta_mu)
         d_mu_over_d_ThetaMu = tf.gradients(ys= mu_s,
@@ -610,20 +613,22 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         #d_H_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_H_over_d_ThetaMu, 2.0)
 
         # The minus sign of entropy is correct here (and tested).
-        grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
+        #grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
+        grads = [d_mu for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
 
-        grads,_ = tf.clip_by_global_norm(grads,10.0)
+        grads,_ = tf.clip_by_global_norm(grads,20.0)
 
         grads = list(zip(grads,theta_mu))
 
         #grads = [(tf.clip_by_value(d_mu, -25.0, 25.0), v) for d_mu, v in
         #         zip(d_mu_over_d_ThetaMu, theta_mu)]
-        self.actor_lr_decay_step = tf.placeholder(dtype=tf.float32, shape=None, name='actor_lr_decay')
+
+
         grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/(5.0*self.actor_lr_decay_step)).apply_gradients(grads)
 
         #grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.sqrt(tf.reduce_mean([tf.reduce_sum(g**2) for (g,_) in grads]))
-        return grad_apply_op,grad_norm, policy_loss, tf.reduce_mean(tf.reduce_sum(entropy,axis=[1]))
+        return grad_apply_op,grad_norm, policy_loss, tf.reduce_mean(entropy)
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
         '''
@@ -762,14 +767,44 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
     def clean_experience(self):
         '''
         Clean experience to reduce the memory requirement
-        We keep a
+        Keep uniformity
         :return:
         '''
 
         amount_to_rmv = len(self.experience) - self.experience_threshold
+
+        '''# get indices belonging to different adapt types
+        add_inds_to_del = np.sort(np.where(np.array(self.adapt_type_experience)==0)[0])
+        rmv_inds_to_del = np.sort(np.where(np.array(self.adapt_type_experience)==1)[0])
+        non_inds_to_del = np.sort(np.where(np.array(self.adapt_type_experience)==2)[0])
+
+        # calculate size of each set
+        tot_add_inds = add_inds_to_del.size
+        tot_rmv_inds = rmv_inds_to_del.size
+        tot_non_inds = non_inds_to_del.size
+
+        # calculate some global values
+        tot_inds = tot_add_inds + tot_rmv_inds + tot_non_inds
+        
+
+        # remove indices in a way we preserve uniformity
+        add_inds_to_del = add_inds_to_del[:int((tot_add_inds * 1.0 /tot_inds)*amount_to_rmv)].tolist()
+        rmv_inds_to_del = rmv_inds_to_del[:int((tot_rmv_inds * 1.0 / tot_inds) * amount_to_rmv)].tolist()
+        non_inds_to_del = non_inds_to_del[:amount_to_rmv - (add_inds_to_del.size + non_inds_to_del.size)]
+
+        all_del_inds = add_inds_to_del + rmv_inds_to_del + non_inds_to_del
+        # need to remove the largest indices first other wise with each deletion the index changes
+        all_del_inds = sorted(all_del_inds,reverse=True)
+
+        assert abs(len(all_del_inds) - amount_to_rmv)<5'''
+
         if amount_to_rmv>0:
             del self.experience[:amount_to_rmv]
             del self.adapt_type_experience[:amount_to_rmv]
+            #for ind in all_del_inds:
+            #    del self.experience[ind]
+            #    del self.adapt_type_experience[ind]
+
         # np.random.shuffle(self.experience) # decorrelation
 
 
@@ -1040,7 +1075,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return crit_grad_norm, critic_loss
 
-    def train_actor(self,experience_batch, epoch):
+    def train_actor(self,experience_batch, epoch, exp_indices):
         '''
         Train the actor with a batch sampled from the experience
         Gradient update
@@ -1050,12 +1085,17 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
         s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
+        mu_mask_slice = (np.array(self.adapt_type_experience)[exp_indices] != 2).astype(np.float32).reshape(-1,1)
+        mu_mask_slice = np.repeat(mu_mask_slice,self.output_size-self.global_actions,axis=1)
+        mu_mask_slice = np.append(mu_mask_slice,np.ones(shape=(len(exp_indices),self.global_actions),dtype=np.float32),axis=1)
+
         a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:self.normalize_state_batch(s_i)})
 
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
             self.a_for_grad: a_pred,
-            self.actor_lr_decay_step: 1.0 #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
+            self.actor_lr_decay_step: 1.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
+            self.mu_mask: mu_mask_slice
         })
 
         self.verbose_logger.info('Grad Norm (Actor): %.5f',act_grad_norm)
@@ -1069,7 +1109,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
     def sample_action_stochastic_from_actor(self,data, epoch, iteration):
 
         sigma_local = 0.4
-        sigma_global = 0.3
+        sigma_global = 0.75
         #mu_global = [0.36,0.33,0.31]
 
         state = []
@@ -1326,14 +1366,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 exp_indices = self.choose_uniformly_from_experience()
                 self.verbose_logger.debug('Experience indices: %s', exp_indices)
                 self.verbose_logger.info('\tTrained Actor')
-                act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices], data['epoch'])
+                act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices], data['epoch'],exp_indices)
                 self.verbose_logger.info('\tTrained Critic')
                 #exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
                 crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices])
 
             else:
                 self.verbose_logger.info('\tTrained Actor')
-                act_grad_norm, policy_loss, entropy = self.train_actor(self.experience, data['epoch'])
+                act_grad_norm, policy_loss, entropy = self.train_actor(self.experience, data['epoch'],list(range(len(self.experience))))
                 self.verbose_logger.info('\tTrained Critic')
                 crit_grad_norm, critic_loss = self.train_critic(self.experience)
 
