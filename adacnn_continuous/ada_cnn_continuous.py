@@ -1929,7 +1929,7 @@ if __name__ == '__main__':
             batch_size=16, persist_dir=output_dir, sub_persist_dir = sub_output_dir,
             session=session,
             state_history_length=state_history_length,
-            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.0005, # used to be 0.001 for 200 policy_interval
+            hidden_layers=[128, 64, 32], momentum=0.9, learning_rate=0.001, # used to be 0.001 for 200 policy_interval
             rand_state_length=32, adapt_max_amount=model_hyperparameters['add_amount'],
             adapt_fulcon_max_amount=model_hyperparameters['add_fulcon_amount'],
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
@@ -2662,6 +2662,7 @@ if __name__ == '__main__':
         if research_parameters['adapt_structure']:
 
             start_eps = max([start_eps*eps_decay,0.1])
+            #start_eps = 0.1
             # At the moment not stopping adaptations for any reason
             # stop_adapting = adapter.check_if_should_stop_adapting()
 

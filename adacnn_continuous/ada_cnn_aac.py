@@ -109,7 +109,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.005
-        self.entropy_beta = 0.001
+        self.entropy_beta = 0.01
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -534,7 +534,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                                     tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
                                         constants.TF_BIAS))
                             with tf.variable_scope('ft', reuse=True):
-                                x_ft = tf.nn.softmax(
+                                x_ft = tf.nn.sigmoid(
                                     tf.matmul(x, tf.get_variable(constants.TF_WEIGHTS)) + tf.get_variable(
                                         constants.TF_BIAS))
 
@@ -613,10 +613,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         #d_H_over_d_ThetaMu, _ = tf.clip_by_global_norm(d_H_over_d_ThetaMu, 2.0)
 
         # The minus sign of entropy is correct here (and tested).
-        #grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
-        grads = [d_mu for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
+        grads = [d_mu - self.entropy_beta*d_H for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
+        #grads = [d_mu for d_mu, d_H in zip(d_mu_over_d_ThetaMu, d_H_over_d_ThetaMu)]
 
-        grads,_ = tf.clip_by_global_norm(grads,20.0)
+        grads,_ = tf.clip_by_global_norm(grads,5.0)
 
         grads = list(zip(grads,theta_mu))
 
@@ -624,7 +624,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         #         zip(d_mu_over_d_ThetaMu, theta_mu)]
 
 
-        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/(5.0*self.actor_lr_decay_step)).apply_gradients(grads)
+        grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/(10.0*self.actor_lr_decay_step)).apply_gradients(grads)
 
         #grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.sqrt(tf.reduce_mean([tf.reduce_sum(g**2) for (g,_) in grads]))
@@ -1094,7 +1094,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
             self.a_for_grad: a_pred,
-            self.actor_lr_decay_step: 1.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
+            self.actor_lr_decay_step: 1.0, #if epoch<5 else 2.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
             self.mu_mask: mu_mask_slice
         })
 
@@ -1139,10 +1139,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         cont_actions_all_layers += exp_noise
 
         # apply softmax after adding noise (for global actions)
-        cont_actions_all_layers[-self.global_actions:] = np.exp(cont_actions_all_layers[-self.global_actions:])/np.sum(np.exp(cont_actions_all_layers[-self.global_actions:]))
+        #cont_actions_all_layers[-self.global_actions:] = np.exp(cont_actions_all_layers[-self.global_actions:])/np.sum(np.exp(cont_actions_all_layers[-self.global_actions:]))
 
         # Otherwise can go above 1
-        cont_actions_all_layers = np.clip(cont_actions_all_layers,0.0,1.0)
+        cont_actions_all_layers = np.clip(cont_actions_all_layers,0.0,0.95)
 
         self.verbose_logger.info('Action before checking validity')
         self.verbose_logger.info(cont_actions_all_layers)
@@ -1410,7 +1410,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Accuracy push reward: %.5f', accuracy_push_reward)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 2.0 * comp_gain - 0.2 * param_penalty #+ accuracy_push_reward
+        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 3.0 * comp_gain #- 0.25 * param_penalty #+ accuracy_push_reward
+
+        # give a reward for keeping the adapt actions close to 0.5
+        reward -= 0.25 * np.sum((0.5-np.array(ai[-self.global_actions:]))**2)
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
