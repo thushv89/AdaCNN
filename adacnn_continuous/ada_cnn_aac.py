@@ -47,10 +47,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.conv_ids = params['conv_ids'] # ids of the convolution layers
         self.fulcon_ids = params['fulcon_ids'] # ids of the fulcon layers
         self.filter_bound_vec = params['filter_vector'] # a vector that gives the upper bound for each convolution and pooling layer ( use 0 for pooling)
+        print(self.filter_bound_vec)
         assert len(self.filter_bound_vec) == self.net_depth, 'net_depth (%d) parameter does not match the size of the filter bound vec (%d)'%(self.net_depth,len(self.filter_bound_vec))
+
         self.min_filter_threshold = params['filter_min_threshold'] # The minimum bound for each convolution layer
         self.min_fulcon_threshold = params['fulcon_min_threshold'] # The minimum neurons in a fulcon layer
 
+        self.dataset_behavior = params['dataset_behavior']
 
         # Time steps in RL
         self.local_time_stamp = 0
@@ -1084,6 +1087,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :param epoch: for learning rate decay used for Actor
         :return:
         '''
+
+        decay_step = 0
+        if epoch > 5:
+            decay_step
         s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
         mu_mask_slice = (np.array(self.adapt_type_experience)[exp_indices] != 2).astype(np.float32).reshape(-1,1)
         mu_mask_slice = np.repeat(mu_mask_slice,self.output_size-self.global_actions,axis=1)
@@ -1094,7 +1101,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
             self.a_for_grad: a_pred,
-            self.actor_lr_decay_step: 1.0, #if epoch<5 else 2.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
+            self.actor_lr_decay_step: max(1.0,epoch-4.0), #1.0 if epoch<=5 else 2.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
             self.mu_mask: mu_mask_slice
         })
 
@@ -1105,6 +1112,25 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
     def get_adapt_type(self, batch_id_normalized, phase):
         sin_val = np.sin(batch_id_normalized*2.0*np.pi+(phase*np.pi))
         return np.sign(sin_val) * np.min([0.2,np.abs(sin_val)])
+
+    def sample_action_add_maximum_from_actor(self, data, epoch, iteration):
+
+        state = []
+        state.extend(data['filter_counts_list'])
+        state.extend(data['binned_data_dist'])
+
+        cont_actions_all_layers = np.array([1.0 for _ in range(self.output_size-self.global_actions)]+[1.0,0.0,0.0])
+
+        valid_action = self.get_new_valid_action(
+            cont_actions_all_layers, data, state
+        )
+
+        self.verbose_logger.info('Action chosen deterministic')
+        self.verbose_logger.info('\t%s', valid_action)
+
+        scaled_a = self.scale_adaptaion_propotions_to_number_of_filters(valid_action)
+        self.verbose_logger.info('\t%s (scaled)', scaled_a)
+        return state, scaled_a, valid_action
 
     def sample_action_stochastic_from_actor(self,data, epoch, iteration):
 
@@ -1410,7 +1436,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Accuracy push reward: %.5f', accuracy_push_reward)
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
-        reward = mean_accuracy + 0.1 * mean_valid_accuracy + 3.0 * comp_gain #- 0.25 * param_penalty #+ accuracy_push_reward
+        if self.dataset_behavior == 'non-stationary':
+            reward = mean_accuracy + 0.1 * mean_valid_accuracy + 3.0 * comp_gain #- 0.25 * param_penalty #+ accuracy_push_reward
+        else:
+            reward = mean_accuracy + 0.1 * mean_valid_accuracy + 5.0 * comp_gain
 
         # give a reward for keeping the adapt actions close to 0.5
         reward -= 0.25 * np.sum((0.5-np.array(ai[-self.global_actions:]))**2)

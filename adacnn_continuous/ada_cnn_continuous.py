@@ -72,7 +72,7 @@ prune_min_bound, prune_max_bound = None, None
 
 act_decay = 0.99
 
-def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling, use_fse_capacity):
+def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_structure, use_rigid_pooling, use_fse_capacity, adapt_randomly):
     global interval_parameters, model_hyperparameters, research_parameters, dataset_info, cnn_string, filter_vector
     global image_size, num_channels, resize_to
     global n_epochs, n_iterations, iterations_per_batch, num_labels, train_size, test_size, n_slices, data_fluctuation
@@ -98,7 +98,7 @@ def set_varialbes_with_input_arguments(dataset_name, dataset_behavior, adapt_str
     research_parameters = cnn_hyperparameters_getter.get_research_hyperparameters(dataset_name, adapt_structure, use_rigid_pooling, logging_level)
 
     # Model Hyperparameters
-    model_hyperparameters = cnn_hyperparameters_getter.get_model_specific_hyperparameters(datatype, dataset_behavior, adapt_structure, rigid_pooling, use_fse_capacity, dataset_info['n_labels'])
+    model_hyperparameters = cnn_hyperparameters_getter.get_model_specific_hyperparameters(datatype, dataset_behavior, adapt_structure, rigid_pooling, use_fse_capacity, dataset_info['n_labels'], adapt_randomly)
 
     n_epochs = model_hyperparameters['epochs']
     n_iterations = model_hyperparameters['n_iterations']
@@ -813,7 +813,8 @@ def tf_augment_data_with(tf_pool_batch, dataset_type):
 
     if dataset_type != 'svhn-10':
         tf_aug_pool_batch = tf.map_fn(lambda data: tf.image.random_flip_left_right(data), tf_pool_batch)
-
+    else:
+        tf_aug_pool_batch = tf_pool_batch
     tf_aug_pool_batch = tf.image.random_brightness(tf_aug_pool_batch,0.5)
     tf_aug_pool_batch = tf.image.random_contrast(tf_aug_pool_batch,0.5,1.5)
 
@@ -1674,6 +1675,7 @@ if __name__ == '__main__':
 
     # Various run-time arguments specified
     #
+    use_net2net=False
     allow_growth = False
     fake_tasks = False
     noise_label_rate = None
@@ -1688,7 +1690,7 @@ if __name__ == '__main__':
             ["output_dir=", "num_gpus=", "memory=", "intra_op_threads=", "inter_op_threads=", 'allow_growth=',
              'dataset_type=', 'dataset_behavior=',
              'adapt_structure=', 'rigid_pooling=', 'rigid_pool_type=',
-             'all_labels_included=', 'noise_labels=', 'noise_images=', 'adapt_randomly=', 'use_fse_capacity='])
+             'all_labels_included=', 'noise_labels=', 'noise_images=', 'adapt_randomly=', 'use_fse_capacity=','use_net2net='])
     except getopt.GetoptError as err:
         print(err.with_traceback())
         print('<filename>.py --output_dir= --num_gpus= --memory=')
@@ -1727,7 +1729,8 @@ if __name__ == '__main__':
                 intra_op_threads = int(arg)
             if opt == '--inter_op_threads':
                 inter_op_threads = int(arg)
-
+            if opt == '--use_net2net':
+                use_net2net = bool(int(arg))
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
@@ -1769,13 +1772,13 @@ if __name__ == '__main__':
     logger.info('Use rigid pooling: %d', rigid_pooling)
     logger.info('Use rigid naive: %d',rigid_naive)
     logger.info('Adapt Randomly: %d',adapt_randomly)
-
+    logger.info('Use Net2Net: %d', use_net2net)
     # =====================================================================
     # VARIOS SETTING UPS
     # SET FROM MAIN FUNCTIONS OF OTHER CLASSES
     cnn_model_saver.set_from_main(sub_output_dir)
 
-    set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling, use_fse_capacity)
+    set_varialbes_with_input_arguments(datatype, behavior, adapt_structure,rigid_pooling, use_fse_capacity, adapt_randomly)
     cnn_intializer_continuous.set_from_main(research_parameters, logging_level, logging_format)
 
     logger.info('Creating CNN hyperparameters and operations in the correct format')
@@ -1816,7 +1819,6 @@ if __name__ == '__main__':
         dataset_file = h5py.File("data" + os.sep + "svhn_10_dataset.hdf5", "r")
         train_dataset, train_labels = dataset_file['/train/images'], dataset_file['/train/labels']
         test_dataset, test_labels = dataset_file['/test/images'], dataset_file['/test/labels']
-
 
     elif datatype=='imagenet-250':
         dataset_file = h5py.File(".."+os.sep+"PreprocessingBenchmarkImageDatasets"+ os.sep + "imagenet_small_test" + os.sep + 'imagenet_250_dataset.hdf5', 'r')
@@ -1935,7 +1937,7 @@ if __name__ == '__main__':
             num_classes=num_labels, filter_min_threshold=model_hyperparameters['filter_min_threshold'],
             fulcon_min_threshold=model_hyperparameters['fulcon_min_threshold'],
             trial_phase_threshold=1.0, binned_data_dist_length=model_hyperparameters['binned_data_dist_length'],
-            top_k_accuracy=model_hyperparameters['top_k_accuracy']
+            top_k_accuracy=model_hyperparameters['top_k_accuracy'], dataset_behavior = behavior
         )
 
     # Running initialization opeartion
@@ -2151,7 +2153,7 @@ if __name__ == '__main__':
                     dist_str = ''
                     for li in range(num_labels):
                         dist_str += str(cnt[li] / len(label_seq)) + ',' if li in cnt else str(0) + ','
-                    #class_dist_logger.info('%d,%s', batch_id, dist_str)
+                    class_dist_logger.info('%d,%s', batch_id, dist_str)
 
                 # calculate binned data distribution and running average of that for RL state
                 cnt = Counter(np.argmax(batch_labels, axis=1))
@@ -2429,7 +2431,7 @@ if __name__ == '__main__':
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
                         # (Not just outputting finetune action)
                         # ==================================================================
-                        if (not adapt_randomly) and current_state:
+                        if (not adapt_randomly or not use_net2net) and current_state:
 
                             layer_specific_actions, _ = current_action[:-3], current_action[-3:]
 
@@ -2539,7 +2541,7 @@ if __name__ == '__main__':
                         # Epoch 1: Deterministically grow the network
                         normalized_batch_id = ((task * n_iter_per_task) + batch_id) * 1.0 / (n_tasks * n_iter_per_task)
 
-                        if not adapt_randomly:
+                        if adapt_structure and not adapt_randomly and not use_net2net:
                             data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
                                     'binned_data_dist': running_binned_data_dist_vector.tolist(),
                                     'pool_accuracy': pool_acc_before_adapt_queue[-1],
@@ -2550,6 +2552,26 @@ if __name__ == '__main__':
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(data, epoch, unnormalized_batc_id)
                             else:
                                 current_state, current_action, current_unscaled_action = adapter.sample_action_deterministic_from_actor(data, epoch, unnormalized_batc_id)
+                        elif adapt_structure and adapt_randomly:
+
+                            data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
+                                    'binned_data_dist': running_binned_data_dist_vector.tolist(),
+                                    'pool_accuracy': pool_acc_before_adapt_queue[-1],
+                                    'valid_accuracy': unseen_valid_accuracy}
+
+                            current_state, current_action, current_unscaled_action = adapter.sample_action_stochastic_from_actor(
+                                data, epoch, unnormalized_batc_id)
+
+                        elif adapt_structure and use_net2net:
+
+                            data = {'filter_counts': filter_dict, 'filter_counts_list': filter_list,
+                                    'binned_data_dist': running_binned_data_dist_vector.tolist(),
+                                    'pool_accuracy': pool_acc_before_adapt_queue[-1],
+                                    'valid_accuracy': unseen_valid_accuracy}
+
+                            current_state, current_action, current_unscaled_action = adapter.sample_action_add_maximum_from_actor(
+                                data, epoch, unnormalized_batc_id)
+
                         else:
                             raise NotImplementedError
 
@@ -2579,7 +2601,11 @@ if __name__ == '__main__':
                                     last_conv_id = tmp_op
                                     break
 
-                            random_add = np.random.random()
+                            if use_net2net:
+                                random_add = 0.0
+                            else:
+                                random_add = np.random.random()
+
                             if ai > 0.0:
                                 if 'conv' in current_op:
                                     run_actual_add_operation(session,current_op,layer_id_for_action,last_conv_id,hard_pool_ft,ai, normalized_batch_id, random_add)
@@ -2627,8 +2653,54 @@ if __name__ == '__main__':
             # Epoch ending condition check (Given by RL)
             # ==============================================================
 
-        # Reset the model every rl epoch except the last one
-        if research_parameters['adapt_structure'] and epoch < model_hyperparameters['rl_epochs'] - 1:
+        # Reset the model every rl epoch except the last one (AdaCNN)
+        if research_parameters['adapt_structure'] and not adapt_randomly:
+            if epoch < model_hyperparameters['rl_epochs'] - 1:
+                logger.info('End of a trial epoch')
+                reset_cnn_after_adapt()
+
+            if epoch >= model_hyperparameters['rl_epochs'] + model_hyperparameters['adapt_epochs']-1:
+                logger.info('End of a adapt epoch')
+                session.run(tf_reset_age)
+                stop_adapting = True
+                # We start using dropout once adaptations are finished
+                model_hyperparameters['use_dropout'] = True
+
+                # if dataset is not stationary stick to the small dropout rate
+                if behavior == 'stationary':
+                    current_adaptive_dropout = 0.5
+
+                prev_train_acc = 0.0
+
+            if decay_learning_rate and epoch>model_hyperparameters['rl_epochs']+1 and epoch%2==1:
+                session.run(increment_global_step_op)
+
+            start_eps = max([start_eps * eps_decay, 0.1])
+
+        # Things we do at the end of each epoch for RAND-ADACNN
+        elif (research_parameters['adapt_structure'] and adapt_randomly) or \
+                (research_parameters['adapt_structure'] and use_net2net):
+
+            logger.info('End of a adapt epoch')
+            session.run(tf_reset_age)
+            stop_adapting = True
+            # We start using dropout once adaptations are finished
+            model_hyperparameters['use_dropout'] = True
+
+            # if dataset is not stationary stick to the small dropout rate
+            if behavior == 'stationary':
+                current_adaptive_dropout = 0.5
+
+            if decay_learning_rate and epoch>1 and epoch%2==1:
+                session.run(increment_global_step_op)
+
+        # Things to do at the end of each epoch for RIGID-CNNs
+        else:
+
+            if decay_learning_rate and epoch>0 and epoch%2==1:
+                session.run(increment_global_step_op)
+
+        '''if research_parameters['adapt_structure'] and epoch < model_hyperparameters['rl_epochs'] - 1:
             logger.info('End of a trial epoch')
             reset_cnn_after_adapt()
 
@@ -2650,7 +2722,7 @@ if __name__ == '__main__':
         # Decay learning rate (if set) Every 2 epochs
         if research_parameters['adapt_structure']:
             # Decay learning rate only after all the rl_epochs are over.
-            if decay_learning_rate and epoch>model_hyperparameters['rl_epochs'] and epoch%2==1:
+            if decay_learning_rate and epoch>model_hyperparameters['rl_epochs']+1 and epoch%2==1:
                 session.run(increment_global_step_op)
 
         else:
@@ -2664,7 +2736,7 @@ if __name__ == '__main__':
             start_eps = max([start_eps*eps_decay,0.1])
             #start_eps = 0.1
             # At the moment not stopping adaptations for any reason
-            # stop_adapting = adapter.check_if_should_stop_adapting()
+            # stop_adapting = adapter.check_if_should_stop_adapting()'''
 
         cnn_model_saver.save_cnn_hyperparameters(cnn_ops,final_2d_width,cnn_hyperparameters,'cnn-hyperparameters-%d.pickle'%epoch)
         cnn_model_saver.save_cnn_weights(cnn_ops,session,'cnn-model-%d.ckpt'%epoch)

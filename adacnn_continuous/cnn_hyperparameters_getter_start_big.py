@@ -14,7 +14,7 @@ def get_research_hyperparameters(dataset_name, adapt, use_pooling,logging_level)
     '''
     research_parameters = {
         'save_train_test_images': False, # If true will save train and test images randomly (to make sure images are correctly read)
-        'log_class_distribution': True, 'log_distribution_every': 24, # log distribution of data (useful for generating data distribution over time curves)
+        'log_class_distribution': True, 'log_distribution_every': 25, # log distribution of data (useful for generating data distribution over time curves)
         'adapt_structure': adapt,  # Enable AdaCNN behavior
         'hard_pool_acceptance_rate': 0.1,  # Probability with which data is accepted in to the pool
         'optimizer': 'Momentum', 'momentum': 0.0, 'pool_momentum': 0.9,  # Two momentums one for data one for pool
@@ -86,7 +86,7 @@ def get_interval_related_hyperparameters(dataset_name):
     return interval_parameters
 
 
-def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, use_fse_capacity, num_labels):
+def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_structure, use_pooling, use_fse_capacity, num_labels, adapt_randomly):
 
     model_hyperparameters = {}
 
@@ -109,7 +109,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
     model_hyperparameters['iterations_per_batch'] = 1
 
     model_hyperparameters['epochs'] = 5
-    if adapt_structure:
+    if adapt_structure and not adapt_randomly:
         model_hyperparameters['rl_epochs'] = 11
         model_hyperparameters['adapt_epochs'] = 0
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
@@ -238,19 +238,6 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
         model_hyperparameters['n_tasks'] = 2
         model_hyperparameters['binned_data_dist_length'] = 25
 
-    elif dataset_name=='svhn-10':
-        pool_size = model_hyperparameters['batch_size'] * 10 * num_labels
-        # test_size = 26032
-
-        if not adapt_structure:
-            cnn_string = "C,5,1,128#P,3,2,0#C,5,1,128#P,3,2,0#C,3,1,128#PG,6,4,0#Terminate,0,0,0"
-        else:
-            cnn_string = "C,5,1,24#P,3,2,0#C,5,1,24#P,3,2,0#C,3,1,24#PG,6,4,0#Terminate,0,0,0"
-            filter_vector = [128, 0, 128, 0, 128]
-            add_amount, remove_amount, add_fulcon_amount = 4, 2, 36
-            filter_min_threshold = 12
-        model_hyperparameters['n_tasks'] = 4
-        model_hyperparameters['binned_data_dist_length'] = 10
 
     model_hyperparameters['cnn_string'] = cnn_string
 
