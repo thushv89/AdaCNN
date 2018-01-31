@@ -1855,8 +1855,6 @@ if __name__ == '__main__':
             os.sep + "main" + os.sep + '%d' % (max(dirs_in_tensorboard) + 1))
     # ==============================================================================
 
-
-
     # Defining pool
     if adapt_structure or rigid_pooling:
         logger.info('Defining pools of data (validation and finetuning)')
@@ -2431,7 +2429,7 @@ if __name__ == '__main__':
                         # Policy Update (Update policy only when we take actions actually using the qlearner)
                         # (Not just outputting finetune action)
                         # ==================================================================
-                        if (not adapt_randomly or not use_net2net) and current_state:
+                        if (not adapt_randomly and not use_net2net) and current_state:
 
                             layer_specific_actions, _ = current_action[:-3], current_action[-3:]
 
@@ -2654,7 +2652,7 @@ if __name__ == '__main__':
             # ==============================================================
 
         # Reset the model every rl epoch except the last one (AdaCNN)
-        if research_parameters['adapt_structure'] and not adapt_randomly:
+        if research_parameters['adapt_structure'] and (not adapt_randomly and not use_net2net) :
             if epoch < model_hyperparameters['rl_epochs'] - 1:
                 logger.info('End of a trial epoch')
                 reset_cnn_after_adapt()

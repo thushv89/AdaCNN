@@ -112,7 +112,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
         self.TAU = 0.005
-        self.entropy_beta = 0.01
+        self.entropy_beta = 0.1
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -148,6 +148,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_critic_target_out_op, self.tf_actor_target_out_op = None, None
         self.tf_critic_loss_op = None
         self.tf_actor_optimize_op, self.tf_critic_optimize_op = None, None
+        self.tf_sgd_actor_optimize_op, self.tf_sgd_critic_optimize_op = None, None
         self.actor_lr_decay_step = None
         self.tf_actor_grad_norm, self.tf_critic_grad_norm, self.tf_grads_for_debug = None, None, None
         self.tf_actor_target_update_op, self.tf_critic_target_update_op = None, None
@@ -206,6 +207,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.tf_action_input = tf.placeholder(tf.float32, shape=(None, self.output_size), name='InputDataset')
         self.a_for_grad = tf.placeholder(tf.float32, shape=[None, self.output_size], name='A_for_grad')
         self.tf_y_i_targets = tf.placeholder(tf.float32, shape=(None, self.output_size), name='TargetDataset')
+        self.actor_lr_decay_step = tf.placeholder(dtype=tf.float32, shape=None, name='actor_lr_decay')
 
         # output of each network
         self.tf_critic_out_op = self.tf_calc_critic_output(self.tf_state_input,self.tf_action_input, False)
@@ -562,10 +564,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate/self.actor_lr_decay_step)
         grads = optimizer.compute_gradients(loss,var_list=self.get_all_variables(constants.TF_CRITIC_SCOPE,False))
 
         optimize = optimizer.apply_gradients(grads)
+
 
         grad_norm = tf.reduce_sum([tf.reduce_mean(tf.abs(g)) for (g,_) in grads])
         return optimize, grad_norm
@@ -580,7 +583,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
     def tf_policy_gradient_optimize(self):
 
-        self.actor_lr_decay_step = tf.placeholder(dtype=tf.float32, shape=None, name='actor_lr_decay')
+
         self.mu_mask = tf.placeholder(shape=(None, self.output_size), dtype=tf.float32, name='mu_mask_entropy')
 
         d_Q_over_a = self.tf_critic_gradients()
@@ -628,10 +631,9 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
 
         grad_apply_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate/(10.0*self.actor_lr_decay_step)).apply_gradients(grads)
-
         #grad_values = {'critic_grad':d_Q_over_a, 'actor_grad':d_mu_over_d_ThetaMu, 'grads':grads}
         grad_norm = tf.sqrt(tf.reduce_mean([tf.reduce_sum(g**2) for (g,_) in grads]))
-        return grad_apply_op,grad_norm, policy_loss, tf.reduce_mean(entropy)
+        return grad_apply_op, grad_norm, policy_loss, tf.reduce_mean(entropy)
 
     def get_all_variables(self,actor_or_critic_scope, is_target_network):
         '''
@@ -1040,7 +1042,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         return target_assign_ops
 
-    def train_critic(self, experience_batch):
+    def train_critic(self, experience_batch, epoch):
         # data['prev_state'], data['curr_state']
 
         # sample a batch from experience
@@ -1069,11 +1071,14 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         y_i = r + self.discount_rate*q_given_s_i_plus_1_mu_s_i_plus_1
 
+        optimize_op = self.tf_critic_optimize_op
+
         _,crit_grad_norm, critic_loss = self.session.run(
-            [self.tf_critic_optimize_op,self.tf_critic_grad_norm, self.tf_critic_loss_op],
+            [optimize_op,self.tf_critic_grad_norm, self.tf_critic_loss_op],
             feed_dict={self.tf_state_input:self.normalize_state_batch(s_i),
                        self.tf_action_input:a_i,
-                       self.tf_y_i_targets:y_i}
+                       self.tf_y_i_targets:y_i,
+                       self.actor_lr_decay_step:1.0}
         )
 
         return crit_grad_norm, critic_loss
@@ -1088,9 +1093,7 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         :return:
         '''
 
-        decay_step = 0
-        if epoch > 5:
-            decay_step
+
         s_i, a_i, r, _ = self.get_s_a_r_s_with_experince(experience_batch)
         mu_mask_slice = (np.array(self.adapt_type_experience)[exp_indices] != 2).astype(np.float32).reshape(-1,1)
         mu_mask_slice = np.repeat(mu_mask_slice,self.output_size-self.global_actions,axis=1)
@@ -1098,10 +1101,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
         a_pred = self.session.run(self.tf_actor_out_op,feed_dict = {self.tf_state_input:self.normalize_state_batch(s_i)})
 
-        _,act_grad_norm, policy_loss, entropy = self.session.run([self.tf_actor_optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
+        optimize_op = self.tf_actor_optimize_op
+
+        _,act_grad_norm, policy_loss, entropy = self.session.run([optimize_op,self.tf_actor_grad_norm, self.tf_policy_loss, self.tf_entropy],feed_dict={
             self.tf_state_input:self.normalize_state_batch(s_i),
             self.a_for_grad: a_pred,
-            self.actor_lr_decay_step: max(1.0,epoch-4.0), #1.0 if epoch<=5 else 2.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
+            self.actor_lr_decay_step: 1.0, #1.0 if epoch<=5 else 2.0, #min(1.0+(0.05*epoch),2) #if epoch > 2 else 1
             self.mu_mask: mu_mask_slice
         })
 
@@ -1295,10 +1300,10 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
             #scaled_pos_action = self.scale_adaptaion_propotions_to_number_of_filters(pos_action)
             #next_pos_state = self.get_next_state_from_state_action(state, scaled_pos_action)
 
-            if adapt_type==1:
-                self.update_experience(state, neg_action, -0.1, next_neg_state)
-            elif adapt_type==0:
-                self.update_experience(state, neg_action, -0.1, next_neg_state)
+            #if adapt_type==1:
+            #    self.update_experience(state, neg_action, -0.1, next_neg_state)
+            #elif adapt_type==0:
+            #    self.update_experience(state, neg_action, -0.1, next_neg_state)
             # Let's not have this
             #self.update_experience(state, pos_action, 0.5, next_pos_state)
 
@@ -1395,13 +1400,13 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
                 act_grad_norm,policy_loss, entropy = self.train_actor([self.experience[ei] for ei in exp_indices], data['epoch'],exp_indices)
                 self.verbose_logger.info('\tTrained Critic')
                 #exp_indices = np.random.randint(0, len(self.experience), (self.batch_size,))
-                crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices])
+                crit_grad_norm, critic_loss = self.train_critic([self.experience[ei] for ei in exp_indices],data['epoch'])
 
             else:
                 self.verbose_logger.info('\tTrained Actor')
                 act_grad_norm, policy_loss, entropy = self.train_actor(self.experience, data['epoch'],list(range(len(self.experience))))
                 self.verbose_logger.info('\tTrained Critic')
-                crit_grad_norm, critic_loss = self.train_critic(self.experience)
+                crit_grad_norm, critic_loss = self.train_critic(self.experience, data['epoch'])
 
             # Removing old experience to save memory
             if self.train_global_step > 0 and self.train_global_step % self.exp_clean_interval == 0:
