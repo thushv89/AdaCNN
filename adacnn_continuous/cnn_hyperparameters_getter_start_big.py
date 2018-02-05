@@ -110,7 +110,7 @@ def get_model_specific_hyperparameters(dataset_name, dataset_behavior, adapt_str
 
     model_hyperparameters['epochs'] = 5
     if adapt_structure and not adapt_randomly:
-        model_hyperparameters['rl_epochs'] = 11
+        model_hyperparameters['rl_epochs'] = 21
         model_hyperparameters['adapt_epochs'] = 0
         model_hyperparameters['epochs'] += model_hyperparameters['rl_epochs'] - 1
 

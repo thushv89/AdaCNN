@@ -111,8 +111,8 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.trial_phase_threshold = params['trial_phase_threshold'] # After this threshold all actions will be taken deterministically (e-greedy)
 
         # Tensorflow ops for function approximators (neural nets) for q-learning
-        self.TAU = 0.005
-        self.entropy_beta = 0.1
+        self.TAU = 0.01
+        self.entropy_beta = 0.01
         self.session = params['session']
 
         self.max_pool_accuracy = 0.0
@@ -995,27 +995,29 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
                         if actor_or_critic_scope==constants.TF_CRITIC_SCOPE:
                             if scope != self.layer_scopes[1]:
+                                w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
                                 with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
                                     w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                                    w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                                    target_assign_ops.append(tf.assign(w, self.TAU * w + (1-self.TAU)* w_dash))
-                                    target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+                                    target_assign_ops.append(tf.assign(w_dash, self.TAU * w + (1-self.TAU)* w_dash))
+                                    target_assign_ops.append(tf.assign(b_dash, self.TAU * b + (1 - self.TAU) * b_dash))
                             else:
                                 with tf.variable_scope('state', reuse = True):
+                                    w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
                                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
                                         w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
                                             constants.TF_BIAS)
-                                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
-                                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+
+                                        target_assign_ops.append(tf.assign(w_dash, self.TAU * w + (1 - self.TAU) * w_dash))
+                                        target_assign_ops.append(tf.assign(b_dash, self.TAU * b + (1 - self.TAU) * b_dash))
 
                                 with tf.variable_scope('action', reuse = True):
+                                    w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
                                     with tf.variable_scope(constants.TF_TARGET_NET_SCOPE, reuse=True):
                                         w_dash, b_dash = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(
                                             constants.TF_BIAS)
-                                        w, b = tf.get_variable(constants.TF_WEIGHTS), tf.get_variable(constants.TF_BIAS)
-                                        target_assign_ops.append(tf.assign(w, self.TAU * w + (1 - self.TAU) * w_dash))
-                                        target_assign_ops.append(tf.assign(b, self.TAU * b + (1 - self.TAU) * b_dash))
+
+                                        target_assign_ops.append(tf.assign(w_dash, self.TAU * w + (1 - self.TAU) * w_dash))
+                                        target_assign_ops.append(tf.assign(b_dash, self.TAU * b + (1 - self.TAU) * b_dash))
 
                         else:
 
@@ -1323,7 +1325,11 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
 
 
     def scale_adaptaion_propotions_to_number_of_filters(self,a):
-        adapt_type = np.argmax(a[-self.global_actions:])
+        ''' Choses action stochastically but with high probabilit to most likely action'''
+        adapt_probs = np.array(a[-self.global_actions:])/np.sum(a[-self.global_actions:])
+        adapt_probs[-1] = 1.0 - np.sum(adapt_probs[:-1])
+
+        adapt_type = np.random.choice(np.arange(self.global_actions),p=adapt_probs)
         print('Adapt type: ',adapt_type)
         new_a = []
         for a_idx, ai in enumerate(a):
@@ -1442,12 +1448,12 @@ class AdaCNNAdaptingAdvantageActorCritic(object):
         self.verbose_logger.info('Action Penalty: %.5f', ai_rew)
 
         if self.dataset_behavior == 'non-stationary':
-            reward = mean_accuracy + 0.1 * mean_valid_accuracy + 3.0 * comp_gain #- 0.25 * param_penalty #+ accuracy_push_reward
+            reward = mean_accuracy + 0.01 * mean_valid_accuracy + 1.0 * comp_gain #- 0.25 * param_penalty #+ accuracy_push_reward
         else:
             reward = mean_accuracy + 0.1 * mean_valid_accuracy + 5.0 * comp_gain
 
         # give a reward for keeping the adapt actions close to 0.5
-        reward -= 0.25 * np.sum((0.5-np.array(ai[-self.global_actions:]))**2)
+        #reward -= 0.25 * np.sum((0.5-np.array(ai[-self.global_actions:]))**2)
 
         curr_pool_acc = (before_adapt_queue[-1] + before_adapt_queue[-2]) / 200.0
         if curr_pool_acc>=self.max_pool_accuracy:
